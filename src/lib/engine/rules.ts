@@ -30,6 +30,16 @@ export interface ExitInputs {
  * sells altogether, so a position that would have hit take-profit later is
  * better closed now than stranded. Take-profit and trailing follow.
  */
+/**
+ * Tolerance for threshold comparisons.
+ *
+ * Percentages are computed from float division, so a price sitting EXACTLY on
+ * its trigger lands at -19.999999999999996 rather than -20 and the naive
+ * comparison misses — the stop-loss fails to fire at its own stop price. This
+ * is far below any meaningful price move, so it only recovers the boundary.
+ */
+const EPS = 1e-9;
+
 export function evaluateExit(
   row: PositionRow,
   input: ExitInputs | number,
@@ -40,7 +50,7 @@ export function evaluateExit(
   const pnlPct = unrealisedPnlPct(row, price);
   const peakPrice = Math.max(row.peak_price, price);
 
-  if (row.stop_loss_pct != null && pnlPct <= -Math.abs(row.stop_loss_pct)) {
+  if (row.stop_loss_pct != null && pnlPct <= -Math.abs(row.stop_loss_pct) + EPS) {
     return {
       shouldExit: true,
       reason: "stop_loss",
@@ -57,7 +67,7 @@ export function evaluateExit(
     row.graduation_exit_pct != null &&
     graduationPct != null &&
     Number.isFinite(graduationPct) &&
-    graduationPct >= row.graduation_exit_pct
+    graduationPct >= row.graduation_exit_pct - EPS
   ) {
     return {
       shouldExit: true,
@@ -68,7 +78,7 @@ export function evaluateExit(
     };
   }
 
-  if (row.take_profit_pct != null && pnlPct >= row.take_profit_pct) {
+  if (row.take_profit_pct != null && pnlPct >= row.take_profit_pct - EPS) {
     return {
       shouldExit: true,
       reason: "take_profit",
@@ -80,7 +90,7 @@ export function evaluateExit(
 
   if (row.trailing_stop_pct != null && row.peak_price > 0) {
     const dropFromPeakPct = ((price - peakPrice) / peakPrice) * 100;
-    if (dropFromPeakPct <= -Math.abs(row.trailing_stop_pct)) {
+    if (dropFromPeakPct <= -Math.abs(row.trailing_stop_pct) + EPS) {
       return {
         shouldExit: true,
         reason: "trailing_stop",

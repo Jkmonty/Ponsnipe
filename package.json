@@ -12,7 +12,9 @@
     "wallet:init": "tsx scripts/wallet-init.ts",
     "smoke": "tsx scripts/smoke.ts",
     "backtest": "tsx scripts/backtest.ts",
-    "scan": "tsx scripts/scan.ts"
+    "scan": "tsx scripts/scan.ts",
+    "analyse": "tsx scripts/analyse.ts",
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "next": "^16.3.4",
