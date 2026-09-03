@@ -115,7 +115,11 @@ function priceOf(row: PositionRow, r: CurveReserves): number {
  *   sell: quoteReserve -= (quoteOut + fee + tax); tokenReserve += tokensIn
  *   buy : quoteReserve += (quoteIn - fee - tax);  tokenReserve -= tokensOut
  */
-function applyEventDelta(r: CurveReserves, name: string, a: Record<string, bigint>): CurveReserves {
+export function applyEventDelta(
+  r: CurveReserves,
+  name: string,
+  a: Record<string, bigint>,
+): CurveReserves {
   if (name === "CurveSell") {
     const gross = (a.quoteOut ?? 0n) + (a.fee ?? 0n) + (a.tax ?? 0n);
     return {
