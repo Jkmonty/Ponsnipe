@@ -11,7 +11,8 @@
     "setup": "tsx scripts/setup.ts",
     "wallet:init": "tsx scripts/wallet-init.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "backtest": "tsx scripts/backtest.ts"
+    "backtest": "tsx scripts/backtest.ts",
+    "scan": "tsx scripts/scan.ts"
   },
   "dependencies": {
     "next": "^16.3.4",
