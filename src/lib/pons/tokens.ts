@@ -1,0 +1,207 @@
+import { getAddress, formatEther, type Address } from "viem";
+import { publicClient } from "../chain";
+import { PONS, NATIVE_QUOTE, GRADUATION_ETH_THRESHOLD } from "./addresses";
+import { erc20Abi, ponsFactoryAbi, bondingCurveAbi } from "./abis";
+import { priceFromReserves, type TokenPrice, type CurveReserves } from "./pricing";
+
+export type Venue = "curve" | "graduated" | "none";
+
+export interface TokenSnapshot {
+  address: Address;
+  name: string;
+  symbol: string;
+  decimals: number;
+  totalSupply: bigint;
+
+  venue: Venue;
+  /** Bonding curve contract (venue === "curve"). */
+  curve: Address | null;
+  /** Quote asset the curve trades against; 0x0 === native ETH. */
+  pairToken: Address;
+  quoteSymbol: string;
+  quoteDecimals: number;
+  quoteIsNative: boolean;
+
+  feeBps: number;
+  creatorTaxBps: number;
+
+  reserves: CurveReserves;
+  /** Token price denominated in the quote asset. */
+  price: TokenPrice;
+  /** Fully-diluted value in the quote asset. */
+  fdvQuote: number;
+
+  graduation: {
+    graduated: boolean;
+    readyToGraduate: boolean;
+    currentQuote: number;
+    thresholdQuote: number;
+    progressPct: number;
+  };
+
+  tradeable: boolean;
+  /** Set when tradeable === false. */
+  reason?: string;
+}
+
+const ZERO: CurveReserves = { quoteReserve: 0n, tokenReserve: 0n };
+
+async function erc20Meta(addr: Address) {
+  const c = publicClient();
+  const [name, symbol, decimals] = await Promise.all([
+    c.readContract({ address: addr, abi: erc20Abi, functionName: "name" }).catch(() => "Unknown"),
+    c.readContract({ address: addr, abi: erc20Abi, functionName: "symbol" }).catch(() => "???"),
+    c
+      .readContract({ address: addr, abi: erc20Abi, functionName: "decimals" })
+      .then(Number)
+      .catch(() => 18),
+  ]);
+  return { name: name as string, symbol: symbol as string, decimals };
+}
+
+export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
+  const token = getAddress(raw);
+  const c = publicClient();
+
+  const [meta, totalSupply, launch] = await Promise.all([
+    erc20Meta(token),
+    c.readContract({ address: token, abi: erc20Abi, functionName: "totalSupply" }).catch(() => 0n),
+    c
+      .readContract({ address: PONS.factory, abi: ponsFactoryAbi, functionName: "getLaunchedToken", args: [token] })
+      .catch(() => null),
+  ]);
+
+  const base: TokenSnapshot = {
+    address: token,
+    name: meta.name,
+    symbol: meta.symbol,
+    decimals: meta.decimals,
+    totalSupply: totalSupply as bigint,
+    venue: "none",
+    curve: null,
+    pairToken: NATIVE_QUOTE,
+    quoteSymbol: "ETH",
+    quoteDecimals: 18,
+    quoteIsNative: true,
+    feeBps: 0,
+    creatorTaxBps: 0,
+    reserves: ZERO,
+    price: { priceQuoteWad: 0n, priceQuote: 0 },
+    fdvQuote: 0,
+    graduation: {
+      graduated: false,
+      readyToGraduate: false,
+      currentQuote: 0,
+      thresholdQuote: GRADUATION_ETH_THRESHOLD,
+      progressPct: 0,
+    },
+    tradeable: false,
+  };
+
+  if (!launch || !(launch as { exists: boolean }).exists) {
+    return { ...base, reason: "not a pons v2 launch (or unknown token)" };
+  }
+
+  const l = launch as {
+    curve: Address;
+    pairToken: Address;
+    graduationThreshold: bigint;
+    creatorTaxBps: number;
+    phase: number;
+  };
+  const curve = getAddress(l.curve);
+  const pairToken = getAddress(l.pairToken);
+  const quoteIsNative = pairToken === NATIVE_QUOTE;
+
+  const quoteMeta = quoteIsNative
+    ? { symbol: "ETH", decimals: 18 }
+    : await erc20Meta(pairToken).then((m) => ({ symbol: m.symbol, decimals: m.decimals }));
+
+  const [reservesRaw, graduated, readyToGraduate, feeBps, realQuoteReserve] = await Promise.all([
+    c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "getReserves" }) as Promise<
+      readonly [bigint, bigint]
+    >,
+    c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "graduated" }).catch(() => false),
+    c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "readyToGraduate" }).catch(() => false),
+    c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "feeBps" }).then(Number).catch(() => 100),
+    c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "realQuoteReserve" }).catch(() => 0n),
+  ]);
+
+  const reserves: CurveReserves = { quoteReserve: reservesRaw[0], tokenReserve: reservesRaw[1] };
+  const price = priceFromReserves(reserves, meta.decimals, quoteMeta.decimals);
+  const fdvQuote = (Number(totalSupply) / 10 ** meta.decimals) * price.priceQuote;
+
+  const thresholdQuote = Number(l.graduationThreshold) / 10 ** quoteMeta.decimals;
+  const currentQuote = Number(realQuoteReserve as bigint) / 10 ** quoteMeta.decimals;
+  const isGraduated = Boolean(graduated) || l.phase !== 0;
+
+  const tradeable = !isGraduated && !readyToGraduate;
+
+  return {
+    ...base,
+    venue: isGraduated ? "graduated" : "curve",
+    curve,
+    pairToken,
+    quoteSymbol: quoteMeta.symbol,
+    quoteDecimals: quoteMeta.decimals,
+    quoteIsNative,
+    feeBps,
+    creatorTaxBps: Number(l.creatorTaxBps),
+    reserves,
+    price,
+    fdvQuote,
+    graduation: {
+      graduated: isGraduated,
+      readyToGraduate: Boolean(readyToGraduate),
+      currentQuote,
+      thresholdQuote,
+      progressPct: thresholdQuote > 0 ? Math.min(100, (currentQuote / thresholdQuote) * 100) : 0,
+    },
+    tradeable,
+    reason: isGraduated
+      ? "graduated to a Uniswap v4 pool — sell via pons.family for now"
+      : readyToGraduate
+        ? "curve is about to graduate — trading paused"
+        : undefined,
+  };
+}
+
+export interface CurveState {
+  reserves: CurveReserves;
+  price: TokenPrice;
+  graduated: boolean;
+  readyToGraduate: boolean;
+  feeBps: number;
+  creatorTaxBps: number;
+}
+
+/** Fast path for the monitor/executor: current price + tradeability of a curve. */
+export async function getCurveState(params: {
+  curve: Address;
+  tokenDecimals: number;
+  quoteDecimals: number;
+  creatorTaxBps: number;
+}): Promise<CurveState> {
+  const c = publicClient();
+  const [reservesRaw, graduated, ready, feeBps] = await Promise.all([
+    c.readContract({ address: params.curve, abi: bondingCurveAbi, functionName: "getReserves" }) as Promise<
+      readonly [bigint, bigint]
+    >,
+    c.readContract({ address: params.curve, abi: bondingCurveAbi, functionName: "graduated" }).catch(() => false),
+    c.readContract({ address: params.curve, abi: bondingCurveAbi, functionName: "readyToGraduate" }).catch(() => false),
+    c.readContract({ address: params.curve, abi: bondingCurveAbi, functionName: "feeBps" }).then(Number).catch(() => 100),
+  ]);
+  const reserves: CurveReserves = { quoteReserve: reservesRaw[0], tokenReserve: reservesRaw[1] };
+  return {
+    reserves,
+    price: priceFromReserves(reserves, params.tokenDecimals, params.quoteDecimals),
+    graduated: Boolean(graduated),
+    readyToGraduate: Boolean(ready),
+    feeBps,
+    creatorTaxBps: params.creatorTaxBps,
+  };
+}
+
+export function formatQuote(wei: bigint, decimals: number): string {
+  return decimals === 18 ? formatEther(wei) : (Number(wei) / 10 ** decimals).toString();
+}

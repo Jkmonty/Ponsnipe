@@ -1,0 +1,50 @@
+/**
+ * Central, validated access to environment configuration.
+ * Throws early (at first import on the server) if something required is missing.
+ */
+
+function req(name: string): string {
+  const v = process.env[name];
+  if (!v || v.trim() === "") {
+    throw new Error(`Missing required env var: ${name}`);
+  }
+  return v.trim();
+}
+
+function opt(name: string, fallback: string): string {
+  const v = process.env[name];
+  return v && v.trim() !== "" ? v.trim() : fallback;
+}
+
+function num(name: string, fallback: number): number {
+  const v = process.env[name];
+  if (!v || v.trim() === "") return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+export const env = {
+  rpcUrl: opt("RPC_URL", "https://rpc.mainnet.chain.robinhood.com"),
+  chainId: num("CHAIN_ID", 4663),
+
+  keystorePassphrase: process.env.KEYSTORE_PASSPHRASE?.trim() ?? "",
+  keystorePath: opt("KEYSTORE_PATH", "./data/bot.keystore.json"),
+
+  /** Safety-net heartbeat: a full re-evaluation always runs at least this often. */
+  monitorHeartbeatMs: Math.max(1000, num("MONITOR_HEARTBEAT_MS", num("MONITOR_INTERVAL_MS", 4000))),
+  /** How often viem polls the RPC for new blocks (the real reaction cadence). */
+  pollingIntervalMs: Math.min(5000, Math.max(150, num("POLLING_INTERVAL_MS", 400))),
+  engineLive: opt("ENGINE_LIVE", "0") === "1",
+  defaultSlippageBps: Math.min(5000, Math.max(10, num("DEFAULT_SLIPPAGE_BPS", 300))),
+  /** Priority-fee multiplier applied to auto-sell txs so they land in the next block. */
+  sellGasMultiplier: Math.min(4, Math.max(1, num("SELL_GAS_MULTIPLIER", 1.3))),
+
+  databasePath: opt("DATABASE_PATH", "./data/positions.sqlite"),
+  apiToken: process.env.ENGINE_API_TOKEN?.trim() ?? "",
+};
+
+/** Throw unless the bot wallet + API are fully configured for live use. */
+export function assertEngineConfigured(): void {
+  if (!env.keystorePassphrase) throw new Error("KEYSTORE_PASSPHRASE is not set");
+  if (!env.apiToken) throw new Error("ENGINE_API_TOKEN is not set");
+}

@@ -1,0 +1,24 @@
+node_modules
+.next
+out
+build
+*.log
+npm-debug.log*
+
+# Environment & secrets — NEVER commit
+.env
+.env.local
+.env*.local
+
+# Bot wallet keystore & database — contain / control real funds
+/data
+*.keystore.json
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Misc
+.DS_Store
+next-env.d.ts
+*.tsbuildinfo
