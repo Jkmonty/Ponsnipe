@@ -39,6 +39,8 @@ export interface PositionRow {
   peak_price: number;
   last_price: number | null;
   last_checked_at: string | null;
+  sell_attempts: number;
+  last_dry_run_at: string | null;
 
   exit_price: number | null;
   quote_out_wei: string | null;

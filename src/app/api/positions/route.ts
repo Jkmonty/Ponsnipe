@@ -7,6 +7,7 @@ import { buyOnCurve } from "@/lib/pons/swap";
 import { hasBotWallet, getBotBalance } from "@/lib/wallet/botWallet";
 import { isLive } from "@/lib/engine/liveState";
 import { kickMonitor } from "@/lib/engine/monitor";
+import { logEngine } from "@/lib/db/index";
 import {
   createPosition,
   listPositions,
@@ -130,25 +131,43 @@ export async function POST(req: Request) {
     });
     if (buy.filled <= 0n) return errorJson("buy returned 0 tokens — aborted", 502);
 
-    const position = createPosition({
-      tokenAddress: token,
-      tokenSymbol: snap.symbol,
-      tokenDecimals: snap.decimals,
-      curveAddress: getAddress(snap.curve),
-      pairToken: snap.pairToken,
-      quoteSymbol: snap.quoteSymbol,
-      quoteDecimals: snap.quoteDecimals,
-      feeBps: snap.feeBps,
-      creatorTaxBps: snap.creatorTaxBps,
-      quoteInWei: ethWei,
-      tokensHeldWei: buy.filled,
-      entryPrice: buy.effectivePrice || snap.price.priceQuote,
-      buyTx: buy.hash,
-      takeProfitPct: input.takeProfitPct ?? null,
-      stopLossPct: input.stopLossPct ?? null,
-      trailingStopPct: input.trailingStopPct ?? null,
-      slippageBps,
-    });
+    // The buy is already on-chain past this point. If recording the position
+    // fails, the tokens exist with no stop-loss attached — surface that as
+    // something the user must act on, not a generic "buy failed".
+    let position;
+    try {
+      position = createPosition({
+        tokenAddress: token,
+        tokenSymbol: snap.symbol,
+        tokenDecimals: snap.decimals,
+        curveAddress: getAddress(snap.curve),
+        pairToken: snap.pairToken,
+        quoteSymbol: snap.quoteSymbol,
+        quoteDecimals: snap.quoteDecimals,
+        feeBps: snap.feeBps,
+        creatorTaxBps: snap.creatorTaxBps,
+        quoteInWei: ethWei,
+        tokensHeldWei: buy.filled,
+        entryPrice: buy.effectivePrice || snap.price.priceQuote,
+        buyTx: buy.hash,
+        takeProfitPct: input.takeProfitPct ?? null,
+        stopLossPct: input.stopLossPct ?? null,
+        trailingStopPct: input.trailingStopPct ?? null,
+        slippageBps,
+      });
+    } catch (persistErr) {
+      const pmsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+      logEngine(
+        "error",
+        `BOUGHT BUT NOT TRACKED — ${buy.filled} units of ${snap.symbol} (${token}) held with ` +
+          `NO stop-loss. tx ${buy.hash}. Sell manually. Cause: ${pmsg}`,
+      );
+      return errorJson(
+        `Buy succeeded (tx ${buy.hash}) but the position could not be saved, so it is NOT being ` +
+          `monitored and has no stop-loss. Sell it manually. Cause: ${pmsg}`,
+        500,
+      );
+    }
 
     kickMonitor(); // start watching this position's curve immediately
 

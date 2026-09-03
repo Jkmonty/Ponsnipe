@@ -12,12 +12,23 @@ import { env } from "../env";
 import { robinhoodChain, publicClient } from "../chain";
 import { loadKeystoreFile, decryptPrivateKey, keystoreExists } from "./keystore";
 
-let _account: Account | undefined;
-let _wallet: WalletClient | undefined;
+interface WalletSingleton {
+  account: Account;
+  wallet: WalletClient;
+}
+
+/**
+ * globalThis-backed: Next runs instrumentation and route handlers in separate
+ * module registries. A per-registry copy would mean two independent
+ * `nonceManager` instances handing out the SAME nonce to concurrent
+ * transactions (e.g. a sniper buy and a monitor sell), so one would replace the
+ * other or fail with "nonce too low". One shared account, one nonce sequence.
+ */
+const gw = globalThis as typeof globalThis & { __ponsWallet?: WalletSingleton };
 
 /** Decrypt the keystore once and cache the resulting account + wallet client. */
-function ensureLoaded(): { account: Account; wallet: WalletClient } {
-  if (_account && _wallet) return { account: _account, wallet: _wallet };
+function ensureLoaded(): WalletSingleton {
+  if (gw.__ponsWallet) return gw.__ponsWallet;
   if (!env.keystorePassphrase) {
     throw new Error("KEYSTORE_PASSPHRASE is not set — cannot unlock the bot wallet");
   }
@@ -25,13 +36,19 @@ function ensureLoaded(): { account: Account; wallet: WalletClient } {
   const pk = decryptPrivateKey(file, env.keystorePassphrase);
   // nonceManager caches + locally increments the nonce, so an auto-sell doesn't
   // spend an RPC round-trip fetching it at trigger time.
-  _account = privateKeyToAccount(pk, { nonceManager });
-  _wallet = createWalletClient({
-    account: _account,
+  const account = privateKeyToAccount(pk, { nonceManager });
+  const wallet = createWalletClient({
+    account,
     chain: robinhoodChain,
     transport: http(env.rpcUrl, { retryCount: 2 }),
   });
-  return { account: _account, wallet: _wallet };
+  gw.__ponsWallet = { account, wallet };
+  return gw.__ponsWallet;
+}
+
+/** Drop the cached wallet (e.g. after the keystore is replaced). */
+export function resetBotWallet(): void {
+  delete gw.__ponsWallet;
 }
 
 export function botWallet(): { account: Account; wallet: WalletClient } {

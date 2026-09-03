@@ -28,13 +28,28 @@ interface KeystoreFile {
 
 const SCRYPT = { N: 2 ** 15, r: 8, p: 1, keylen: 32 } as const;
 
-function deriveKey(passphrase: string, salt: Buffer): Buffer {
-  return scryptSync(passphrase, salt, SCRYPT.keylen, {
-    N: SCRYPT.N,
-    r: SCRYPT.r,
-    p: SCRYPT.p,
-    maxmem: 256 * 1024 * 1024,
+interface KdfParams {
+  N: number;
+  r: number;
+  p: number;
+  keylen: number;
+}
+
+function deriveKeyWith(passphrase: string, salt: Buffer, params: KdfParams): Buffer {
+  const { N, r, p, keylen } = params;
+  if (![N, r, p, keylen].every((v) => Number.isInteger(v) && v > 0)) {
+    throw new Error("Keystore has invalid or missing kdfParams — file is corrupt");
+  }
+  return scryptSync(passphrase, salt, keylen, {
+    N,
+    r,
+    p,
+    maxmem: 512 * 1024 * 1024,
   });
+}
+
+function deriveKey(passphrase: string, salt: Buffer): Buffer {
+  return deriveKeyWith(passphrase, salt, SCRYPT);
 }
 
 export function encryptPrivateKey(
@@ -67,8 +82,11 @@ export function encryptPrivateKey(
 }
 
 export function decryptPrivateKey(file: KeystoreFile, passphrase: string): Hex {
+  // Derive with the params the FILE was written with, not today's constants —
+  // otherwise raising SCRYPT.N later would make every existing keystore
+  // undecryptable behind a misleading "wrong passphrase" error.
   const salt = Buffer.from(file.kdfParams.salt, "hex");
-  const key = deriveKey(passphrase, salt);
+  const key = deriveKeyWith(passphrase, salt, file.kdfParams);
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(file.iv, "hex"));
   decipher.setAuthTag(Buffer.from(file.authTag, "hex"));
   try {
@@ -93,7 +111,26 @@ export function loadKeystoreFile(path: string): KeystoreFile {
       `No keystore at ${path}. Create the bot wallet first: npm run wallet:init`,
     );
   }
-  return JSON.parse(readFileSync(path, "utf8")) as KeystoreFile;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    throw new Error(`Keystore at ${path} is not valid JSON — restore your backup`);
+  }
+  const f = parsed as Partial<KeystoreFile>;
+  const ok =
+    f &&
+    f.cipher === "aes-256-gcm" &&
+    f.kdf === "scrypt" &&
+    typeof f.iv === "string" &&
+    typeof f.authTag === "string" &&
+    typeof f.ciphertext === "string" &&
+    !!f.kdfParams &&
+    typeof f.kdfParams.salt === "string";
+  if (!ok) {
+    throw new Error(`Keystore at ${path} is malformed — restore your backup`);
+  }
+  return parsed as KeystoreFile;
 }
 
 export function keystoreExists(path: string): boolean {

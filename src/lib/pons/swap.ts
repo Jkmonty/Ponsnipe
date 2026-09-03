@@ -1,4 +1,11 @@
-import { getAddress, maxUint256, type Address, type Hex } from "viem";
+import {
+  getAddress,
+  maxUint256,
+  parseEventLogs,
+  type Address,
+  type Hex,
+  type TransactionReceipt,
+} from "viem";
 import { env } from "../env";
 import { publicClient } from "../chain";
 import { botWallet } from "../wallet/botWallet";
@@ -57,6 +64,44 @@ async function bumpedFees(c: ReturnType<typeof publicClient>): Promise<FeeOverri
   }
 }
 
+/**
+ * Read the exact fill out of the curve's own event in this receipt.
+ *
+ * Balance-diffing the wallet is not safe here: the sniper and the monitor share
+ * one wallet, so an ETH-spending buy landing between the before/after reads
+ * would be silently attributed to this sell and corrupt the recorded PnL.
+ */
+function filledFromReceipt(
+  receipt: TransactionReceipt,
+  curve: Address,
+  recipient: Address,
+  which: "CurveBuy" | "CurveSell",
+): bigint | null {
+  try {
+    const events = parseEventLogs({
+      abi: bondingCurveAbi,
+      eventName: which,
+      logs: receipt.logs,
+    });
+    const curveLc = curve.toLowerCase();
+    const recLc = recipient.toLowerCase();
+    for (const e of events) {
+      if (e.address.toLowerCase() !== curveLc) continue;
+      const args = e.args as unknown as {
+        recipient?: string;
+        tokensOut?: bigint;
+        quoteOut?: bigint;
+      };
+      if (args.recipient?.toLowerCase() !== recLc) continue;
+      const v = which === "CurveBuy" ? args.tokensOut : args.quoteOut;
+      if (typeof v === "bigint") return v;
+    }
+  } catch {
+    /* fall back to the balance diff */
+  }
+  return null;
+}
+
 async function ensureAllowance(token: Address, spender: Address, need: bigint) {
   const { account, wallet } = botWallet();
   const c = publicClient();
@@ -101,6 +146,8 @@ export async function buyOnCurve(p: CurveCtx & { quoteInWei: bigint }): Promise<
     args: [account.address],
   });
 
+  const feeOverride = await bumpedFees(c);
+
   const hash = await wallet.writeContract({
     account,
     chain: wallet.chain,
@@ -109,17 +156,21 @@ export async function buyOnCurve(p: CurveCtx & { quoteInWei: bigint }): Promise<
     functionName: "buy",
     args: [p.quoteInWei, minTokensOut, account.address],
     value: native ? p.quoteInWei : 0n,
+    ...feeOverride,
   });
   const receipt = await c.waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error(`buy reverted: ${hash}`);
 
-  const balAfter = await c.readContract({
-    address: p.token,
-    abi: erc20Abi,
-    functionName: "balanceOf",
-    args: [account.address],
-  });
-  const filled = balAfter - balBefore;
+  let filled = filledFromReceipt(receipt, p.curve, account.address, "CurveBuy");
+  if (filled == null) {
+    const balAfter = await c.readContract({
+      address: p.token,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [account.address],
+    });
+    filled = balAfter - balBefore;
+  }
   const effectivePrice =
     filled > 0n
       ? Number(p.quoteInWei) / 10 ** p.quoteDecimals / (Number(filled) / 10 ** p.tokenDecimals)
@@ -140,17 +191,20 @@ export async function sellOnCurve(p: CurveCtx & { tokensInWei: bigint }): Promis
   const minQuoteOut = applySlippage(q.quoteOut, slippageBps);
   if (minQuoteOut <= 0n) throw new Error("quote produced zero proceeds — curve too thin");
 
-  const quoteBalBefore = native
-    ? await c.getBalance({ address: account.address })
-    : ((await c.readContract({
-        address: getAddress(p.pairToken),
-        abi: erc20Abi,
-        functionName: "balanceOf",
-        args: [account.address],
-      })) as bigint);
-
-  // Bump priority fee so the auto-sell is first in the next block.
-  const feeOverride = await bumpedFees(c);
+  // Both are pre-send reads on the critical path of an auto-sell — run them
+  // together rather than back to back. (The balance is only a fallback for
+  // filledFromReceipt; the fee bump makes the sell win its block.)
+  const [quoteBalBefore, feeOverride] = await Promise.all([
+    native
+      ? c.getBalance({ address: account.address })
+      : (c.readContract({
+          address: getAddress(p.pairToken),
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [account.address],
+        }) as Promise<bigint>),
+    bumpedFees(c),
+  ]);
 
   const hash = await wallet.writeContract({
     account,
@@ -164,19 +218,22 @@ export async function sellOnCurve(p: CurveCtx & { tokensInWei: bigint }): Promis
   const receipt = await c.waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error(`sell reverted: ${hash}`);
 
-  let filled: bigint;
-  if (native) {
-    const after = await c.getBalance({ address: account.address });
-    const gasCost = receipt.gasUsed * (receipt.effectiveGasPrice ?? 0n);
-    filled = after - quoteBalBefore + gasCost; // proceeds before gas
-  } else {
-    const after = (await c.readContract({
-      address: getAddress(p.pairToken),
-      abi: erc20Abi,
-      functionName: "balanceOf",
-      args: [account.address],
-    })) as bigint;
-    filled = after - quoteBalBefore;
+  let filled = filledFromReceipt(receipt, p.curve, account.address, "CurveSell");
+  if (filled == null) {
+    // Fallback only — see filledFromReceipt for why this is the weaker path.
+    if (native) {
+      const after = await c.getBalance({ address: account.address });
+      const gasCost = receipt.gasUsed * (receipt.effectiveGasPrice ?? 0n);
+      filled = after - quoteBalBefore + gasCost; // proceeds before gas
+    } else {
+      const after = (await c.readContract({
+        address: getAddress(p.pairToken),
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [account.address],
+      })) as bigint;
+      filled = after - quoteBalBefore;
+    }
   }
 
   const effectivePrice =

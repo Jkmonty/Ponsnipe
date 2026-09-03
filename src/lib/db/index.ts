@@ -8,10 +8,16 @@ import { env } from "../env";
  * Both the Next API routes and the in-process monitor loop use this handle.
  */
 
-let _db: DatabaseSync | undefined;
+/**
+ * globalThis-backed: Next runs instrumentation and route handlers in separate
+ * module registries. A per-registry connection would mean two writers on the
+ * same file, so a monitor write racing an API write could throw SQLITE_BUSY
+ * mid-trade. One process, one connection.
+ */
+const gdb = globalThis as typeof globalThis & { __ponsDb?: DatabaseSync };
 
 export function db(): DatabaseSync {
-  if (_db) return _db;
+  if (gdb.__ponsDb) return gdb.__ponsDb;
   try {
     mkdirSync(dirname(env.databasePath), { recursive: true });
   } catch {
@@ -20,8 +26,9 @@ export function db(): DatabaseSync {
   const conn = new DatabaseSync(env.databasePath);
   conn.exec("PRAGMA journal_mode = WAL;");
   conn.exec("PRAGMA foreign_keys = ON;");
+  conn.exec("PRAGMA busy_timeout = 5000;");
   migrate(conn);
-  _db = conn;
+  gdb.__ponsDb = conn;
   return conn;
 }
 
@@ -55,6 +62,9 @@ function migrate(conn: DatabaseSync): void {
       peak_price        REAL NOT NULL,
       last_price        REAL,
       last_checked_at   TEXT,
+
+      sell_attempts     INTEGER NOT NULL DEFAULT 0,
+      last_dry_run_at   TEXT,
 
       exit_price        REAL,
       quote_out_wei     TEXT,

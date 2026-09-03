@@ -4,9 +4,9 @@
   "private": true,
   "description": "Buy pons.family memecoins on Robinhood Chain with automatic take-profit / stop-loss exits.",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "setup": "tsx scripts/setup.ts",
     "wallet:init": "tsx scripts/wallet-init.ts",

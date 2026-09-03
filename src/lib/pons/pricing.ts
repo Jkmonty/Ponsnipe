@@ -100,7 +100,12 @@ export function quoteSell(
   return { quoteOut: grossQuoteOut - fee - tax, fee, tax, grossQuoteOut };
 }
 
+/**
+ * Floor an expected output by a slippage tolerance.
+ * Clamped to [0, 10000) bps — a value >= 100% would otherwise produce a
+ * negative minimum-out, which on-chain means "accept any fill at all".
+ */
 export function applySlippage(amount: bigint, slippageBps: number): bigint {
-  const bps = BigInt(Math.max(0, Math.round(slippageBps)));
-  return (amount * (BASIS_POINTS - bps)) / BASIS_POINTS;
+  const clamped = Math.min(9_900, Math.max(0, Math.round(slippageBps)));
+  return (amount * (BASIS_POINTS - BigInt(clamped))) / BASIS_POINTS;
 }

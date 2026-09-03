@@ -2,7 +2,14 @@ import { getAddress, type Address, type Log } from "viem";
 import { env } from "../env";
 import { publicClient } from "../chain";
 import { logEngine, pruneEngineLog } from "../db/index";
-import { claimForClosing, listOpenPositions, updatePosition, type PositionRow } from "../db/positions";
+import {
+  claimForClosing,
+  getPosition,
+  listOpenPositions,
+  updatePosition,
+  type CloseReason,
+  type PositionRow,
+} from "../db/positions";
 import { bondingCurveAbi } from "../pons/abis";
 import { priceFromReserves, type CurveReserves } from "../pons/pricing";
 import { evaluateExit } from "./rules";
@@ -70,6 +77,10 @@ const s: MonitorState =
   });
 
 const EVAL_DEBOUNCE_MS = 120;
+/** Don't apply event deltas on top of a baseline older than this. */
+const CACHE_MAX_AGE_MS = 30_000;
+/** A position stuck in `closing` longer than this is re-opened for retry. */
+const STUCK_CLOSING_MS = 180_000;
 
 function noteBlock(bn: bigint): void {
   if (bn === s.lastBlock) return;
@@ -110,14 +121,42 @@ function applyEventDelta(r: CurveReserves, name: string, a: Record<string, bigin
   return r;
 }
 
-/** Shared: persist the price, and sell if a rule trips. `graduated`/`ready` optional. */
-async function evaluateRow(
-  row: PositionRow,
+/**
+ * Fire a sell without blocking the caller.
+ *
+ * The pass must not await this: `waitForTransactionReceipt` can take seconds,
+ * and awaiting it inside the evaluation loop would freeze every OTHER
+ * position's stop-loss until this one settles. `claimForClosing` has already
+ * been taken by the caller, so there is no double-sell risk.
+ */
+function dispatchClose(id: string, reason: CloseReason, symbol: string): void {
+  void closePosition(id, reason, { alreadyClaimed: true }).catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    logEngine("error", `close dispatch threw for ${symbol}: ${msg}`, id);
+    // Never leave it stranded in `closing` — runPass only looks at `open`.
+    try {
+      updatePosition(id, { status: "open", error: `close dispatch threw: ${msg}` });
+    } catch {
+      /* nothing more we can do */
+    }
+  });
+}
+
+/**
+ * Shared: persist the price, and sell if a rule trips.
+ * Re-reads the row so a concurrent writer's newer peak_price is not clobbered
+ * by a stale snapshot (which would loosen a trailing stop).
+ */
+function evaluateRow(
+  rowIn: PositionRow,
   price: number,
   via: string,
   graduated = false,
   ready = false,
-): Promise<void> {
+): void {
+  const row = getPosition(rowIn.id) ?? rowIn;
+  if (row.status !== "open") return;
+
   const decision = evaluateExit(row, price);
   updatePosition(row.id, {
     last_price: price,
@@ -142,7 +181,7 @@ async function evaluateRow(
   if (!claimForClosing(row.id)) return;
   if (via.startsWith("trade-log")) s.fastExits += 1;
   logEngine("info", `exit trigger (${decision.reason}, via ${via}): ${decision.detail}`, row.id);
-  await closePosition(row.id, decision.reason, { alreadyClaimed: true });
+  dispatchClose(row.id, decision.reason, row.token_symbol);
 }
 
 function scheduleEval(reason: string): void {
@@ -161,35 +200,47 @@ function scheduleEval(reason: string): void {
   }
 }
 
-/** The fast path: a trade on a curve we hold — react from the log alone. */
-function onCurveLogs(positionIds: string[], logs: Log[]): void {
-  const open = new Map(listOpenPositions().map((r) => [r.id, r] as const));
-  for (const raw of logs) {
-    const l = raw as Log & { eventName?: string; args?: Record<string, bigint> };
-    if (!l.eventName || (l.eventName !== "CurveBuy" && l.eventName !== "CurveSell")) continue;
-    for (const id of positionIds) {
-      const row = open.get(id);
-      if (!row || row.status !== "open") continue;
-      const cached = s.priceCache.get(id);
-      if (!cached) continue;
-      const next = applyEventDelta(cached, l.eventName, l.args ?? {});
-      s.priceCache.set(id, { ...next, at: Date.now() });
-      void evaluateRow(row, priceOf(row, next), `trade-log:${l.eventName}`);
+/**
+ * The fast path: a trade on a curve we hold — react from the log alone.
+ *
+ * Positions are looked up by CURVE at call time, not captured in the watcher
+ * closure: a second position opened later on the same curve must also get the
+ * fast path, and a closure would still hold the original id list.
+ */
+function onCurveLogs(curveKey: string, logs: Log[]): void {
+  try {
+    const rows = listOpenPositions().filter(
+      (r) => r.status === "open" && r.curve_address.toLowerCase() === curveKey,
+    );
+    if (rows.length === 0) return;
+
+    for (const raw of logs) {
+      const l = raw as Log & { eventName?: string; args?: Record<string, bigint> };
+      if (!l.eventName || (l.eventName !== "CurveBuy" && l.eventName !== "CurveSell")) continue;
+      for (const row of rows) {
+        const cached = s.priceCache.get(row.id);
+        // Only trust the incremental delta against a recently synced baseline;
+        // other curve activity (fee sweeps, buybacks) also moves getReserves().
+        if (!cached || Date.now() - cached.at > CACHE_MAX_AGE_MS) continue;
+        const next = applyEventDelta(cached, l.eventName, l.args ?? {});
+        s.priceCache.set(row.id, { ...next, at: Date.now() });
+        evaluateRow(row, priceOf(row, next), `trade-log:${l.eventName}`);
+      }
     }
+  } catch (err) {
+    // Must never throw out of a watcher callback — an unhandled rejection or
+    // sync throw here would take the whole server down.
+    s.lastError = err instanceof Error ? err.message : String(err);
+    logEngine("error", `curve log handler failed: ${s.lastError}`);
+  } finally {
+    scheduleEval("trade-log"); // authoritative refresh right after
   }
-  scheduleEval("trade-log"); // authoritative refresh right after
 }
 
 /** Add/remove per-curve event watchers to match the current open positions. */
 function reconcileWatchers(open: PositionRow[]): void {
-  // group positions by curve so one watcher covers multiple positions on it
-  const byCurve = new Map<string, string[]>();
-  for (const r of open) {
-    const key = r.curve_address.toLowerCase();
-    const ids = byCurve.get(key);
-    if (ids) ids.push(r.id);
-    else byCurve.set(key, [r.id]);
-  }
+  // One watcher per curve, however many positions sit on it.
+  const byCurve = new Set(open.map((r) => r.curve_address.toLowerCase()));
 
   for (const [key, unwatch] of s.curveWatchers) {
     if (!byCurve.has(key)) {
@@ -202,7 +253,7 @@ function reconcileWatchers(open: PositionRow[]): void {
     }
   }
 
-  for (const [key, ids] of byCurve) {
+  for (const key of byCurve) {
     if (s.curveWatchers.has(key)) continue;
     let addr: Address;
     try {
@@ -216,7 +267,8 @@ function reconcileWatchers(open: PositionRow[]): void {
         abi: bondingCurveAbi,
         poll: true,
         pollingInterval: env.pollingIntervalMs,
-        onLogs: (logs) => onCurveLogs(ids, logs as Log[]),
+        // Pass the curve, not a position-id list — see onCurveLogs.
+        onLogs: (logs) => onCurveLogs(key, logs as Log[]),
         onError: () => {},
       });
       s.curveWatchers.set(key, unwatch);
@@ -226,10 +278,31 @@ function reconcileWatchers(open: PositionRow[]): void {
   }
 }
 
+/**
+ * Re-open positions left in `closing` — a crash mid-sell, or a dispatch that
+ * never resolved, would otherwise strand them: runPass only looks at `open`,
+ * so nothing would ever retry the exit.
+ */
+function reapStuckClosing(): void {
+  const now = Date.now();
+  for (const r of listOpenPositions()) {
+    if (r.status !== "closing") continue;
+    const age = now - Date.parse(r.updated_at);
+    if (Number.isFinite(age) && age > STUCK_CLOSING_MS) {
+      updatePosition(r.id, {
+        status: "open",
+        error: "sell did not complete — re-armed for retry",
+      });
+      logEngine("warn", `re-armed ${r.token_symbol} after a stuck close`, r.id);
+    }
+  }
+}
+
 async function runPass(): Promise<void> {
   if (!s.running) return;
   s.evaluating = true;
   try {
+    reapStuckClosing();
     const open = listOpenPositions().filter((r) => r.status === "open");
     reconcileWatchers(open);
     s.passes += 1;
@@ -260,7 +333,9 @@ async function runPass(): Promise<void> {
       const [quoteReserve, tokenReserve] = rRes.result as readonly [bigint, bigint];
       s.priceCache.set(row.id, { quoteReserve, tokenReserve, at: Date.now() });
 
-      await evaluateRow(
+      // Not awaited internally: evaluateRow dispatches sells without blocking,
+      // so a slow receipt on one position can't stall the others' stop-losses.
+      evaluateRow(
         row,
         priceOf(row, { quoteReserve, tokenReserve }),
         "block",

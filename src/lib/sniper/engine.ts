@@ -18,6 +18,11 @@ interface SniperState {
   unwatch: (() => void) | undefined;
   seen: Set<string>;
   pending: Map<string, ReturnType<typeof setTimeout>>;
+  /** Serialises evaluations so concurrent launches can't bypass the caps. */
+  queue: Promise<void>;
+  /** Buys that have passed the caps but whose rows aren't written yet. */
+  inFlightCount: number;
+  inFlightEth: number;
   launchesSeen: number;
   evaluated: number;
   sniped: number;
@@ -37,6 +42,9 @@ const s: SniperState =
     unwatch: undefined,
     seen: new Set(),
     pending: new Map(),
+    queue: Promise.resolve(),
+    inFlightCount: 0,
+    inFlightEth: 0,
     launchesSeen: 0,
     evaluated: 0,
     sniped: 0,
@@ -146,15 +154,17 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
   }
 
   try {
-    // Safety caps first (cheap, no RPC)
-    if (countOpenBySource("sniper") >= cfg.maxConcurrentSnipes) {
+    // Safety caps. `inFlight*` counts buys that have passed these checks but
+    // whose rows aren't written yet — without it, launches evaluated back to
+    // back would each see a stale zero and blow straight through every cap.
+    if (countOpenBySource("sniper") + s.inFlightCount >= cfg.maxConcurrentSnipes) {
       record("skipped", `at max concurrent snipes (${cfg.maxConcurrentSnipes})`, {
         token: launch.token,
         deployer: launch.deployer,
       });
       return;
     }
-    if (snipesLastHour() >= cfg.maxSnipesPerHour) {
+    if (snipesLastHour() + s.inFlightCount >= cfg.maxSnipesPerHour) {
       record("skipped", `hourly snipe cap (${cfg.maxSnipesPerHour})`, {
         token: launch.token,
         deployer: launch.deployer,
@@ -162,7 +172,7 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
       return;
     }
     const ethAmount = cfg.ethAmount;
-    if (spentTodayEth() + Number(ethAmount) > cfg.maxDailySpendEth) {
+    if (spentTodayEth() + s.inFlightEth + Number(ethAmount) > cfg.maxDailySpendEth) {
       record("skipped", `daily spend cap (${cfg.maxDailySpendEth} ETH)`, {
         token: launch.token,
         deployer: launch.deployer,
@@ -209,18 +219,28 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
       return;
     }
 
-    const buy = await buyOnCurve({
-      curve: getAddress(snapshot.curve!),
-      token: getAddress(launch.token),
-      pairToken: snapshot.pairToken,
-      tokenDecimals: snapshot.decimals,
-      quoteDecimals: snapshot.quoteDecimals,
-      feeBps: snapshot.feeBps,
-      creatorTaxBps: snapshot.creatorTaxBps,
-      reserves: snapshot.reserves,
-      slippageBps: cfg.slippageBps,
-      quoteInWei: ethWei,
-    });
+    // Reserve against the caps for the whole duration of the buy.
+    s.inFlightCount += 1;
+    s.inFlightEth += Number(ethAmount);
+    let buy;
+    try {
+      buy = await buyOnCurve({
+        curve: getAddress(snapshot.curve!),
+        token: getAddress(launch.token),
+        pairToken: snapshot.pairToken,
+        tokenDecimals: snapshot.decimals,
+        quoteDecimals: snapshot.quoteDecimals,
+        feeBps: snapshot.feeBps,
+        creatorTaxBps: snapshot.creatorTaxBps,
+        reserves: snapshot.reserves,
+        slippageBps: cfg.slippageBps,
+        quoteInWei: ethWei,
+      });
+    } finally {
+      s.inFlightCount -= 1;
+      s.inFlightEth -= Number(ethAmount);
+    }
+
     if (buy.filled <= 0n) {
       record("error", "buy returned 0 tokens", {
         token: launch.token,
@@ -231,26 +251,48 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
       return;
     }
 
-    const position = createPosition({
-      tokenAddress: getAddress(launch.token),
-      tokenSymbol: snapshot.symbol,
-      tokenDecimals: snapshot.decimals,
-      curveAddress: getAddress(snapshot.curve!),
-      pairToken: snapshot.pairToken,
-      quoteSymbol: snapshot.quoteSymbol,
-      quoteDecimals: snapshot.quoteDecimals,
-      feeBps: snapshot.feeBps,
-      creatorTaxBps: snapshot.creatorTaxBps,
-      quoteInWei: ethWei,
-      tokensHeldWei: buy.filled,
-      entryPrice: buy.effectivePrice || snapshot.price.priceQuote,
-      buyTx: buy.hash,
-      source: "sniper",
-      takeProfitPct: cfg.takeProfitPct,
-      stopLossPct: cfg.stopLossPct,
-      trailingStopPct: cfg.trailingStopPct,
-      slippageBps: cfg.slippageBps,
-    });
+    // The buy is already on-chain. If we fail to record the position the tokens
+    // become an invisible, unmanaged bag with no stop-loss — so this gets its
+    // own handler that screams loudly enough to recover by hand.
+    let positionId: string | undefined;
+    try {
+      positionId = createPosition({
+        tokenAddress: getAddress(launch.token),
+        tokenSymbol: snapshot.symbol,
+        tokenDecimals: snapshot.decimals,
+        curveAddress: getAddress(snapshot.curve!),
+        pairToken: snapshot.pairToken,
+        quoteSymbol: snapshot.quoteSymbol,
+        quoteDecimals: snapshot.quoteDecimals,
+        feeBps: snapshot.feeBps,
+        creatorTaxBps: snapshot.creatorTaxBps,
+        quoteInWei: ethWei,
+        tokensHeldWei: buy.filled,
+        entryPrice: buy.effectivePrice || snapshot.price.priceQuote,
+        buyTx: buy.hash,
+        source: "sniper",
+        takeProfitPct: cfg.takeProfitPct,
+        stopLossPct: cfg.stopLossPct,
+        trailingStopPct: cfg.trailingStopPct,
+        slippageBps: cfg.slippageBps,
+      }).id;
+    } catch (persistErr) {
+      const pmsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+      record(
+        "error",
+        `BOUGHT BUT NOT TRACKED — ${buy.filled} units of ${launch.token} held with NO stop-loss. ` +
+          `tx ${buy.hash}. Sell manually. Cause: ${pmsg}`,
+        {
+          token: launch.token,
+          symbol: snapshot.symbol,
+          deployer: launch.deployer,
+          ethAmount,
+          buyTx: buy.hash,
+        },
+      );
+      return;
+    }
+
     kickMonitor();
     record("bought", `sniped for ${ethAmount} ETH, tx ${buy.hash}`, {
       token: launch.token,
@@ -258,7 +300,7 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
       deployer: launch.deployer,
       ethAmount,
       buyTx: buy.hash,
-      positionId: position.id,
+      positionId,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -267,7 +309,36 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
   }
 }
 
+/**
+ * Run evaluations strictly one at a time.
+ *
+ * Launches arrive in bursts (9 within one second, observed), and each gets its
+ * own timer. Running them concurrently meant every evaluation read the caps
+ * before any of them had written a position row or a 'bought' event, so
+ * maxConcurrentSnipes / maxSnipesPerHour / maxDailySpendEth were all evaluated
+ * against a stale zero and every launch in the burst bought.
+ */
+function enqueue(launch: LaunchInfo, blockNumber: bigint): void {
+  s.queue = s.queue
+    .then(() => evaluate(launch, blockNumber))
+    .catch((err) => {
+      // A queue link must never reject, or every later launch is dropped.
+      s.lastError = err instanceof Error ? err.message : String(err);
+      logEngine("error", `sniper evaluation threw: ${s.lastError}`);
+    });
+}
+
 function onLaunchLogs(logs: Log[]): void {
+  try {
+    handleLaunchLogs(logs);
+  } catch (err) {
+    // Watcher callbacks must never throw — it would take the server down.
+    s.lastError = err instanceof Error ? err.message : String(err);
+    logEngine("error", `sniper log handler failed: ${s.lastError}`);
+  }
+}
+
+function handleLaunchLogs(logs: Log[]): void {
   const cfg = loadSniperConfig();
   for (const raw of logs) {
     const l = raw as Log & { eventName?: string; args?: Record<string, unknown>; blockNumber: bigint };
@@ -292,7 +363,7 @@ function onLaunchLogs(logs: Log[]): void {
       continue;
     }
     const delayMs = Math.max(0, cfg.delaySeconds) * 1000;
-    const timer = setTimeout(() => void evaluate(launch, l.blockNumber), delayMs);
+    const timer = setTimeout(() => enqueue(launch, l.blockNumber), delayMs);
     if (timer && typeof timer === "object" && "unref" in timer) timer.unref();
     s.pending.set(key, timer);
   }
