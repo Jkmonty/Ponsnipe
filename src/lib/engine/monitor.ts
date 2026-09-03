@@ -1,6 +1,6 @@
 import { getAddress, type Address, type Log } from "viem";
 import { env } from "../env";
-import { publicClient } from "../chain";
+import { publicClient, isWebSocket } from "../chain";
 import { logEngine, pruneEngineLog } from "../db/index";
 import {
   claimForClosing,
@@ -27,9 +27,12 @@ import { hasBotWallet } from "../wallet/botWallet";
  *  2. Every new block -> multicall-price all positions and evaluate.
  *  3. Heartbeat timer -> safety-net full sweep.
  *
- * Absolute speed is still gated by how fast the RPC delivers the log/block. The
- * public Robinhood Chain RPC lags ~1-3s and has no WebSocket; a private RPC gets
- * this to ~1 block. `rpcLagMs` in the status reflects reality.
+ * Absolute speed is gated by how fast the RPC delivers the log/block:
+ *   - public HTTP endpoint: state lags ~1-3s, and we poll on top of that
+ *   - private HTTP endpoint: ~1 block, plus the polling interval
+ *   - WSS_URL set: blocks and logs are PUSHED via eth_subscribe, so the polling
+ *     interval leaves the critical path entirely
+ * `rpcLagMs` and `transport` in the status reflect what you're actually getting.
  */
 
 interface Cached extends CurveReserves {
@@ -295,7 +298,8 @@ function reconcileWatchers(open: PositionRow[]): void {
       const unwatch = publicClient().watchContractEvent({
         address: addr,
         abi: bondingCurveAbi,
-        poll: true,
+        // `poll` omitted on purpose: viem polls on HTTP and uses
+        // eth_subscribe on a WebSocket automatically.
         pollingInterval: env.pollingIntervalMs,
         // Pass the curve, not a position-id list — see onCurveLogs.
         onLogs: (logs) => onCurveLogs(key, logs as Log[]),
@@ -410,7 +414,6 @@ export function startMonitor(): void {
   try {
     s.unwatchBlocks = publicClient().watchBlockNumber({
       emitOnBegin: true,
-      poll: true,
       pollingInterval: env.pollingIntervalMs,
       onBlockNumber: (bn) => {
         noteBlock(bn);
@@ -471,6 +474,7 @@ export function monitorStatus() {
     running: s.running,
     live: isLive(),
     mode: "event" as const,
+    transport: isWebSocket() ? ("websocket" as const) : ("http" as const),
     pollingMs: env.pollingIntervalMs,
     heartbeatMs: env.monitorHeartbeatMs,
     watching: s.curveWatchers.size,

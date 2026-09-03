@@ -16,6 +16,8 @@ export interface FilterInput {
   liquidityEth: number;
   /** Count of buys by wallets other than the deployer during the delay window. */
   otherBuys: number;
+  /** Buys per second across the delay window — momentum, not just a count. */
+  buyVelocity?: number;
 }
 
 export interface FilterResult {
@@ -66,6 +68,16 @@ export function evaluateLaunch(input: FilterInput, cfg: SniperConfig): FilterRes
 
   if (otherBuys < cfg.minOtherBuys) {
     return { buy: false, reason: `only ${otherBuys} other buys (need ${cfg.minOtherBuys})` };
+  }
+
+  if (cfg.minBuyVelocity != null) {
+    const v = input.buyVelocity ?? 0;
+    if (v < cfg.minBuyVelocity) {
+      return {
+        buy: false,
+        reason: `buy velocity ${v.toFixed(2)}/s < ${cfg.minBuyVelocity}/s`,
+      };
+    }
   }
 
   const hay = `${snapshot.symbol} ${snapshot.name}`;

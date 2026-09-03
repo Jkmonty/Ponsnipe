@@ -55,6 +55,7 @@ interface EngineInfo {
     rpcLagMs?: number | null;
     rpcSlow?: boolean;
     pollingMs?: number;
+    transport?: "websocket" | "http";
   };
   recentLog: { ts: string; level: string; message: string }[];
 }
@@ -242,8 +243,11 @@ export default function Dashboard() {
             </div>
             <span className="muted small">
               engine {engine?.status.running ? "running" : "off"}
+              {engine?.status.transport === "websocket" ? " · ws" : ""}
               {engine?.status.running && typeof engine.status.rpcLagMs === "number"
-                ? ` · reacts in ~${(engine.status.rpcLagMs / 1000).toFixed(1)}s`
+                ? ` · reacts in ~${engine.status.rpcLagMs < 1000
+                    ? `${engine.status.rpcLagMs}ms`
+                    : `${(engine.status.rpcLagMs / 1000).toFixed(1)}s`}`
                 : ""}
               {engine?.status.watching ? ` · watching ${engine.status.watching}` : ""}
               {engine?.status.lastError ? " · error (see log)" : ""}

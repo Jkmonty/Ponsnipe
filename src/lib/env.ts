@@ -25,6 +25,12 @@ function num(name: string, fallback: number): number {
 
 export const env = {
   rpcUrl: opt("RPC_URL", "https://rpc.mainnet.chain.robinhood.com"),
+  /**
+   * Optional WebSocket endpoint. When set, the monitor and sniper switch from
+   * polling to eth_subscribe — blocks and curve trades are PUSHED to us, which
+   * removes the polling interval from exit latency entirely.
+   */
+  wssUrl: process.env.WSS_URL?.trim() ?? "",
   chainId: num("CHAIN_ID", 4663),
 
   keystorePassphrase: process.env.KEYSTORE_PASSPHRASE?.trim() ?? "",

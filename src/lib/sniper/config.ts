@@ -43,6 +43,13 @@ export const sniperConfigSchema = z.object({
   /** Require at least this many *other* buys on the curve during the delay window. */
   minOtherBuys: z.number().int().min(0).max(1000),
 
+  /**
+   * Require at least this many buys per second during the delay window.
+   * Distinguishes "3 buyers spread over 20s" from "3 buyers in the last 2s" —
+   * i.e. momentum rather than a trickle. null disables.
+   */
+  minBuyVelocity: z.number().nonnegative().max(100).nullable(),
+
   /** Symbol/name must match this (case-insensitive regex). null = any. */
   nameAllowRegex: z.string().nullable(),
   /** Symbol/name must NOT match this. null = no filter. */
@@ -74,6 +81,7 @@ export const DEFAULT_CONFIG: SniperConfig = {
   maxLiquidityEth: null,
   maxCreatorTaxBps: 300,
   minOtherBuys: 3,
+  minBuyVelocity: null,
   nameAllowRegex: null,
   nameDenyRegex: null,
   deployerAllow: [],

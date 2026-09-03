@@ -1,5 +1,5 @@
 import { getAddress, parseEther, type Address, type Log } from "viem";
-import { publicClient } from "../chain";
+import { publicClient, isWebSocket } from "../chain";
 import { env } from "../env";
 import { db, logEngine } from "../db/index";
 import { PONS } from "../pons/addresses";
@@ -380,7 +380,7 @@ export function startSniper(): void {
       address: PONS.factory,
       abi: ponsFactoryAbi,
       eventName: "TokenLaunched",
-      poll: true,
+      // Pushed via eth_subscribe when WSS_URL is set; polled on HTTP.
       pollingInterval: env.pollingIntervalMs,
       onLogs: (logs) => onLaunchLogs(logs as Log[]),
       onError: () => {},

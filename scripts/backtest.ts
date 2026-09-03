@@ -1,13 +1,19 @@
 /**
  * Backtest the sniper filters + exit rules against real pons launch history.
  *
- *   npm run backtest                 # last 3000 launches
- *   npm run backtest -- --launches 8000 --eth 0.01 --delay 20
+ *   npm run backtest                          # 12 windows across the last 5 days
+ *   npm run backtest -- --days 5 --windows 12 --eth 0.01 --delay 20
+ *   npm run backtest -- --days 1 --windows 6  # tighter, faster
  *
- * Method: replay every CurveBuy/CurveSell on every launched curve, reconstruct
- * the exact reserve/price series from the event fields (the same delta maths the
- * live monitor uses), then run the REAL filter and exit-rule code over it. This
- * exercises production logic rather than a reimplementation of it.
+ * Sampling: a contiguous 5-day scrape is ~4.2M blocks and ~10M trade events —
+ * hours of RPC time and gigabytes of memory. What actually matters is temporal
+ * SPREAD (different times of day, different market moods), so we sample evenly
+ * spaced windows across the range instead. Coverage spans the full period.
+ *
+ * Method: replay every CurveBuy/CurveSell on every launched curve in each
+ * window, reconstruct the exact reserve/price series from the event fields (the
+ * same delta maths the live monitor uses), then run the REAL filter and
+ * exit-rule code over it — validating production logic, not a copy of it.
  *
  * Reads only. Nothing is signed or sent.
  */
@@ -25,7 +31,6 @@ import {
   keccak256,
   toHex,
   parseEther,
-  formatEther,
   getAddress,
   type Address,
 } from "viem";
@@ -38,10 +43,22 @@ import { DEFAULT_CONFIG, type SniperConfig } from "../src/lib/sniper/config";
 import type { PositionRow } from "../src/lib/db/positions";
 import type { TokenSnapshot } from "../src/lib/pons/tokens";
 
-const RPC = process.env.RPC_URL || "https://rpc.mainnet.chain.robinhood.com";
+/**
+ * The backtest deliberately does NOT default to RPC_URL.
+ *
+ * Bulk history needs wide eth_getLogs ranges, and provider free tiers cap them
+ * hard (Alchemy free = 10 blocks, which would turn a 5-day scan into ~424k
+ * requests). The public Robinhood endpoint allows 2000-block ranges — slower
+ * per request but vastly fewer of them. Keep RPC_URL pointed at your fast
+ * provider for the live app; override here only if you have a paid plan.
+ */
+const RPC =
+  process.env.BACKTEST_RPC_URL ||
+  (process.argv.includes("--use-main-rpc") ? process.env.RPC_URL : "") ||
+  "https://rpc.mainnet.chain.robinhood.com";
 const FACTORY = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e" as Address;
 const NATIVE = "0x0000000000000000000000000000000000000000";
-const LOG_CHUNK = 2000n; // public RPC rejects wider no-address ranges
+const LOG_CHUNK = 2000n;
 const MULTICALL_BATCH = 150;
 
 function arg(name: string, dflt: number): number {
@@ -53,27 +70,41 @@ function arg(name: string, dflt: number): number {
   return dflt;
 }
 
-const TARGET_LAUNCHES = arg("launches", 3000);
+const DAYS = arg("days", 5);
+const WINDOWS = arg("windows", 12);
+/** Blocks per sampled window. Half is used for entries, half as forward data. */
+const WINDOW_BLOCKS = BigInt(arg("windowblocks", 30000));
 const ETH_PER_TRADE = String(arg("eth", 0.01));
-const DELAY_SECONDS = arg("delay", DEFAULT_CONFIG.delaySeconds);
-/**
- * Ignore launches too close to the end of the range. Without this, positions
- * opened in the last minutes have no time to reach a take-profit but plenty to
- * hit a stop-loss, which biases every result downward.
- */
-const MIN_FORWARD_MINUTES = arg("minforward", 30);
+const DELAY_SECONDS = arg("delay", 20);
 
-const PRESETS: Record<string, { tp: number | null; sl: number | null; trail: number | null }> = {
-  Safe: { tp: 25, sl: 15, trail: null },
-  Balanced: { tp: 50, sl: 25, trail: null },
-  Moonshot: { tp: 150, sl: 50, trail: null },
-  "Trailing 25%": { tp: null, sl: 50, trail: 25 },
-  "Hold to graduation": { tp: null, sl: null, trail: null },
+/** Exit strategies to compare. `grad` = bail out at % toward graduation. */
+const PRESETS: Record<string, { tp: number | null; sl: number | null; trail: number | null; grad: number | null }> = {
+  "Safe +25/-15": { tp: 25, sl: 15, trail: null, grad: 92 },
+  "Balanced +50/-25": { tp: 50, sl: 25, trail: null, grad: 92 },
+  "Moonshot +150/-50": { tp: 150, sl: 50, trail: null, grad: 92 },
+  "Wide +300/-80": { tp: 300, sl: 80, trail: null, grad: 92 },
+  "TP only +50": { tp: 50, sl: null, trail: null, grad: 92 },
+  "TP only +100": { tp: 100, sl: null, trail: null, grad: 92 },
+  "Trail 25%": { tp: null, sl: null, trail: 25, grad: 92 },
+  "Trail 40%": { tp: null, sl: null, trail: 40, grad: 92 },
+  "No stop, ride to grad": { tp: null, sl: null, trail: null, grad: 92 },
+  /** No exits at all — used to measure how many launches reach graduation. */
+  "Hold, no exits": { tp: null, sl: null, trail: null, grad: null },
+};
+
+/** Filter dimensions to sweep. */
+const SWEEP = {
+  minOtherBuys: [0, 3, 5, 10, 20],
+  minLiquidityEth: [0, 0.05, 0.2, 0.5],
+  minBuyVelocity: [null, 0.2, 0.5, 1] as (number | null)[],
 };
 
 const client = createPublicClient({
-  chain: robinhoodChain, // carries the multicall3 address
-  transport: http(RPC, { batch: true, retryCount: 3, timeout: 30_000 }),
+  chain: robinhoodChain,
+  // No transport-level JSON-RPC batching: the public endpoint mishandles
+  // batched arrays, which breaks the raw eth_getLogs path. Client-level
+  // multicall batching is separate (it aggregates eth_call via multicall3).
+  transport: http(RPC, { retryCount: 3, timeout: 30_000 }),
   batch: { multicall: { wait: 16 } },
 });
 
@@ -90,14 +121,15 @@ interface Launch {
   pairToken: string;
   threshold: bigint;
   block: bigint;
+  window: number;
 }
 interface Trade {
   block: bigint;
   index: number;
   kind: "CurveBuy" | "CurveSell";
-  buyer: string;
-  quote: bigint; // quoteIn (buy) or quoteOut (sell)
-  tokens: bigint; // tokensOut (buy) or tokensIn (sell)
+  actor: string;
+  quote: bigint;
+  tokens: bigint;
   fee: bigint;
   tax: bigint;
 }
@@ -110,126 +142,47 @@ interface CurveMeta {
   decimals: number;
 }
 
-function log(msg: string) {
-  process.stdout.write(`${msg}\n`);
+const log = (m: string) => process.stdout.write(`${m}\n`);
+const prog = (m: string) => process.stdout.write(`\r${m}   `);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The public Robinhood Chain RPC returns 429 under sustained load, so every
+ * call goes through a single-file throttle with exponential backoff. A private
+ * RPC can run far higher — raise --rps to match it.
+ */
+const MIN_INTERVAL_MS = 1000 / Math.max(0.5, arg("rps", 4));
+let lastCall = 0;
+let queue: Promise<unknown> = Promise.resolve();
+let throttleWaits = 0;
+
+function is429(e: unknown): boolean {
+  const s = JSON.stringify((e as { code?: number; details?: string })?.code ?? "") + String(e);
+  return s.includes("429") || /too many requests/i.test(String(e));
 }
 
-/** Walk back in LOG_CHUNK steps until we have enough launches. */
-async function fetchLaunches(head: bigint): Promise<{ launches: Launch[]; fromBlock: bigint }> {
-  const out: Launch[] = [];
-  let to = head;
-  while (out.length < TARGET_LAUNCHES && to > 0n) {
-    const from = to - LOG_CHUNK + 1n > 0n ? to - LOG_CHUNK + 1n : 0n;
-    const logs = await client.getLogs({ address: FACTORY, event: launchEvent, fromBlock: from, toBlock: to });
-    for (const l of logs) {
-      out.push({
-        token: getAddress(l.args.token as string),
-        curve: getAddress(l.args.curve as string),
-        deployer: getAddress(l.args.deployer as string),
-        pairToken: (l.args.pairToken as string).toLowerCase(),
-        threshold: l.args.graduationThreshold as bigint,
-        block: l.blockNumber!,
-      });
+/** Serialise + pace all RPC traffic; retry 429s with backoff. */
+function rpc<T>(fn: () => Promise<T>): Promise<T> {
+  const run = async (): Promise<T> => {
+    for (let attempt = 0; ; attempt++) {
+      const wait = MIN_INTERVAL_MS - (Date.now() - lastCall);
+      if (wait > 0) await sleep(wait);
+      lastCall = Date.now();
+      try {
+        return await fn();
+      } catch (e) {
+        if (!is429(e) || attempt >= 6) throw e;
+        const backoff = Math.min(30_000, 1000 * 2 ** attempt);
+        throttleWaits++;
+        await sleep(backoff);
+      }
     }
-    process.stdout.write(`\r  launches: ${out.length}/${TARGET_LAUNCHES}   `);
-    to = from - 1n;
-  }
-  process.stdout.write("\n");
-  out.sort((a, b) => Number(a.block - b.block));
-  const trimmed = out.slice(-TARGET_LAUNCHES);
-  return { launches: trimmed, fromBlock: trimmed[0]?.block ?? head };
+  };
+  const next = queue.then(run, run);
+  queue = next.catch(() => {});
+  return next;
 }
 
-/** One pass over the range pulling every curve trade, grouped by curve. */
-async function fetchTrades(fromBlock: bigint, head: bigint): Promise<Map<string, Trade[]>> {
-  const byCurve = new Map<string, Trade[]>();
-  let done = 0n;
-  const span = head - fromBlock + 1n;
-  for (let from = fromBlock; from <= head; from += LOG_CHUNK) {
-    const to = from + LOG_CHUNK - 1n > head ? head : from + LOG_CHUNK - 1n;
-    const raw = (await client.request({
-      method: "eth_getLogs",
-      params: [
-        {
-          fromBlock: `0x${from.toString(16)}`,
-          toBlock: `0x${to.toString(16)}`,
-          topics: [[T0_BUY, T0_SELL]],
-        },
-      ],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    })) as any[];
-
-    const parsed = parseEventLogs({ abi: bondingCurveAbi, logs: raw });
-    for (const e of parsed) {
-      if (e.eventName !== "CurveBuy" && e.eventName !== "CurveSell") continue;
-      const key = e.address.toLowerCase();
-      const a = e.args as unknown as Record<string, bigint | string>;
-      const t: Trade = {
-        block: e.blockNumber!,
-        index: e.logIndex!,
-        kind: e.eventName,
-        buyer: String(e.eventName === "CurveBuy" ? a.buyer : a.seller).toLowerCase(),
-        quote: (e.eventName === "CurveBuy" ? a.quoteIn : a.quoteOut) as bigint,
-        tokens: (e.eventName === "CurveBuy" ? a.tokensOut : a.tokensIn) as bigint,
-        fee: a.fee as bigint,
-        tax: a.tax as bigint,
-      };
-      const arr = byCurve.get(key);
-      if (arr) arr.push(t);
-      else byCurve.set(key, [t]);
-    }
-    done = to - fromBlock + 1n;
-    process.stdout.write(
-      `\r  trades: ${((Number(done) / Number(span)) * 100).toFixed(0)}%  (${byCurve.size} curves)   `,
-    );
-  }
-  process.stdout.write("\n");
-  for (const arr of byCurve.values()) {
-    arr.sort((x, y) => (x.block === y.block ? x.index - y.index : Number(x.block - y.block)));
-  }
-  return byCurve;
-}
-
-/** Batch-read the immutables we need to reconstruct each curve. */
-async function fetchMeta(launches: Launch[]): Promise<Map<string, CurveMeta>> {
-  const out = new Map<string, CurveMeta>();
-  for (let i = 0; i < launches.length; i += MULTICALL_BATCH) {
-    const slice = launches.slice(i, i + MULTICALL_BATCH);
-    const contracts = slice.flatMap((l) => [
-      { address: l.curve, abi: bondingCurveAbi, functionName: "getReserves" as const },
-      { address: l.curve, abi: bondingCurveAbi, functionName: "realQuoteReserve" as const },
-      { address: l.curve, abi: bondingCurveAbi, functionName: "feeBps" as const },
-      { address: l.curve, abi: bondingCurveAbi, functionName: "creatorTaxBps" as const },
-      { address: l.token, abi: erc20Abi, functionName: "totalSupply" as const },
-      { address: l.token, abi: erc20Abi, functionName: "symbol" as const },
-      { address: l.token, abi: erc20Abi, functionName: "decimals" as const },
-    ]);
-    const res = await client.multicall({ contracts, allowFailure: true });
-    const N = 7;
-    for (let j = 0; j < slice.length; j++) {
-      const b = j * N;
-      if (res[b].status !== "success" || res[b + 1].status !== "success") continue;
-      const [qRes] = res[b].result as readonly [bigint, bigint];
-      const real = res[b + 1].result as bigint;
-      out.set(slice[j].curve.toLowerCase(), {
-        // quoteReserve = phantom + real, and phantom is immutable
-        phantom: qRes - real,
-        feeBps: res[b + 2].status === "success" ? Number(res[b + 2].result) : 100,
-        creatorTaxBps: res[b + 3].status === "success" ? Number(res[b + 3].result) : 0,
-        supply: res[b + 4].status === "success" ? (res[b + 4].result as bigint) : 10n ** 27n,
-        symbol: res[b + 5].status === "success" ? String(res[b + 5].result) : "???",
-        decimals: res[b + 6].status === "success" ? Number(res[b + 6].result) : 18,
-      });
-    }
-    process.stdout.write(
-      `\r  metadata: ${Math.min(i + MULTICALL_BATCH, launches.length)}/${launches.length}   `,
-    );
-  }
-  process.stdout.write("\n");
-  return out;
-}
-
-/** Apply a trade to reserves — mirrors the live monitor's event delta maths. */
 function applyTrade(r: CurveReserves, t: Trade): CurveReserves {
   if (t.kind === "CurveSell") {
     const gross = t.quote + t.fee + t.tax;
@@ -245,105 +198,128 @@ function applyTrade(r: CurveReserves, t: Trade): CurveReserves {
   };
 }
 
-type Outcome =
-  | { kind: "filtered"; reason: string }
-  | { kind: "no-entry"; reason: string }
-  | { kind: "closed"; reason: string; pnlPct: number; ethOut: number }
-  | { kind: "stranded"; pnlAtGradPct: number }
-  | { kind: "open-at-end"; markPnlPct: number };
+async function getLogsChunked<T>(
+  fromBlock: bigint,
+  toBlock: bigint,
+  fetch: (from: bigint, to: bigint) => Promise<T[]>,
+  onProgress?: (done: bigint, total: bigint) => void,
+): Promise<T[]> {
+  const out: T[] = [];
+  const total = toBlock - fromBlock + 1n;
+  for (let from = fromBlock; from <= toBlock; from += LOG_CHUNK) {
+    const to = from + LOG_CHUNK - 1n > toBlock ? toBlock : from + LOG_CHUNK - 1n;
+    out.push(...(await rpc(() => fetch(from, to))));
+    onProgress?.(to - fromBlock + 1n, total);
+  }
+  return out;
+}
+
+async function fetchMeta(launches: Launch[]): Promise<Map<string, CurveMeta>> {
+  const out = new Map<string, CurveMeta>();
+  for (let i = 0; i < launches.length; i += MULTICALL_BATCH) {
+    const slice = launches.slice(i, i + MULTICALL_BATCH);
+    const contracts = slice.flatMap((l) => [
+      { address: l.curve, abi: bondingCurveAbi, functionName: "getReserves" as const },
+      { address: l.curve, abi: bondingCurveAbi, functionName: "realQuoteReserve" as const },
+      { address: l.curve, abi: bondingCurveAbi, functionName: "feeBps" as const },
+      { address: l.curve, abi: bondingCurveAbi, functionName: "creatorTaxBps" as const },
+      { address: l.token, abi: erc20Abi, functionName: "totalSupply" as const },
+      { address: l.token, abi: erc20Abi, functionName: "symbol" as const },
+      { address: l.token, abi: erc20Abi, functionName: "decimals" as const },
+    ]);
+    const res = await rpc(() => client.multicall({ contracts, allowFailure: true }));
+    const N = 7;
+    for (let j = 0; j < slice.length; j++) {
+      const b = j * N;
+      if (res[b].status !== "success" || res[b + 1].status !== "success") continue;
+      const [qRes] = res[b].result as readonly [bigint, bigint];
+      out.set(slice[j].curve.toLowerCase(), {
+        phantom: qRes - (res[b + 1].result as bigint),
+        feeBps: res[b + 2].status === "success" ? Number(res[b + 2].result) : 100,
+        creatorTaxBps: res[b + 3].status === "success" ? Number(res[b + 3].result) : 0,
+        supply: res[b + 4].status === "success" ? (res[b + 4].result as bigint) : 10n ** 27n,
+        symbol: res[b + 5].status === "success" ? String(res[b + 5].result) : "???",
+        decimals: res[b + 6].status === "success" ? Number(res[b + 6].result) : 18,
+      });
+    }
+    prog(`  metadata ${Math.min(i + MULTICALL_BATCH, launches.length)}/${launches.length}`);
+  }
+  log("");
+  return out;
+}
+
+/** State at the moment we would enter, computed once per launch. */
+interface Entry {
+  launch: Launch;
+  meta: CurveMeta;
+  reserves: CurveReserves; // AFTER our own buy
+  held: bigint;
+  entryPrice: number;
+  liquidityEth: number;
+  otherBuys: number;
+  buyVelocity: number;
+  restIndex: number; // index into trades to continue from
+  snapshot: TokenSnapshot;
+}
 
 function fakeRow(
-  meta: CurveMeta,
-  entryPrice: number,
-  tokens: bigint,
+  e: Entry,
+  preset: { tp: number | null; sl: number | null; trail: number | null; grad: number | null },
   ethIn: bigint,
-  threshold: bigint,
-  preset: { tp: number | null; sl: number | null; trail: number | null },
-  gradExit: number | null,
 ): PositionRow {
   return {
-    id: "bt",
-    status: "open",
-    token_address: "0x",
-    token_symbol: meta.symbol,
-    token_decimals: meta.decimals,
-    curve_address: "0x",
-    pair_token: NATIVE,
-    quote_symbol: "ETH",
-    quote_decimals: 18,
-    fee_bps: meta.feeBps,
-    creator_tax_bps: meta.creatorTaxBps,
-    quote_in_wei: ethIn.toString(),
-    tokens_held_wei: tokens.toString(),
-    entry_price: entryPrice,
-    buy_tx: null,
-    source: "sniper",
-    take_profit_pct: preset.tp,
-    stop_loss_pct: preset.sl,
-    trailing_stop_pct: preset.trail,
-    graduation_exit_pct: gradExit,
-    graduation_threshold_wei: threshold.toString(),
-    slippage_bps: 800,
-    peak_price: entryPrice,
-    last_price: entryPrice,
-    last_checked_at: null,
-    sell_attempts: 0,
-    last_dry_run_at: null,
-    exit_price: null,
-    quote_out_wei: null,
-    realised_pnl_pct: null,
-    sell_tx: null,
-    close_reason: null,
-    error: null,
-    created_at: "",
-    updated_at: "",
+    id: "bt", status: "open", token_address: "0x", token_symbol: e.meta.symbol,
+    token_decimals: e.meta.decimals, curve_address: "0x", pair_token: NATIVE,
+    quote_symbol: "ETH", quote_decimals: 18, fee_bps: e.meta.feeBps,
+    creator_tax_bps: e.meta.creatorTaxBps, quote_in_wei: ethIn.toString(),
+    tokens_held_wei: e.held.toString(), entry_price: e.entryPrice, buy_tx: null,
+    source: "sniper", take_profit_pct: preset.tp, stop_loss_pct: preset.sl,
+    trailing_stop_pct: preset.trail, graduation_exit_pct: preset.grad,
+    graduation_threshold_wei: e.launch.threshold.toString(), slippage_bps: 800,
+    peak_price: e.entryPrice, last_price: e.entryPrice, last_checked_at: null,
+    sell_attempts: 0, last_dry_run_at: null, exit_price: null, quote_out_wei: null,
+    realised_pnl_pct: null, sell_tx: null, close_reason: null, error: null,
+    created_at: "", updated_at: "",
   };
 }
 
-function simulate(
+/** Compute the entry state for a launch, or null if it can't be entered. */
+function buildEntry(
   launch: Launch,
   meta: CurveMeta,
   trades: Trade[],
-  cfg: SniperConfig,
-  preset: { tp: number | null; sl: number | null; trail: number | null },
   entryBlockDelay: bigint,
-  gradExit: number | null,
-): Outcome {
-  const ethIn = parseEther(ETH_PER_TRADE);
+  blockSecs: number,
+  ethIn: bigint,
+): Entry | null {
   let reserves: CurveReserves = { quoteReserve: meta.phantom, tokenReserve: meta.supply };
   const entryBlock = launch.block + entryBlockDelay;
-
-  // Replay up to the entry point.
-  let i = 0;
+  const dep = launch.deployer.toLowerCase();
   const buyers = new Set<string>();
+  let buyCount = 0;
+  let i = 0;
   for (; i < trades.length && trades[i].block < entryBlock; i++) {
     const t = trades[i];
-    if (t.kind === "CurveBuy" && t.buyer !== launch.deployer.toLowerCase()) buyers.add(t.buyer);
+    if (t.kind === "CurveBuy" && t.actor !== dep) {
+      buyers.add(t.actor);
+      buyCount++;
+    }
     reserves = applyTrade(reserves, t);
   }
-  if (reserves.tokenReserve <= 0n || reserves.quoteReserve <= 0n) {
-    return { kind: "no-entry", reason: "curve drained before entry" };
-  }
+  if (reserves.tokenReserve <= 0n || reserves.quoteReserve <= 0n) return null;
 
   const realQuote = reserves.quoteReserve > meta.phantom ? reserves.quoteReserve - meta.phantom : 0n;
-  const priceAtEntry = priceFromReserves(reserves, meta.decimals, 18);
+  const windowSecs = Number(entryBlockDelay) * blockSecs;
+  const q = quoteBuy(ethIn, reserves, BigInt(meta.feeBps), BigInt(meta.creatorTaxBps));
+  if (q.tokensOut <= 0n) return null;
 
-  // Run the REAL sniper filter against reconstructed state.
+  const priceAtEntry = priceFromReserves(reserves, meta.decimals, 18);
   const snapshot = {
-    symbol: meta.symbol,
-    name: meta.symbol,
-    decimals: meta.decimals,
-    venue: "curve",
-    tradeable: true,
-    quoteIsNative: true,
-    quoteSymbol: "ETH",
-    creatorTaxBps: meta.creatorTaxBps,
-    feeBps: meta.feeBps,
-    reserves,
-    price: priceAtEntry,
+    symbol: meta.symbol, name: meta.symbol, decimals: meta.decimals, venue: "curve",
+    tradeable: true, quoteIsNative: true, quoteSymbol: "ETH",
+    creatorTaxBps: meta.creatorTaxBps, feeBps: meta.feeBps, reserves, price: priceAtEntry,
     graduation: {
-      graduated: false,
-      readyToGraduate: false,
+      graduated: false, readyToGraduate: false,
       currentQuote: Number(realQuote) / 1e18,
       thresholdQuote: Number(launch.threshold) / 1e18,
       thresholdWei: launch.threshold,
@@ -351,43 +327,42 @@ function simulate(
     },
   } as unknown as TokenSnapshot;
 
-  const verdict = evaluateLaunch(
-    {
-      launch: {
-        token: launch.token,
-        curve: launch.curve,
-        deployer: launch.deployer,
-        pairToken: launch.pairToken,
-        graduationThreshold: launch.threshold,
-      },
-      snapshot,
-      liquidityEth: Number(realQuote) / 1e18,
-      otherBuys: buyers.size,
-    },
-    cfg,
-  );
-  if (!verdict.buy) return { kind: "filtered", reason: verdict.reason };
-
-  // Simulate our own buy (and its impact on the curve).
-  const q = quoteBuy(ethIn, reserves, BigInt(meta.feeBps), BigInt(meta.creatorTaxBps));
-  if (q.tokensOut <= 0n) return { kind: "no-entry", reason: "zero fill" };
-  const held = q.tokensOut;
-  reserves = applyTrade(reserves, {
-    block: entryBlock,
-    index: 0,
-    kind: "CurveBuy",
-    buyer: "self",
-    quote: ethIn,
-    tokens: held,
-    fee: q.fee,
-    tax: q.tax,
+  const after = applyTrade(reserves, {
+    block: entryBlock, index: 0, kind: "CurveBuy", actor: "self",
+    quote: ethIn, tokens: q.tokensOut, fee: q.fee, tax: q.tax,
   });
 
-  const entryPrice = Number(ethIn) / 1e18 / (Number(held) / 10 ** meta.decimals);
-  const row = fakeRow(meta, entryPrice, held, ethIn, launch.threshold, preset, gradExit);
+  return {
+    launch, meta, reserves: after, held: q.tokensOut,
+    entryPrice: Number(ethIn) / 1e18 / (Number(q.tokensOut) / 10 ** meta.decimals),
+    liquidityEth: Number(realQuote) / 1e18,
+    otherBuys: buyers.size,
+    buyVelocity: windowSecs > 0 ? buyCount / windowSecs : 0,
+    restIndex: i,
+    snapshot,
+  };
+}
 
-  // Walk forward, evaluating the real exit rules after every trade.
-  for (; i < trades.length; i++) {
+type Result =
+  | { kind: "closed"; reason: string; pnlPct: number; ethOut: number }
+  | { kind: "stranded"; pnlPct: number }
+  | { kind: "open"; pnlPct: number };
+
+/** Walk forward from entry applying the real exit rules. */
+function runPreset(
+  e: Entry,
+  trades: Trade[],
+  preset: { tp: number | null; sl: number | null; trail: number | null; grad: number | null },
+  ethIn: bigint,
+): Result {
+  let reserves = e.reserves;
+  const row = fakeRow(e, preset, ethIn);
+  const inEth = Number(ethIn) / 1e18;
+  const { meta, launch } = e;
+  const fee = BigInt(meta.feeBps);
+  const tax = BigInt(meta.creatorTaxBps);
+
+  for (let i = e.restIndex; i < trades.length; i++) {
     reserves = applyTrade(reserves, trades[i]);
     if (reserves.tokenReserve <= 0n || reserves.quoteReserve <= 0n) break;
 
@@ -395,158 +370,242 @@ function simulate(
     const rq = reserves.quoteReserve > meta.phantom ? reserves.quoteReserve - meta.phantom : 0n;
     const gradPct = graduationProgressPct(rq, launch.threshold.toString());
 
-    const decision = evaluateExit(row, { price, graduationPct: gradPct });
-    row.peak_price = decision.peakPrice;
+    const d = evaluateExit(row, { price, graduationPct: gradPct });
+    row.peak_price = d.peakPrice;
     row.last_price = price;
 
-    if (decision.shouldExit && decision.reason) {
-      const s = quoteSell(held, reserves, BigInt(meta.feeBps), BigInt(meta.creatorTaxBps));
+    if (d.shouldExit && d.reason) {
+      const s = quoteSell(e.held, reserves, fee, tax);
       const ethOut = Number(s.quoteOut) / 1e18;
-      const inEth = Number(ethIn) / 1e18;
-      return {
-        kind: "closed",
-        reason: decision.reason,
-        pnlPct: ((ethOut - inEth) / inEth) * 100,
-        ethOut,
-      };
+      return { kind: "closed", reason: d.reason, pnlPct: ((ethOut - inEth) / inEth) * 100, ethOut };
     }
-
-    // Past the threshold the curve stops selling — a real stranded bag.
     if (rq >= launch.threshold) {
-      const s = quoteSell(held, reserves, BigInt(meta.feeBps), BigInt(meta.creatorTaxBps));
-      const inEth = Number(ethIn) / 1e18;
-      return { kind: "stranded", pnlAtGradPct: ((Number(s.quoteOut) / 1e18 - inEth) / inEth) * 100 };
+      const s = quoteSell(e.held, reserves, fee, tax);
+      return { kind: "stranded", pnlPct: ((Number(s.quoteOut) / 1e18 - inEth) / inEth) * 100 };
     }
   }
-
-  const s = quoteSell(held, reserves, BigInt(meta.feeBps), BigInt(meta.creatorTaxBps));
-  const inEth = Number(ethIn) / 1e18;
-  return { kind: "open-at-end", markPnlPct: ((Number(s.quoteOut) / 1e18 - inEth) / inEth) * 100 };
+  const s = quoteSell(e.held, reserves, fee, tax);
+  return { kind: "open", pnlPct: ((Number(s.quoteOut) / 1e18 - inEth) / inEth) * 100 };
 }
 
-function pct(n: number, d: number): string {
-  return d === 0 ? "–" : `${((n / d) * 100).toFixed(0)}%`;
-}
-function median(xs: number[]): number {
+const median = (xs: number[]) => {
   if (!xs.length) return 0;
   const s = [...xs].sort((a, b) => a - b);
   const m = s.length >> 1;
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
+};
 
 async function main() {
-  log(`\npons backtest — ${TARGET_LAUNCHES} launches, ${ETH_PER_TRADE} ETH/trade, ${DELAY_SECONDS}s entry delay`);
-  log(`RPC ${RPC}\n`);
+  log(`\npons backtest — ${WINDOWS} windows across the last ${DAYS} days`);
+  log(`${ETH_PER_TRADE} ETH/trade, ${DELAY_SECONDS}s entry delay`);
+  log(`RPC ${RPC.replace(/\/v2\/.*$/, "/v2/***")}\n`);
 
-  const head = await client.getBlockNumber();
-  log("fetching…");
-  const { launches, fromBlock } = await fetchLaunches(head);
-
-  // calibrate block time so the entry delay is in the right units
-  const [b1, b2] = await Promise.all([
-    client.getBlock({ blockNumber: head }),
-    client.getBlock({ blockNumber: fromBlock }),
-  ]);
-  const blockSecs = Number(b1.timestamp - b2.timestamp) / Number(head - fromBlock);
+  const head = await rpc(() => client.getBlockNumber());
+  const hb = await rpc(() => client.getBlock({ blockNumber: head }));
+  const pb = await rpc(() => client.getBlock({ blockNumber: head - 50_000n }));
+  const blockSecs = Number(hb.timestamp - pb.timestamp) / 50_000;
   const entryBlockDelay = BigInt(Math.max(1, Math.round(DELAY_SECONDS / blockSecs)));
-  const hours = (Number(head - fromBlock) * blockSecs) / 3600;
+  const daySpan = BigInt(Math.round(86400 / blockSecs));
+  const totalSpan = daySpan * BigInt(DAYS);
+  const step = totalSpan / BigInt(WINDOWS);
 
-  const allNative = launches.filter((l) => l.pairToken === NATIVE);
-  // Only trade launches that have MIN_FORWARD_MINUTES of history after them.
-  const forwardBlocks = BigInt(Math.round((MIN_FORWARD_MINUTES * 60) / blockSecs));
-  const cutoff = head - forwardBlocks;
-  const native = allNative.filter((l) => l.block <= cutoff);
-  const tooRecent = allNative.length - native.length;
+  log(`block time ${blockSecs.toFixed(3)}s · entry delay ≈ ${entryBlockDelay} blocks`);
+  log(`sampling ${WINDOWS} × ${WINDOW_BLOCKS} blocks (~${((Number(WINDOW_BLOCKS) * blockSecs) / 60).toFixed(0)}min each) evenly across ${DAYS} days\n`);
 
-  log(
-    `\n${launches.length} launches over ${hours.toFixed(1)}h (block time ${blockSecs.toFixed(3)}s)\n` +
-      `${allNative.length} native-ETH (${pct(allNative.length, launches.length)}) — the rest are ` +
-      `USDG/stock-quoted and not tradeable by this engine yet\n` +
-      `${tooRecent} dropped for having <${MIN_FORWARD_MINUTES}min of forward data ` +
-      `(they could hit a stop but never a target)\n` +
-      `${native.length} simulated · entry delay ${DELAY_SECONDS}s ≈ ${entryBlockDelay} blocks\n`,
-  );
+  const allLaunches: Launch[] = [];
+  const tradesByCurve = new Map<string, Trade[]>();
+  const windowInfo: { idx: number; hoursAgo: number; launches: number }[] = [];
 
-  const trades = await fetchTrades(fromBlock, head);
-  const meta = await fetchMeta(native);
-  log("");
+  for (let w = 0; w < WINDOWS; w++) {
+    const wEnd = head - step * BigInt(w);
+    const wStart = wEnd - WINDOW_BLOCKS + 1n;
+    if (wStart <= 0n) break;
+    const hoursAgo = (Number(head - wEnd) * blockSecs) / 3600;
 
-  const cfg: SniperConfig = { ...DEFAULT_CONFIG, ethAmount: ETH_PER_TRADE, delaySeconds: DELAY_SECONDS };
-
-  // Filter funnel is preset-independent — report it once.
-  let filteredOut = 0;
-  const filterReasons = new Map<string, number>();
-
-  const rows: string[] = [];
-  for (const [name, preset] of Object.entries(PRESETS)) {
-    const closed: Outcome[] = [];
-    let stranded = 0;
-    let openAtEnd = 0;
-    let noEntry = 0;
-    let considered = 0;
-    const strandedPnls: number[] = [];
-    const openPnls: number[] = [];
-    const byReason = new Map<string, number>();
-
-    for (const l of native) {
-      const m = meta.get(l.curve.toLowerCase());
-      if (!m) continue;
-      const t = trades.get(l.curve.toLowerCase()) ?? [];
-      considered++;
-      const gradExit = name === "Hold to graduation" ? null : DEFAULT_CONFIG.graduationExitPct;
-      const o = simulate(l, m, t, cfg, preset, entryBlockDelay, gradExit);
-      if (o.kind === "filtered") {
-        if (name === "Safe") {
-          filteredOut++;
-          filterReasons.set(o.reason, (filterReasons.get(o.reason) ?? 0) + 1);
-        }
-        continue;
-      }
-      if (o.kind === "no-entry") { noEntry++; continue; }
-      if (o.kind === "stranded") { stranded++; strandedPnls.push(o.pnlAtGradPct); continue; }
-      if (o.kind === "open-at-end") { openAtEnd++; openPnls.push(o.markPnlPct); continue; }
-      closed.push(o);
-      byReason.set(o.reason, (byReason.get(o.reason) ?? 0) + 1);
+    const lg = await getLogsChunked(wStart, wEnd, (f, t) =>
+      client.getLogs({ address: FACTORY, event: launchEvent, fromBlock: f, toBlock: t }),
+    );
+    // Only launches in the FIRST half of the window: the second half is their
+    // forward data. Otherwise a launch could hit a stop but never a target.
+    const entryCutoff = wStart + WINDOW_BLOCKS / 2n;
+    let n = 0;
+    for (const l of lg) {
+      if (l.blockNumber! > entryCutoff) continue;
+      allLaunches.push({
+        token: getAddress(l.args.token as string),
+        curve: getAddress(l.args.curve as string),
+        deployer: getAddress(l.args.deployer as string),
+        pairToken: (l.args.pairToken as string).toLowerCase(),
+        threshold: l.args.graduationThreshold as bigint,
+        block: l.blockNumber!,
+        window: w,
+      });
+      n++;
     }
+    windowInfo.push({ idx: w, hoursAgo, launches: n });
 
-    const pnls = closed.map((o) => (o.kind === "closed" ? o.pnlPct : 0));
-    const wins = pnls.filter((p) => p > 0).length;
-    const ethIn = Number(ETH_PER_TRADE);
-    const totalPnlEth = closed.reduce(
-      (s, o) => s + (o.kind === "closed" ? o.ethOut - ethIn : 0),
-      0,
-    );
-    const avg = pnls.length ? pnls.reduce((a, b) => a + b, 0) / pnls.length : 0;
-
-    rows.push(
-      `\n── ${name} ${preset.tp ? `TP +${preset.tp}% ` : ""}${preset.sl ? `SL −${preset.sl}% ` : ""}` +
-        `${preset.trail ? `trail ${preset.trail}% ` : ""}${name === "Hold to graduation" ? "(no exits)" : ""}\n` +
-        `   trades ${closed.length}   win rate ${pct(wins, pnls.length)}   ` +
-        `avg ${avg >= 0 ? "+" : ""}${avg.toFixed(1)}%   median ${median(pnls).toFixed(1)}%\n` +
-        `   net ${totalPnlEth >= 0 ? "+" : ""}${totalPnlEth.toFixed(4)} ETH on ` +
-        `${(closed.length * ethIn).toFixed(2)} ETH deployed\n` +
-        `   exits: ${[...byReason.entries()].map(([r, n]) => `${r} ${n}`).join(", ") || "none"}\n` +
-        `   stranded past graduation ${stranded}` +
-        `${strandedPnls.length ? ` (avg ${median(strandedPnls).toFixed(0)}% at that point)` : ""}` +
-        `   still open at end ${openAtEnd}` +
-        `${openPnls.length ? ` (median ${median(openPnls).toFixed(0)}%)` : ""}` +
-        `   no entry ${noEntry}   considered ${considered}`,
-    );
+    const raw = await getLogsChunked(wStart, wEnd, async (f, t) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (await client.request({
+        method: "eth_getLogs",
+        params: [{ fromBlock: `0x${f.toString(16)}`, toBlock: `0x${t.toString(16)}`, topics: [[T0_BUY, T0_SELL]] }],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      })) as any[];
+    });
+    const parsed = parseEventLogs({ abi: bondingCurveAbi, logs: raw });
+    for (const ev of parsed) {
+      if (ev.eventName !== "CurveBuy" && ev.eventName !== "CurveSell") continue;
+      const a = ev.args as unknown as Record<string, bigint | string>;
+      const t: Trade = {
+        block: ev.blockNumber!, index: ev.logIndex!, kind: ev.eventName,
+        actor: String(ev.eventName === "CurveBuy" ? a.buyer : a.seller).toLowerCase(),
+        quote: (ev.eventName === "CurveBuy" ? a.quoteIn : a.quoteOut) as bigint,
+        tokens: (ev.eventName === "CurveBuy" ? a.tokensOut : a.tokensIn) as bigint,
+        fee: a.fee as bigint, tax: a.tax as bigint,
+      };
+      const key = ev.address.toLowerCase();
+      const arr = tradesByCurve.get(key);
+      if (arr) arr.push(t);
+      else tradesByCurve.set(key, [t]);
+    }
+    prog(`  window ${w + 1}/${WINDOWS} (${hoursAgo.toFixed(0)}h ago) — ${allLaunches.length} launches, ${tradesByCurve.size} curves`);
+  }
+  log("\n");
+  for (const arr of tradesByCurve.values()) {
+    arr.sort((x, y) => (x.block === y.block ? x.index - y.index : Number(x.block - y.block)));
   }
 
-  log(`\n${"═".repeat(78)}`);
-  log(`FILTER FUNNEL (default sniper config)`);
-  log(`  ${native.length} native-ETH launches → ${native.length - filteredOut} passed filters`);
-  for (const [r, n] of [...filterReasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
-    log(`    ${String(n).padStart(5)}  ${r}`);
-  }
-  log(`${"═".repeat(78)}`);
-  for (const r of rows) log(r);
+  const native = allLaunches.filter((l) => l.pairToken === NATIVE);
   log(
-    `\nNotes: fills include the real fee+creator-tax on both legs and our own price\n` +
-      `impact. Entry is ${DELAY_SECONDS}s after launch (past the anti-snipe-tax window).\n` +
-      `"Stranded" = the curve graduated before an exit fired, which is a bag this\n` +
-      `engine cannot currently sell.\n`,
+    `${allLaunches.length} launches sampled across ${DAYS} days · ` +
+      `${native.length} native-ETH (${((native.length / allLaunches.length) * 100).toFixed(0)}%)`,
+  );
+  const meta = await fetchMeta(native);
+
+  // Build entry state once per launch, then run each preset forward once.
+  const ethIn = parseEther(ETH_PER_TRADE);
+  const entries: Entry[] = [];
+  for (const l of native) {
+    const m = meta.get(l.curve.toLowerCase());
+    if (!m) continue;
+    const t = tradesByCurve.get(l.curve.toLowerCase()) ?? [];
+    const e = buildEntry(l, m, t, entryBlockDelay, blockSecs, ethIn);
+    if (e) entries.push(e);
+  }
+  log(`${entries.length} enterable\n`);
+
+  const outcomes = new Map<string, Result[]>();
+  for (const [name, preset] of Object.entries(PRESETS)) {
+    const rs: Result[] = [];
+    for (const e of entries) {
+      rs.push(runPreset(e, tradesByCurve.get(e.launch.curve.toLowerCase()) ?? [], preset, ethIn));
+    }
+    outcomes.set(name, rs);
+    prog(`  simulating ${name}`);
+  }
+  log("\n");
+
+  // ── window spread ────────────────────────────────────────────────────────
+  log("═".repeat(76));
+  log(`SAMPLE SPREAD (${DAYS} days)`);
+  for (const w of windowInfo) log(`  −${w.hoursAgo.toFixed(0).padStart(3)}h   ${String(w.launches).padStart(4)} launches`);
+
+  // ── sweep ────────────────────────────────────────────────────────────────
+  interface Row {
+    filters: string; preset: string; n: number; closed: number; win: number;
+    avg: number; med: number; net: number; stranded: number;
+  }
+  const table: Row[] = [];
+  const inEth = Number(ETH_PER_TRADE);
+
+  for (const mob of SWEEP.minOtherBuys) {
+    for (const mliq of SWEEP.minLiquidityEth) {
+      for (const mvel of SWEEP.minBuyVelocity) {
+        const cfg: SniperConfig = {
+          ...DEFAULT_CONFIG, ethAmount: ETH_PER_TRADE, delaySeconds: DELAY_SECONDS,
+          minOtherBuys: mob, minLiquidityEth: mliq === 0 ? null : mliq,
+          minBuyVelocity: mvel, maxCreatorTaxBps: 2000,
+        };
+        const pass: number[] = [];
+        for (let i = 0; i < entries.length; i++) {
+          const e = entries[i];
+          const v = evaluateLaunch(
+            {
+              launch: {
+                token: e.launch.token, curve: e.launch.curve, deployer: e.launch.deployer,
+                pairToken: e.launch.pairToken, graduationThreshold: e.launch.threshold,
+              },
+              snapshot: e.snapshot, liquidityEth: e.liquidityEth,
+              otherBuys: e.otherBuys, buyVelocity: e.buyVelocity,
+            },
+            cfg,
+          );
+          if (v.buy) pass.push(i);
+        }
+        if (pass.length < 15) continue; // too few to mean anything
+
+        const fname = `buys≥${mob} liq≥${mliq} vel≥${mvel ?? "–"}`;
+        for (const [pname, rs] of outcomes) {
+          const sel = pass.map((i) => rs[i]);
+          if (sel.length < 15) continue;
+          // EVERY entered position counts. Positions still open at the end of
+          // the window are marked to market — excluding them would only ever
+          // discard losers (a no-stop strategy closes solely on wins), which
+          // manufactures a spectacular fake win rate.
+          const pnls = sel.map((r) => r.pnlPct);
+          table.push({
+            filters: fname, preset: pname,
+            n: sel.length,
+            closed: sel.filter((r) => r.kind === "closed").length,
+            win: (pnls.filter((p) => p > 0).length / pnls.length) * 100,
+            avg: pnls.reduce((a, b) => a + b, 0) / pnls.length,
+            med: median(pnls),
+            net: pnls.reduce((s, p) => s + (p / 100) * inEth, 0),
+            stranded: sel.filter((r) => r.kind === "stranded").length,
+          });
+        }
+      }
+    }
+  }
+
+  table.sort((a, b) => b.net - a.net);
+  log(`\n${"═".repeat(76)}`);
+  log(`TOP 15 COMBINATIONS BY NET PnL   (${table.length} tested, min 15 positions each)`);
+  log(`Every entered position counts; unclosed ones are marked to market.`);
+  log(
+    `${"filters".padEnd(26)}${"exit".padEnd(23)}${"n".padStart(5)}${"clsd".padStart(6)}` +
+      `${"win".padStart(6)}${"avg".padStart(8)}${"med".padStart(8)}${"net ETH".padStart(10)}`,
+  );
+  for (const r of table.slice(0, 15)) {
+    log(
+      `${r.filters.padEnd(26)}${r.preset.padEnd(23)}${String(r.n).padStart(5)}${String(r.closed).padStart(6)}` +
+        `${(r.win.toFixed(0) + "%").padStart(6)}${((r.avg >= 0 ? "+" : "") + r.avg.toFixed(1) + "%").padStart(8)}` +
+        `${(r.med.toFixed(1) + "%").padStart(8)}` +
+        `${((r.net >= 0 ? "+" : "") + r.net.toFixed(4)).padStart(10)}`,
+    );
+  }
+  const profitable = table.filter((r) => r.net > 0);
+  log(`\n${profitable.length} of ${table.length} combinations were net profitable.`);
+  if (profitable.length) {
+    log(`Worst tested: ${table[table.length - 1].filters} / ${table[table.length - 1].preset} ` +
+      `→ ${table[table.length - 1].net.toFixed(4)} ETH`);
+  }
+
+  // ── the tail ─────────────────────────────────────────────────────────────
+  // Measured on the preset with NO graduation exit — otherwise the exit fires
+  // first and nothing can ever be recorded as reaching graduation.
+  const anyRs = outcomes.get("Hold, no exits")!;
+  const grads = anyRs.filter((r) => r.kind === "stranded");
+  log(`\n${"═".repeat(76)}`);
+  log(`THE TAIL`);
+  log(`  ${grads.length} of ${entries.length} (${((grads.length / entries.length) * 100).toFixed(2)}%) reached graduation`);
+  if (grads.length) {
+    const gp = grads.map((r) => r.pnlPct);
+    log(`  PnL at that point: median ${median(gp).toFixed(0)}%  best ${Math.max(...gp).toFixed(0)}%`);
+  }
+  log(
+    `\nNotes: fills include the real fee + creator tax on both legs and our own price\n` +
+      `impact. Entry ${DELAY_SECONDS}s after launch. Combos with <15 trades are excluded.\n`,
   );
 }
 

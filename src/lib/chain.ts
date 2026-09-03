@@ -1,4 +1,10 @@
-import { createPublicClient, defineChain, http, type PublicClient } from "viem";
+import {
+  createPublicClient,
+  defineChain,
+  http,
+  webSocket,
+  type PublicClient,
+} from "viem";
 import { env } from "./env";
 
 /** Robinhood Chain — Arbitrum Orbit L2, gas token ETH. */
@@ -22,19 +28,32 @@ export const robinhoodChain = defineChain({
   },
 });
 
-let _public: PublicClient | undefined;
+/**
+ * globalThis-backed so instrumentation and route handlers share one client —
+ * and, with WebSocket, one subscription rather than several.
+ */
+const gc = globalThis as typeof globalThis & { __ponsPublicClient?: PublicClient };
+
+/** True when we're on a WebSocket transport, i.e. events are pushed to us. */
+export function isWebSocket(): boolean {
+  return env.wssUrl.startsWith("ws");
+}
 
 /** Shared read-only RPC client. */
 export function publicClient(): PublicClient {
-  if (!_public) {
-    _public = createPublicClient({
-      chain: robinhoodChain,
-      transport: http(env.rpcUrl, { batch: true, retryCount: 2 }),
-      // Drives watchBlockNumber / watchContractEvent cadence.
-      pollingInterval: env.pollingIntervalMs,
-      // Batch all open-position reads into one eth_call per pass.
-      batch: { multicall: { wait: 16 } },
-    });
-  }
-  return _public;
+  if (gc.__ponsPublicClient) return gc.__ponsPublicClient;
+  gc.__ponsPublicClient = createPublicClient({
+    chain: robinhoodChain,
+    // A WebSocket lets viem use eth_subscribe for blocks and logs, so new
+    // blocks and curve trades arrive as pushes instead of being polled for.
+    // Falls back to HTTP polling when WSS_URL isn't set.
+    transport: isWebSocket()
+      ? webSocket(env.wssUrl, { retryCount: 3, keepAlive: true, reconnect: true })
+      : http(env.rpcUrl, { batch: true, retryCount: 2 }),
+    // Only meaningful on HTTP; harmless otherwise.
+    pollingInterval: env.pollingIntervalMs,
+    // Batch all open-position reads into one eth_call per pass.
+    batch: { multicall: { wait: 16 } },
+  });
+  return gc.__ponsPublicClient;
 }

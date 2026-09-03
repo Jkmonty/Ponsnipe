@@ -20,7 +20,8 @@ async function main() {
   const client = createPublicClient({ transport: http(RPC) });
 
   const [chainId, block] = await Promise.all([client.getChainId(), client.getBlockNumber()]);
-  console.log(`RPC        : ${RPC}`);
+  // Never print the key — provider URLs carry it in the path.
+  console.log(`RPC        : ${RPC.replace(/\/v2\/.*$/, "/v2/***").replace(/([?&]api[-_]?key=)[^&]+/i, "$1***")}`);
   console.log(`chainId    : ${chainId} ${chainId === CHAIN_ID ? "OK" : `EXPECTED ${CHAIN_ID}`}`);
   console.log(`head block : ${block}`);
 
@@ -33,14 +34,17 @@ async function main() {
       event: parseAbiItem(
         "event TokenLaunched(address indexed token, address indexed curve, address indexed deployer, address pairToken, uint256 launchConfigId, uint256 graduationThreshold)",
       ),
-      fromBlock: block - 5000n,
+      // Keep this tiny: provider free tiers cap eth_getLogs ranges hard
+      // (Alchemy free allows only 10 blocks). Bulk history is the backtest's
+      // job, and it uses the public endpoint for exactly this reason.
+      fromBlock: block - 9n,
       toBlock: block,
     })
     .catch((e) => {
       console.log("getLogs error:", e.shortMessage || e.message);
       return [];
     });
-  console.log(`launches in last 5k blocks: ${logs.length}`);
+  console.log(`launches in last 10 blocks: ${logs.length}`);
   for (const l of logs.slice(-3)) {
     console.log(`  token ${l.args.token}  curve ${l.args.curve}`);
   }
