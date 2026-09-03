@@ -131,9 +131,21 @@ interface Curve {
   buysBeforeEntry: number;
   peakRealQuote: bigint;
   peakPrice: number;
-  /** Lowest price seen AFTER the peak — for the dip-then-rip pattern. */
-  troughAfterPeak: number;
-  peakAfterTrough: number;
+
+  /**
+   * Best dip-then-rip cycle: pump to a local peak, dump, then run back up.
+   *
+   * Tracked as a rolling cycle rather than "drawdown from the all-time high" —
+   * the rip we care about usually SETS a new high, so anchoring on the ATH would
+   * erase exactly the pattern we're looking for.
+   */
+  cyclePeak: number; // local high the current dip is measured from
+  cycleLow: number; // lowest price since that high
+  cycleLowLiq: number; // liquidity (ETH) at that low — "would I have bought here?"
+  bestDipDepth: number; // % drop from local peak to the low, for the best cycle
+  bestRipFromDip: number; // % gain off that low
+  bestDipLiq: number; // liquidity at the low of the best cycle
+  blocksToPeak: number;
   graduated: boolean;
   lastActive: bigint;
   entered: boolean;
@@ -164,7 +176,8 @@ db.exec(`
     native INTEGER, tax_bps INTEGER, threshold_eth REAL,
     trades INTEGER, buys INTEGER, sells INTEGER, unique_buyers INTEGER,
     peak_liq_eth REAL, final_liq_eth REAL, peak_price REAL,
-    trough_after_peak REAL, peak_after_trough REAL,
+    best_dip_depth REAL, best_rip_from_dip REAL, best_dip_liq_eth REAL,
+    blocks_to_peak INTEGER,
     graduated INTEGER, lifetime_blocks INTEGER,
     entered INTEGER, entry_price REAL, entry_liq_eth REAL,
     entry_other_buys INTEGER, entry_velocity REAL
@@ -177,13 +190,51 @@ db.exec(`
   CREATE INDEX i_sim ON sims(preset);
 `);
 const insLaunch = db.prepare(
-  `INSERT OR REPLACE INTO launches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  `INSERT OR REPLACE INTO launches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 );
 const insBuyer = db.prepare(`INSERT INTO early_buyers VALUES (?,?,?)`);
 const insSim = db.prepare(`INSERT INTO sims VALUES (?,?,?,?,?)`);
 
 function priceOf(r: CurveReserves): number {
   return priceFromReserves(r, 18, 18).priceQuote;
+}
+
+/** Only count a dip this deep as a real "dump", not noise. */
+const MIN_DIP_DEPTH_PCT = 25;
+
+/**
+ * Advance the rolling dip-then-rip cycle.
+ *
+ * A cycle is: local peak -> dump -> run back up. We keep the BEST (largest rip)
+ * cycle seen, along with how deep the preceding dump was and how much liquidity
+ * sat in the curve at the low — i.e. "could I have bought that dip, and what
+ * would it have paid?".
+ */
+function recordCycle(c: Curve, p: number, liq: number): void {
+  if (p <= 0) return;
+  if (c.cyclePeak === 0) {
+    c.cyclePeak = p;
+    c.cycleLow = p;
+    c.cycleLowLiq = liq;
+    return;
+  }
+  if (p < c.cycleLow) {
+    c.cycleLow = p;
+    c.cycleLowLiq = liq;
+  }
+  const depth = ((c.cyclePeak - c.cycleLow) / c.cyclePeak) * 100;
+  const rip = c.cycleLow > 0 ? ((p - c.cycleLow) / c.cycleLow) * 100 : 0;
+  if (depth >= MIN_DIP_DEPTH_PCT && rip > c.bestRipFromDip) {
+    c.bestRipFromDip = rip;
+    c.bestDipDepth = depth;
+    c.bestDipLiq = c.cycleLowLiq;
+  }
+  // A new high closes this cycle and starts the next one from here.
+  if (p > c.cyclePeak) {
+    c.cyclePeak = p;
+    c.cycleLow = p;
+    c.cycleLowLiq = liq;
+  }
 }
 function realQuote(c: Curve): bigint {
   return c.quoteReserve > PHANTOM ? c.quoteReserve - PHANTOM : 0n;
@@ -196,7 +247,7 @@ function flush(key: string, c: Curve): void {
     c.native ? 1 : 0, Number(c.taxBps ?? 0), Number(c.threshold) / 1e18,
     c.trades, c.buys, c.sells, c.buyers.size,
     Number(c.peakRealQuote) / 1e18, Number(realQuote(c)) / 1e18, c.peakPrice,
-    c.troughAfterPeak, c.peakAfterTrough,
+    c.bestDipDepth, c.bestRipFromDip, c.bestDipLiq, c.blocksToPeak,
     c.graduated ? 1 : 0, lifetime,
     c.entered ? 1 : 0, c.entryPrice, c.entryLiquidity,
     c.buysBeforeEntry, c.entryVelocity,
@@ -320,7 +371,9 @@ async function main() {
         tokenReserve: SUPPLY,
         trades: 0, buys: 0, sells: 0,
         buyers: new Set(), earlyBuyers: [], buysBeforeEntry: 0,
-        peakRealQuote: 0n, peakPrice: 0, troughAfterPeak: Infinity, peakAfterTrough: 0,
+        peakRealQuote: 0n, peakPrice: 0,
+        cyclePeak: 0, cycleLow: 0, cycleLowLiq: 0,
+        bestDipDepth: 0, bestRipFromDip: 0, bestDipLiq: 0, blocksToPeak: 0,
         graduated: false, lastActive: l.blockNumber!,
         entered: false, entryPrice: 0, entryLiquidity: 0, entryVelocity: 0,
         sims: null,
@@ -403,18 +456,12 @@ async function main() {
         if (rq > c.peakRealQuote) c.peakRealQuote = rq;
         if (rq >= c.threshold) c.graduated = true;
         const p = priceOf({ quoteReserve: c.quoteReserve, tokenReserve: c.tokenReserve });
+        const liq = Number(rq) / 1e18;
         if (p > c.peakPrice) {
           c.peakPrice = p;
-          c.troughAfterPeak = Infinity;
-          c.peakAfterTrough = 0;
-        } else if (c.peakPrice > 0) {
-          if (p < c.troughAfterPeak) {
-            c.troughAfterPeak = p;
-            c.peakAfterTrough = p;
-          } else if (p > c.peakAfterTrough) {
-            c.peakAfterTrough = p;
-          }
+          c.blocksToPeak = Number(e.blockNumber! - c.launchBlock);
         }
+        recordCycle(c, p, liq);
       }
       stepSims(c);
     }
