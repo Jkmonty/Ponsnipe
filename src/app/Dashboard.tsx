@@ -39,6 +39,7 @@ interface Position {
   take_profit_pct: number | null;
   stop_loss_pct: number | null;
   trailing_stop_pct: number | null;
+  graduation_exit_pct: number | null;
   sell_tx: string | null;
   close_reason: string | null;
   error: string | null;
@@ -377,6 +378,7 @@ function BuyCard({
   const [sl, setSl] = useState("25");
   const [trail, setTrail] = useState("");
   const [slip, setSlip] = useState("8");
+  const [gradExit, setGradExit] = useState("92");
   const [buying, setBuying] = useState(false);
   const last = useRef("");
 
@@ -424,6 +426,7 @@ function BuyCard({
         tokenAddress: snap.address,
         ethAmount: eth,
         slippageBps: Math.round(Number(slip) * 100),
+        graduationExitPct: gradExit.trim() ? Number(gradExit) : null,
       };
       if (targets.tp != null) body.takeProfitPct = targets.tp;
       if (targets.sl != null) body.stopLossPct = targets.sl;
@@ -571,15 +574,25 @@ function BuyCard({
             </div>
           )}
 
-          <label className="field">
-            <span>Max slippage %</span>
-            <input
-              className="input"
-              value={slip}
-              onChange={(e) => setSlip(e.target.value)}
-              style={{ maxWidth: 120 }}
-            />
-          </label>
+          <div className="row" style={{ gap: 10 }}>
+            <label className="field" style={{ flex: 1, minWidth: 120 }}>
+              <span>Max slippage %</span>
+              <input className="input" value={slip} onChange={(e) => setSlip(e.target.value)} />
+            </label>
+            <label className="field" style={{ flex: 1, minWidth: 160 }}>
+              <span>Bail out at % to graduation</span>
+              <input
+                className="input"
+                value={gradExit}
+                onChange={(e) => setGradExit(e.target.value)}
+                placeholder="off"
+              />
+            </label>
+          </div>
+          <p className="muted small" style={{ margin: "-6px 0 12px" }}>
+            After graduation the curve stops accepting sells and the token moves to a
+            Uniswap v4 pool this app can&apos;t exit yet — so it sells just before.
+          </p>
 
           <button className="btn btn-primary btn-lg" onClick={submit} disabled={buying}>
             {buying
@@ -620,6 +633,7 @@ function PositionCard({
     p.take_profit_pct ? `+${p.take_profit_pct}%` : null,
     p.stop_loss_pct ? `−${p.stop_loss_pct}%` : null,
     p.trailing_stop_pct ? `trail ${p.trailing_stop_pct}%` : null,
+    p.graduation_exit_pct ? `grad ${p.graduation_exit_pct}%` : null,
   ]
     .filter(Boolean)
     .join(" / ");
@@ -694,6 +708,7 @@ interface SniperCfg {
   takeProfitPct: number | null;
   stopLossPct: number | null;
   trailingStopPct: number | null;
+  graduationExitPct: number | null;
   slippageBps: number;
   delaySeconds: number;
   minLiquidityEth: number | null;
@@ -911,6 +926,15 @@ function SniperCard({
                 className="input"
                 value={(cfg.slippageBps / 100).toString()}
                 onChange={(e) => patch({ slippageBps: Math.round((Number(e.target.value) || 0) * 100) })}
+              />
+            </label>
+            <label className="field" style={{ flex: 1, minWidth: 160 }}>
+              <span>Bail out at % to graduation</span>
+              <input
+                className="input"
+                value={cfg.graduationExitPct ?? ""}
+                onChange={(e) => patch({ graduationExitPct: num(e.target.value) })}
+                placeholder="off"
               />
             </label>
           </div>

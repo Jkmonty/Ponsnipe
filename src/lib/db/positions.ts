@@ -8,6 +8,7 @@ export type CloseReason =
   | "take_profit"
   | "stop_loss"
   | "trailing_stop"
+  | "graduation_exit"
   | "manual"
   | "error";
 
@@ -34,6 +35,8 @@ export interface PositionRow {
   take_profit_pct: number | null;
   stop_loss_pct: number | null;
   trailing_stop_pct: number | null;
+  graduation_exit_pct: number | null;
+  graduation_threshold_wei: string | null;
   slippage_bps: number;
 
   peak_price: number;
@@ -71,6 +74,8 @@ export interface NewPosition {
   takeProfitPct: number | null;
   stopLossPct: number | null;
   trailingStopPct: number | null;
+  graduationExitPct?: number | null;
+  graduationThresholdWei?: bigint | null;
   slippageBps: number;
 }
 
@@ -84,9 +89,10 @@ export function createPosition(p: NewPosition): PositionRow {
         token_address, token_symbol, token_decimals, curve_address, pair_token,
         quote_symbol, quote_decimals, fee_bps, creator_tax_bps,
         quote_in_wei, tokens_held_wei, entry_price, buy_tx, source,
-        take_profit_pct, stop_loss_pct, trailing_stop_pct, slippage_bps,
+        take_profit_pct, stop_loss_pct, trailing_stop_pct,
+        graduation_exit_pct, graduation_threshold_wei, slippage_bps,
         peak_price, created_at, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       id,
@@ -108,6 +114,8 @@ export function createPosition(p: NewPosition): PositionRow {
       p.takeProfitPct,
       p.stopLossPct,
       p.trailingStopPct,
+      p.graduationExitPct ?? null,
+      p.graduationThresholdWei != null ? p.graduationThresholdWei.toString() : null,
       p.slippageBps,
       p.entryPrice,
       now,

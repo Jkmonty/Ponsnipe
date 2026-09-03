@@ -12,7 +12,7 @@ import {
 } from "../db/positions";
 import { bondingCurveAbi } from "../pons/abis";
 import { priceFromReserves, type CurveReserves } from "../pons/pricing";
-import { evaluateExit } from "./rules";
+import { evaluateExit, graduationProgressPct, type ExitInputs } from "./rules";
 import { closePosition } from "./executor";
 import { isLive } from "./liveState";
 import { hasBotWallet } from "../wallet/botWallet";
@@ -34,6 +34,13 @@ import { hasBotWallet } from "../wallet/botWallet";
 
 interface Cached extends CurveReserves {
   at: number;
+  /**
+   * The curve's immutable phantom (virtual) quote reserve, derived at sync time
+   * as `getReserves().quote - realQuoteReserve()`. Lets the event fast path
+   * recover real progress toward graduation without another RPC call:
+   * realQuote = quoteReserve - phantom.
+   */
+  phantom: bigint | null;
 }
 interface MonitorState {
   running: boolean;
@@ -81,6 +88,8 @@ const EVAL_DEBOUNCE_MS = 120;
 const CACHE_MAX_AGE_MS = 30_000;
 /** A position stuck in `closing` longer than this is re-opened for retry. */
 const STUCK_CLOSING_MS = 180_000;
+/** How often a dry-run exit may re-announce itself for the same position. */
+const DRY_RUN_REPEAT_MS = 60_000;
 
 function noteBlock(bn: bigint): void {
   if (bn === s.lastBlock) return;
@@ -149,7 +158,7 @@ function dispatchClose(id: string, reason: CloseReason, symbol: string): void {
  */
 function evaluateRow(
   rowIn: PositionRow,
-  price: number,
+  input: ExitInputs,
   via: string,
   graduated = false,
   ready = false,
@@ -157,9 +166,9 @@ function evaluateRow(
   const row = getPosition(rowIn.id) ?? rowIn;
   if (row.status !== "open") return;
 
-  const decision = evaluateExit(row, price);
+  const decision = evaluateExit(row, input);
   updatePosition(row.id, {
-    last_price: price,
+    last_price: input.price,
     peak_price: decision.peakPrice,
     last_checked_at: new Date().toISOString(),
   });
@@ -178,6 +187,14 @@ function evaluateRow(
   }
 
   if (!decision.shouldExit || !decision.reason) return;
+
+  // In dry-run the trigger stays true forever (nothing is sold), so without a
+  // throttle the same exit re-fires on every pass and floods the log.
+  if (!isLive()) {
+    const last = row.last_dry_run_at ? Date.parse(row.last_dry_run_at) : 0;
+    if (Number.isFinite(last) && Date.now() - last < DRY_RUN_REPEAT_MS) return;
+  }
+
   if (!claimForClosing(row.id)) return;
   if (via.startsWith("trade-log")) s.fastExits += 1;
   logEngine("info", `exit trigger (${decision.reason}, via ${via}): ${decision.detail}`, row.id);
@@ -223,8 +240,21 @@ function onCurveLogs(curveKey: string, logs: Log[]): void {
         // other curve activity (fee sweeps, buybacks) also moves getReserves().
         if (!cached || Date.now() - cached.at > CACHE_MAX_AGE_MS) continue;
         const next = applyEventDelta(cached, l.eventName, l.args ?? {});
-        s.priceCache.set(row.id, { ...next, at: Date.now() });
-        evaluateRow(row, priceOf(row, next), `trade-log:${l.eventName}`);
+        s.priceCache.set(row.id, { ...next, at: Date.now(), phantom: cached.phantom });
+        // A buy is exactly what pushes a curve over the graduation threshold,
+        // so the fast path must be able to see progress too.
+        const gradPct =
+          cached.phantom != null
+            ? graduationProgressPct(
+                next.quoteReserve > cached.phantom ? next.quoteReserve - cached.phantom : 0n,
+                row.graduation_threshold_wei,
+              )
+            : undefined;
+        evaluateRow(
+          row,
+          { price: priceOf(row, next), graduationPct: gradPct },
+          `trade-log:${l.eventName}`,
+        );
       }
     }
   } catch (err) {
@@ -313,31 +343,46 @@ async function runPass(): Promise<void> {
       return;
     }
 
+    const PER_POSITION = 4;
     const contracts = open.flatMap((r) => {
       const address = getAddress(r.curve_address);
       return [
         { address, abi: bondingCurveAbi, functionName: "getReserves" as const },
         { address, abi: bondingCurveAbi, functionName: "graduated" as const },
         { address, abi: bondingCurveAbi, functionName: "readyToGraduate" as const },
+        { address, abi: bondingCurveAbi, functionName: "realQuoteReserve" as const },
       ];
     });
     const results = await publicClient().multicall({ contracts, allowFailure: true });
 
     for (let i = 0; i < open.length; i++) {
       const row = open[i];
-      const rRes = results[i * 3];
-      const gRes = results[i * 3 + 1];
-      const yRes = results[i * 3 + 2];
+      const base = i * PER_POSITION;
+      const rRes = results[base];
+      const gRes = results[base + 1];
+      const yRes = results[base + 2];
+      const qRes = results[base + 3];
       if (rRes.status !== "success") continue;
 
       const [quoteReserve, tokenReserve] = rRes.result as readonly [bigint, bigint];
-      s.priceCache.set(row.id, { quoteReserve, tokenReserve, at: Date.now() });
+      const realQuote = qRes.status === "success" ? (qRes.result as bigint) : null;
+      s.priceCache.set(row.id, {
+        quoteReserve,
+        tokenReserve,
+        at: Date.now(),
+        phantom: realQuote != null ? quoteReserve - realQuote : null,
+      });
+
+      const gradPct =
+        realQuote != null
+          ? graduationProgressPct(realQuote, row.graduation_threshold_wei)
+          : undefined;
 
       // Not awaited internally: evaluateRow dispatches sells without blocking,
       // so a slow receipt on one position can't stall the others' stop-losses.
       evaluateRow(
         row,
-        priceOf(row, { quoteReserve, tokenReserve }),
+        { price: priceOf(row, { quoteReserve, tokenReserve }), graduationPct: gradPct },
         "block",
         gRes.status === "success" && gRes.result === true,
         yRes.status === "success" && yRes.result === true,

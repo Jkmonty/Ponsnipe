@@ -57,6 +57,10 @@ function migrate(conn: DatabaseSync): void {
       take_profit_pct   REAL,
       stop_loss_pct     REAL,                    -- stored positive
       trailing_stop_pct REAL,
+      -- Exit when the curve is this far toward graduation (%). Past graduation
+      -- the curve stops accepting sells, so without this a winner strands.
+      graduation_exit_pct    REAL,
+      graduation_threshold_wei TEXT,             -- quote units, from the launch record
       slippage_bps      INTEGER NOT NULL,
 
       peak_price        REAL NOT NULL,

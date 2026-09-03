@@ -36,6 +36,8 @@ export interface TokenSnapshot {
     readyToGraduate: boolean;
     currentQuote: number;
     thresholdQuote: number;
+    /** Raw threshold in quote units — stored on the position for the exit rule. */
+    thresholdWei: bigint;
     progressPct: number;
   };
 
@@ -93,6 +95,7 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
       readyToGraduate: false,
       currentQuote: 0,
       thresholdQuote: GRADUATION_ETH_THRESHOLD,
+      thresholdWei: 0n,
       progressPct: 0,
     },
     tradeable: false,
@@ -155,6 +158,7 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
       readyToGraduate: Boolean(readyToGraduate),
       currentQuote,
       thresholdQuote,
+      thresholdWei: l.graduationThreshold,
       progressPct: thresholdQuote > 0 ? Math.min(100, (currentQuote / thresholdQuote) * 100) : 0,
     },
     tradeable,

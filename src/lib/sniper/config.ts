@@ -18,6 +18,12 @@ export const sniperConfigSchema = z.object({
   takeProfitPct: z.number().positive().max(1_000_000).nullable(),
   stopLossPct: z.number().positive().max(100).nullable(),
   trailingStopPct: z.number().positive().max(100).nullable(),
+  /**
+   * Exit when the curve is this far toward graduation. Past graduation the
+   * curve stops accepting sells, so a sniped winner that runs to the threshold
+   * would otherwise be stranded. null disables.
+   */
+  graduationExitPct: z.number().positive().max(100).nullable(),
   slippageBps: z.number().int().min(10).max(5000),
 
   /**
@@ -61,6 +67,7 @@ export const DEFAULT_CONFIG: SniperConfig = {
   takeProfitPct: 60,
   stopLossPct: 30,
   trailingStopPct: null,
+  graduationExitPct: 92,
   slippageBps: 800,
   delaySeconds: 20,
   minLiquidityEth: 0.05,

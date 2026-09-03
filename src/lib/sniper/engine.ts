@@ -274,6 +274,8 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
         takeProfitPct: cfg.takeProfitPct,
         stopLossPct: cfg.stopLossPct,
         trailingStopPct: cfg.trailingStopPct,
+        graduationExitPct: cfg.graduationExitPct,
+        graduationThresholdWei: snapshot.graduation.thresholdWei,
         slippageBps: cfg.slippageBps,
       }).id;
     } catch (persistErr) {

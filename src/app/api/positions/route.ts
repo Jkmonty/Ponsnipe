@@ -18,6 +18,13 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * Default graduation exit. Past graduation the bonding curve stops accepting
+ * sells and the token only trades in a Uniswap v4 pool, which this engine can't
+ * exit yet — so bail out slightly early by default rather than strand a winner.
+ */
+export const DEFAULT_GRADUATION_EXIT_PCT = 92;
+
 const openSchema = z
   .object({
     tokenAddress: z.string().refine(isAddress, "invalid token address"),
@@ -27,6 +34,8 @@ const openSchema = z
     takeProfitPct: z.number().positive().max(1_000_000).optional(),
     stopLossPct: z.number().positive().max(100).optional(),
     trailingStopPct: z.number().positive().max(100).optional(),
+    /** Exit at this % of the way to graduation; null/absent disables. */
+    graduationExitPct: z.number().positive().max(100).nullable().optional(),
     slippageBps: z.number().int().min(10).max(5000).optional(),
   })
   .refine(
@@ -153,6 +162,11 @@ export async function POST(req: Request) {
         takeProfitPct: input.takeProfitPct ?? null,
         stopLossPct: input.stopLossPct ?? null,
         trailingStopPct: input.trailingStopPct ?? null,
+        graduationExitPct:
+          input.graduationExitPct === undefined
+            ? DEFAULT_GRADUATION_EXIT_PCT
+            : input.graduationExitPct,
+        graduationThresholdWei: snap.graduation.thresholdWei,
         slippageBps,
       });
     } catch (persistErr) {
