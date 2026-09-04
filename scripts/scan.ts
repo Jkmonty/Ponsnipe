@@ -224,8 +224,15 @@ async function rpc<T>(fn: () => Promise<T>): Promise<T> {
       return await fn();
     } catch (e) {
       const s = String(e);
-      if ((!s.includes("429") && !/too many requests/i.test(s)) || attempt >= 6) throw e;
-      await sleep(Math.min(30_000, 1000 * 2 ** attempt));
+      const rateLimited = s.includes("429") || /too many requests/i.test(s);
+      // Sustained volume makes Cloudflare serve a bot challenge instead of the
+      // node. It clears on its own after a while, so it must be waited out, not
+      // treated as fatal — a single 403 used to throw away a whole 60-min scan.
+      const challenged = s.includes("403") || /cf-mitigated|challenge|forbidden/i.test(s);
+      if ((!rateLimited && !challenged) || attempt >= 12) throw e;
+      const base = challenged ? 15_000 : 1_000;
+      const cap = challenged ? 180_000 : 30_000;
+      await sleep(Math.min(cap, base * 2 ** Math.min(attempt, 6)));
     }
   }
 }
