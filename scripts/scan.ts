@@ -58,7 +58,21 @@ const DAYS = arg("days", 5);
 const RPS = arg("rps", 4);
 const ETH_IN = parseEther(String(arg("eth", 0.01)));
 const DELAY_SECONDS = arg("delay", 20);
-const OUT = "./data/scan.sqlite";
+
+/**
+ * snipe — enter every native launch DELAY_SECONDS after it deploys (the
+ *         original sweep; established that blind sniping loses on every exit).
+ * dip   — never enter at launch. Wait for a drawdown off a local high while the
+ *         curve holds a given amount of liquidity, then enter. Each entry rule
+ *         runs its own independent book, so one pass prices the whole grid.
+ */
+const MODE = (() => {
+  const i = process.argv.indexOf("--mode");
+  const v = i >= 0 ? process.argv[i + 1] : "snipe";
+  if (v !== "snipe" && v !== "dip") throw new Error(`--mode must be snipe|dip, got ${v}`);
+  return v;
+})();
+const OUT = MODE === "dip" ? "./data/scan-dip.sqlite" : "./data/scan.sqlite";
 
 /** Verified constants — see the derivation validation in the commit message. */
 const SUPPLY = 10n ** 27n;
@@ -79,6 +93,30 @@ const PRESETS: { name: string; tp: number | null; sl: number | null; trail: numb
   { name: "trail25", tp: null, sl: null, trail: 25, grad: 92 },
   { name: "trail40", tp: null, sl: null, trail: 40, grad: 92 },
   { name: "hold", tp: null, sl: null, trail: null, grad: null },
+];
+
+/**
+ * Dip-entry rules, evaluated on every trade with no lookahead: at this tick,
+ * how far are we off the running local high, and how much real ETH is in the
+ * curve right now? The first tick that satisfies a rule enters it, once.
+ *
+ * The `nodip_*` rules are CONTROLS: same liquidity band, no drawdown required.
+ * If they earn as much as their dip counterpart then the dip is worthless and
+ * the only real signal is "this curve attracted money" — which we must know
+ * before building anything around dip-buying.
+ * `dip25_any` is the other control: the dip with no liquidity filter at all.
+ */
+const ENTRIES: { name: string; dip: number; liqMin: number; liqMax: number }[] = [
+  { name: "dip25_lo", dip: 25, liqMin: 0.1, liqMax: 0.5 },
+  { name: "dip25_mid", dip: 25, liqMin: 0.5, liqMax: 1.0 },
+  { name: "dip25_hi", dip: 25, liqMin: 1.0, liqMax: 2.0 },
+  { name: "dip40_mid", dip: 40, liqMin: 0.5, liqMax: 1.0 },
+  { name: "dip40_hi", dip: 40, liqMin: 1.0, liqMax: 2.0 },
+  { name: "dip25_wide", dip: 25, liqMin: 0.5, liqMax: 2.0 },
+  { name: "dip50_wide", dip: 50, liqMin: 0.5, liqMax: 2.0 },
+  { name: "nodip_mid", dip: 0, liqMin: 0.5, liqMax: 1.0 },
+  { name: "nodip_hi", dip: 0, liqMin: 1.0, liqMax: 2.0 },
+  { name: "dip25_any", dip: 25, liqMin: 0, liqMax: 1e9 },
 ];
 
 const client = createPublicClient({ transport: http(RPC, { retryCount: 3, timeout: 30_000 }) });
@@ -107,7 +145,12 @@ async function rpc<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 interface Sim {
+  /** Book name. In dip mode "<entry>/<exit>", in snipe mode just the exit. */
+  name: string;
+  /** Index into PRESETS — the exit rule this book is running. */
+  exitIdx: number;
   entryPrice: number;
+  entryLiq: number;
   held: bigint;
   peak: number;
   closed: boolean;
@@ -153,6 +196,8 @@ interface Curve {
   entryLiquidity: number;
   entryVelocity: number;
   sims: Sim[] | null;
+  /** dip mode: which entry rules have already fired for this curve. */
+  dipFired: boolean[] | null;
 }
 
 const curves = new Map<string, Curve>();
@@ -183,7 +228,10 @@ db.exec(`
     entry_other_buys INTEGER, entry_velocity REAL
   );
   CREATE TABLE early_buyers (token TEXT, idx INTEGER, wallet TEXT);
-  CREATE TABLE sims (token TEXT, preset TEXT, closed INTEGER, reason TEXT, pnl_pct REAL);
+  CREATE TABLE sims (
+    token TEXT, preset TEXT, closed INTEGER, reason TEXT, pnl_pct REAL,
+    entry_liq REAL, entry_price REAL
+  );
   CREATE INDEX i_lb ON launches(launch_block);
   CREATE INDEX i_dep ON launches(deployer);
   CREATE INDEX i_eb ON early_buyers(wallet);
@@ -193,7 +241,7 @@ const insLaunch = db.prepare(
   `INSERT OR REPLACE INTO launches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 );
 const insBuyer = db.prepare(`INSERT INTO early_buyers VALUES (?,?,?)`);
-const insSim = db.prepare(`INSERT INTO sims VALUES (?,?,?,?,?)`);
+const insSim = db.prepare(`INSERT INTO sims VALUES (?,?,?,?,?,?,?)`);
 
 function priceOf(r: CurveReserves): number {
   return priceFromReserves(r, 18, 18).priceQuote;
@@ -254,9 +302,8 @@ function flush(key: string, c: Curve): void {
   );
   for (let i = 0; i < c.earlyBuyers.length; i++) insBuyer.run(c.token, i, c.earlyBuyers[i]);
   if (c.sims) {
-    for (let i = 0; i < c.sims.length; i++) {
-      const s = c.sims[i];
-      insSim.run(c.token, PRESETS[i].name, s.closed ? 1 : 0, s.reason, s.pnlPct);
+    for (const s of c.sims) {
+      insSim.run(c.token, s.name, s.closed ? 1 : 0, s.reason, s.pnlPct, s.entryLiq, s.entryPrice);
     }
   }
   curves.delete(key);
@@ -275,10 +322,55 @@ function enterSims(c: Curve, blockSecs: number, delayBlocks: bigint): void {
   c.quoteReserve += ETH_IN - q.fee - q.tax;
   c.tokenReserve -= q.tokensOut;
   c.entryPrice = Number(ETH_IN) / 1e18 / (Number(q.tokensOut) / 1e18);
-  c.sims = PRESETS.map(() => ({
-    entryPrice: c.entryPrice, held: q.tokensOut, peak: c.entryPrice,
+  c.sims = PRESETS.map((p, i) => ({
+    name: p.name, exitIdx: i,
+    entryPrice: c.entryPrice, entryLiq: c.entryLiquidity,
+    held: q.tokensOut, peak: c.entryPrice,
     closed: false, reason: "", pnlPct: 0,
   }));
+}
+
+/**
+ * dip mode: open a book per exit rule for entry rule `ei`, at the current tick.
+ *
+ * Unlike snipe mode this does NOT move the shared curve. Ten entry rules fire at
+ * ten different moments; applying each one's buy to the common reserves would
+ * stack ten phantom purchases and corrupt every other book. Our own price impact
+ * is still paid — quoteBuy prices the order against the live reserves — we just
+ * don't leave it behind for the others to trade against.
+ */
+function openDipEntry(c: Curve, ei: number, liq: number): void {
+  const res: CurveReserves = { quoteReserve: c.quoteReserve, tokenReserve: c.tokenReserve };
+  const q = quoteBuy(ETH_IN, res, FEE_BPS, c.taxBps ?? 0n);
+  if (q.tokensOut <= 0n) return;
+  c.dipFired![ei] = true;
+  const entryPrice = Number(ETH_IN) / 1e18 / (Number(q.tokensOut) / 1e18);
+  if (!c.sims) c.sims = [];
+  for (let xi = 0; xi < PRESETS.length; xi++) {
+    c.sims.push({
+      name: `${ENTRIES[ei].name}/${PRESETS[xi].name}`, exitIdx: xi,
+      entryPrice, entryLiq: liq, held: q.tokensOut, peak: entryPrice,
+      closed: false, reason: "", pnlPct: 0,
+    });
+  }
+}
+
+/**
+ * Check every dip rule that has not yet fired against this tick.
+ *
+ * Must be called BEFORE recordCycle, so `cyclePeak` is still the previous local
+ * high — that is the high a live bot would be measuring its drawdown against.
+ */
+function checkDipEntries(c: Curve, price: number, liq: number): void {
+  if (!c.native || !c.dipFired || c.cyclePeak <= 0 || price <= 0) return;
+  const drawdown = ((c.cyclePeak - price) / c.cyclePeak) * 100;
+  for (let ei = 0; ei < ENTRIES.length; ei++) {
+    if (c.dipFired[ei]) continue;
+    const r = ENTRIES[ei];
+    if (drawdown < r.dip) continue;
+    if (liq < r.liqMin || liq > r.liqMax) continue;
+    openDipEntry(c, ei, liq);
+  }
 }
 
 /** Advance every open sim on this curve after a trade. */
@@ -291,10 +383,9 @@ function stepSims(c: Curve): void {
   const gradPct = c.threshold > 0n ? (Number(rq) / Number(c.threshold)) * 100 : 0;
   const inEth = Number(ETH_IN) / 1e18;
 
-  for (let i = 0; i < c.sims.length; i++) {
-    const s = c.sims[i];
+  for (const s of c.sims) {
     if (s.closed) continue;
-    const p = PRESETS[i];
+    const p = PRESETS[s.exitIdx];
     if (price > s.peak) s.peak = price;
     const pnl = ((price - s.entryPrice) / s.entryPrice) * 100;
 
@@ -345,7 +436,11 @@ async function main() {
   console.log(`RPC ${RPC}`);
   console.log(`blocks ${start} → ${head} (${spanBlocks}, block time ${blockSecs.toFixed(3)}s)`);
   console.log(`${totalChunks} chunks × 2 requests at ${RPS}/s → ~${((totalChunks * 2) / RPS / 60).toFixed(0)} min`);
-  console.log(`entry ${DELAY_SECONDS}s (${delayBlocks} blocks) after launch, ${Number(ETH_IN) / 1e18} ETH\n`);
+  console.log(
+    MODE === "dip"
+      ? `mode dip — ${ENTRIES.length} entry rules × ${PRESETS.length} exits, ${Number(ETH_IN) / 1e18} ETH\n`
+      : `mode snipe — entry ${DELAY_SECONDS}s (${delayBlocks} blocks) after launch, ${Number(ETH_IN) / 1e18} ETH\n`,
+  );
 
   const t0 = Date.now();
   let chunk = 0;
@@ -377,6 +472,7 @@ async function main() {
         graduated: false, lastActive: l.blockNumber!,
         entered: false, entryPrice: 0, entryLiquidity: 0, entryVelocity: 0,
         sims: null,
+        dipFired: MODE === "dip" ? new Array(ENTRIES.length).fill(false) : null,
       });
       launchCount++;
     }
@@ -446,7 +542,7 @@ async function main() {
       }
 
       // enter once we're past the delay
-      if (!c.entered && c.native && e.blockNumber! >= c.launchBlock + delayBlocks) {
+      if (MODE === "snipe" && !c.entered && c.native && e.blockNumber! >= c.launchBlock + delayBlocks) {
         enterSims(c, blockSecs, delayBlocks);
       }
 
@@ -461,6 +557,8 @@ async function main() {
           c.peakPrice = p;
           c.blocksToPeak = Number(e.blockNumber! - c.launchBlock);
         }
+        // Before recordCycle: cyclePeak is still the high we are dipping from.
+        if (MODE === "dip") checkDipEntries(c, p, liq);
         recordCycle(c, p, liq);
       }
       stepSims(c);
@@ -504,6 +602,31 @@ async function main() {
     `SELECT COUNT(*) n, SUM(native) nat, SUM(entered) ent, SUM(graduated) grad FROM launches`,
   ).get() as Record<string, number>;
   console.log(`  rows       ${row.n}  native ${row.nat}  entered ${row.ent}  graduated ${row.grad}`);
+
+  if (MODE === "dip") {
+    // Every book is 0.01 ETH per entry, so net ETH is directly comparable
+    // across rules even though each rule fires a different number of times.
+    const inEth = Number(ETH_IN) / 1e18;
+    const rows = db.prepare(
+      `SELECT preset, COUNT(*) n,
+              AVG(pnl_pct) avg_pnl,
+              SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) wins,
+              SUM(pnl_pct) / 100.0 * ? net
+       FROM sims GROUP BY preset ORDER BY net DESC`,
+    ).all(inEth) as unknown as Record<string, number | string>[];
+
+    console.log(`\n  DIP-ENTRY GRID — every book enters ${inEth} ETH per signal`);
+    console.log(`  ${"book".padEnd(22)}${"n".padStart(7)}${"win".padStart(8)}${"avg".padStart(9)}${"net ETH".padStart(11)}`);
+    for (const r of rows) {
+      const n = Number(r.n);
+      console.log(
+        `  ${String(r.preset).padEnd(22)}${String(n).padStart(7)}` +
+          `${((Number(r.wins) / n) * 100).toFixed(2).padStart(7)}%` +
+          `${Number(r.avg_pnl).toFixed(1).padStart(8)}%` +
+          `${Number(r.net).toFixed(4).padStart(11)}`,
+      );
+    }
+  }
   console.log(`\nwritten to ${OUT}\n`);
 }
 
