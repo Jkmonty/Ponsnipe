@@ -14,7 +14,8 @@
     "backtest": "tsx scripts/backtest.ts",
     "scan": "tsx scripts/scan.ts",
     "analyse": "tsx scripts/analyse.ts",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "migration": "tsx scripts/migration.ts"
   },
   "dependencies": {
     "next": "^16.3.4",
