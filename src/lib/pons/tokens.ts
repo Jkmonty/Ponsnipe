@@ -124,9 +124,13 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
     : await erc20Meta(pairToken).then((m) => ({ symbol: m.symbol, decimals: m.decimals }));
 
   const [reservesRaw, graduated, readyToGraduate, feeBps, realQuoteReserve, logo] = await Promise.all([
-    c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "getReserves" }) as Promise<
+    // Not every address the factory points at answers getReserves — a curve
+    // can be mid-migration, or the launch config can use a shape we do not
+    // know. Returning zeros marks it untradeable instead of throwing the whole
+    // evaluation away, which was surfacing as an engine error on the feed.
+    (c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "getReserves" }) as Promise<
       readonly [bigint, bigint]
-    >,
+    >).catch(() => [0n, 0n] as readonly [bigint, bigint]),
     c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "graduated" }).catch(() => false),
     c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "readyToGraduate" }).catch(() => false),
     c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "feeBps" }).then(Number).catch(() => 100),
@@ -145,7 +149,8 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
   const currentQuote = Number(realQuoteReserve as bigint) / 10 ** quoteMeta.decimals;
   const isGraduated = Boolean(graduated) || l.phase !== 0;
 
-  const tradeable = !isGraduated && !readyToGraduate;
+  const priceable = reserves.quoteReserve > 0n && reserves.tokenReserve > 0n;
+  const tradeable = !isGraduated && !readyToGraduate && priceable;
 
   return {
     ...base,
@@ -170,7 +175,9 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
       progressPct: thresholdQuote > 0 ? Math.min(100, (currentQuote / thresholdQuote) * 100) : 0,
     },
     tradeable,
-    reason: isGraduated
+    reason: !priceable
+      ? "curve did not report reserves"
+      : isGraduated
       ? "graduated to a Uniswap v4 pool — sell via pons.family for now"
       : readyToGraduate
         ? "curve is about to graduate — trading paused"

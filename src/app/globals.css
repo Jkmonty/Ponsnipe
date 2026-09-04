@@ -32,8 +32,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/*
+ * Wide enough for the feeds to flank the controls. The middle column keeps the
+ * original 780px reading width via the grid, so the parts you actually read
+ * never get wider than they were.
+ */
 .wrap {
-  max-width: 780px;
+  max-width: 1460px;
   margin: 0 auto;
   padding: 28px 18px 80px;
 }
@@ -336,69 +341,94 @@ a:hover {
   text-decoration: underline;
 }
 
-/* ── live launch feed ─────────────────────────────────────────────────────── */
+/* ── live feeds ───────────────────────────────────────────────────────────── */
+/*
+ * Three columns: the feeds flank the controls so nothing important needs
+ * scrolling. Below 1200px they fall under the main column rather than being
+ * squeezed, because a 3-across layout stops being readable well before it
+ * stops fitting.
+ */
+.cols3 {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 780px) minmax(0, 300px);
+  justify-content: center;
+  gap: 14px;
+  align-items: start;
+}
+.colmain { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.colside { min-width: 0; position: sticky; top: 12px; }
+@media (max-width: 1200px) {
+  .cols3 { grid-template-columns: 1fr; }
+  .colside { position: static; }
+}
+
 .feed {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  max-height: 460px;
+  gap: 3px;
+  max-height: 68vh;
   overflow-y: auto;
 }
+/*
+ * Rows STACK rather than sitting in columns. The panel is narrow, and a
+ * side-by-side grid made the symbol, stats and verdict overlap each other.
+ */
 .feedrow {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) auto minmax(0, 1fr);
-  gap: 10px;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   padding: 7px 9px;
   border-radius: 7px;
   border-left: 3px solid transparent;
+  min-width: 0;
 }
 .feedrow:nth-child(odd) { background: rgba(255, 255, 255, 0.025); }
-/* The ones worth looking at get the accent; everything else stays quiet. */
 .feedrow.want {
   border-left-color: var(--good, #35c46b);
   background: rgba(53, 196, 107, 0.09);
 }
-.feedmain { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.fsym { font-weight: 650; letter-spacing: 0.01em; }
-.feedstats { display: flex; gap: 12px; color: var(--muted, #8b93a7); white-space: nowrap; }
+.feedrow.grad { border-left-color: #7c9cff; background: rgba(124, 156, 255, 0.08); }
+
+.feedmain { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.fsym {
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 46%;
+}
+.feedstats {
+  display: flex;
+  gap: 10px;
+  color: var(--muted, #8b93a7);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
 .feedverdict {
-  text-align: right;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .feedverdict.warn { color: #e8b339; font-weight: 600; }
+
 .qchip {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 999px;
   border: 1px solid currentColor;
   opacity: 0.85;
+  flex: 0 0 auto;
 }
 .q-eth { color: #7c9cff; }
 .q-usdg { color: #35c46b; }
-.q-\? { color: #8b93a7; }
-@media (max-width: 720px) {
-  .feedrow { grid-template-columns: 1fr; gap: 3px; }
-  .feedverdict { text-align: left; }
-}
 
-/* Two feeds side by side so neither needs scrolling to reach. */
-.feedcols {
-  display: grid;
-  grid-template-columns: 1.35fr 1fr;
-  gap: 14px;
-  align-items: start;
-}
-@media (max-width: 900px) {
-  .feedcols { grid-template-columns: 1fr; }
-}
 .ticon {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   object-fit: cover;
   flex: 0 0 auto;
@@ -408,13 +438,8 @@ a:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   color: var(--muted, #8b93a7);
   border: 1px solid rgba(255, 255, 255, 0.12);
-}
-.feedrow.grad {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
-  border-left-color: #7c9cff;
-  background: rgba(124, 156, 255, 0.08);
 }

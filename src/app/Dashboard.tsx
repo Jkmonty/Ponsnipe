@@ -202,6 +202,12 @@ export default function Dashboard() {
         </div>
       )}
 
+      <div className="cols3">
+        <aside className="colside">
+          <LaunchFeed />
+        </aside>
+
+        <div className="colmain">
       {/* ── setup / wallet ─────────────────────────────────────────── */}
       {!wallet?.configured ? (
         <div className="card">
@@ -261,7 +267,6 @@ export default function Dashboard() {
 
       {/* ── sniper ─────────────────────────────────────────────────── */}
       <SniperCard funded={!!funded} flash={flash} />
-      <FeedRow />
 
       {/* ── open positions ─────────────────────────────────────────── */}
       <div className="card">
@@ -315,6 +320,13 @@ export default function Dashboard() {
             )}
           </div>
         </details>
+      </div>
+
+        </div>
+
+        <aside className="colside">
+          <GraduatedFeed />
+        </aside>
       </div>
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.msg}</div>}
@@ -1146,8 +1158,7 @@ function LaunchFeed() {
               <span className={`qchip q-${(e.quote_symbol ?? "?").toLowerCase()}`}>
                 {e.quote_symbol ?? "?"}
               </span>
-              <span className="mono small muted">{e.token_address.slice(0, 10)}…</span>
-              <span className="small muted">{age(e.ts)}</span>
+              <span className="small muted" style={{ marginLeft: "auto" }}>{age(e.ts)}</span>
             </div>
             <div className="feedstats small">
               <span title="liquidity in the curve's own quote token">
@@ -1223,9 +1234,9 @@ function GraduatedFeed() {
               <span className={`qchip q-${(r.quote_symbol ?? "?").toLowerCase()}`}>
                 {r.quote_symbol ?? "?"}
               </span>
-              <span className="small muted">{age(r.ts)}</span>
+              <span className="small muted" style={{ marginLeft: "auto" }}>{age(r.ts)}</span>
             </div>
-            <div className="feedverdict small muted">{r.token_name ?? ""}</div>
+            <div className="feedverdict muted">{r.token_name ?? ""}</div>
           </div>
         ))}
       </div>
@@ -1233,12 +1244,3 @@ function GraduatedFeed() {
   );
 }
 
-/** New pairs on the left, migrated on the right, both on one screen. */
-function FeedRow() {
-  return (
-    <div className="feedcols">
-      <LaunchFeed />
-      <GraduatedFeed />
-    </div>
-  );
-}
