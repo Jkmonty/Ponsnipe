@@ -34,9 +34,14 @@ try {
 }
 
 import { createPublicClient, http, parseEventLogs, keccak256, toHex, type Address } from "viem";
+import { robinhoodChain } from "../src/lib/chain";
+import { ponsFactoryAbi } from "../src/lib/pons/abis";
+import { PONS } from "../src/lib/pons/addresses";
 
 const RPC = process.env.BACKTEST_RPC_URL || "https://rpc.mainnet.chain.robinhood.com";
 const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951" as Address;
+/** getLaunchedToken calls per multicall. */
+const VERIFY_BATCH = 300;
 /** Initialize is sparse, so pass 1 can take big bites. */
 const INIT_CHUNK = 20_000n;
 /** Pool ids per Swap query. Bigger batches mean more splitting, not fewer bytes. */
@@ -87,7 +92,10 @@ const v4Abi = [
   },
 ] as const;
 
-const client = createPublicClient({ transport: http(RPC, { retryCount: 3, timeout: 60_000 }) });
+const client = createPublicClient({
+  chain: robinhoodChain,
+  transport: http(RPC, { retryCount: 3, timeout: 60_000 }),
+});
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MIN_INTERVAL = 1000 / Math.max(0.5, RPS);
 let lastCall = 0;
@@ -225,6 +233,44 @@ async function main() {
   console.log("");
   if (!pools.length) {
     console.log("no pools with a full hour of forward data in this window\n");
+    return;
+  }
+
+  // ── verify: which of these pools are actually pons graduations? ───────────
+  // Far more native-ETH v4 pools open on this chain than pons graduates — 4706
+  // in 17h against ~110 expected — so the pool set has to be filtered or the
+  // measurement is of some entirely different market. Every pons pool opens at
+  // the same price in theory (4.2 ETH against 10/49 of supply), but migration
+  // fees jitter it, so ask the factory instead of matching on a number.
+  const found = pools.length;
+  const verified: Pool[] = [];
+  for (let i = 0; i < pools.length; i += VERIFY_BATCH) {
+    const batch = pools.slice(i, i + VERIFY_BATCH);
+    const res = await rpc(() =>
+      client.multicall({
+        contracts: batch.map((p) => ({
+          address: PONS.factory,
+          abi: ponsFactoryAbi,
+          functionName: "getLaunchedToken" as const,
+          args: [p.token as Address],
+        })),
+        allowFailure: true,
+      }),
+    );
+    for (let k = 0; k < batch.length; k++) {
+      const r = res[k];
+      if (r.status !== "success") continue;
+      const info = r.result as unknown as { exists: boolean };
+      if (info?.exists) verified.push(batch[k]);
+    }
+    process.stdout.write(`\r  verify: ${verified.length} pons pools of ${Math.min(i + VERIFY_BATCH, pools.length)} checked  (${requests} requests)   `);
+  }
+  console.log("");
+  pools.length = 0;
+  pools.push(...verified);
+  console.log(`  ${found} native-ETH pools opened, ${pools.length} of them are pons graduations\n`);
+  if (!pools.length) {
+    console.log("no pons pools with a full hour of forward data in this window\n");
     return;
   }
 
