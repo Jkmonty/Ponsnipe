@@ -65,14 +65,27 @@ const DELAY_SECONDS = arg("delay", 20);
  * dip   — never enter at launch. Wait for a drawdown off a local high while the
  *         curve holds a given amount of liquidity, then enter. Each entry rule
  *         runs its own independent book, so one pass prices the whole grid.
+ *         Result: the drawdown is an ANTI-signal — every no-dip control beat its
+ *         dip twin. The liquidity band survived; the dip did not.
+ * rep   — the liquidity band that survived, gated on buyer reputation: how many
+ *         of this curve's buyers so far have ALREADY been early on a token that
+ *         graduated. The last positive signal in the dataset (4+ proven buyers
+ *         graduate at 3.64% vs a 1.46% baseline); this asks whether that lift
+ *         stacks on top of liquidity or is merely correlated with it.
  */
 const MODE = (() => {
   const i = process.argv.indexOf("--mode");
   const v = i >= 0 ? process.argv[i + 1] : "snipe";
-  if (v !== "snipe" && v !== "dip") throw new Error(`--mode must be snipe|dip, got ${v}`);
+  if (v !== "snipe" && v !== "dip" && v !== "rep" && v !== "grad") {
+    throw new Error(`--mode must be snipe|dip|rep|grad, got ${v}`);
+  }
   return v;
 })();
-const OUT = MODE === "dip" ? "./data/scan-dip.sqlite" : "./data/scan.sqlite";
+const OUT =
+  MODE === "dip" ? "./data/scan-dip.sqlite"
+  : MODE === "rep" ? "./data/scan-rep.sqlite"
+  : MODE === "grad" ? "./data/scan-grad.sqlite"
+  : "./data/scan.sqlite";
 
 /** Verified constants — see the derivation validation in the commit message. */
 const SUPPLY = 10n ** 27n;
@@ -106,7 +119,7 @@ const PRESETS: { name: string; tp: number | null; sl: number | null; trail: numb
  * before building anything around dip-buying.
  * `dip25_any` is the other control: the dip with no liquidity filter at all.
  */
-const ENTRIES: { name: string; dip: number; liqMin: number; liqMax: number }[] = [
+const ENTRIES_DIP: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number }[] = [
   { name: "dip25_lo", dip: 25, liqMin: 0.1, liqMax: 0.5 },
   { name: "dip25_mid", dip: 25, liqMin: 0.5, liqMax: 1.0 },
   { name: "dip25_hi", dip: 25, liqMin: 1.0, liqMax: 2.0 },
@@ -118,6 +131,79 @@ const ENTRIES: { name: string; dip: number; liqMin: number; liqMax: number }[] =
   { name: "nodip_hi", dip: 0, liqMin: 1.0, liqMax: 2.0 },
   { name: "dip25_any", dip: 25, liqMin: 0, liqMax: 1e9 },
 ];
+
+/**
+ * Reputation rules. `minProven` counts, at the moment of entry, how many of this
+ * curve's non-deployer buyers so far were ALREADY early on a token that
+ * graduated earlier in the scan.
+ *
+ * The `_p0` rules are the controls — the identical liquidity band with no
+ * reputation requirement, i.e. exactly the `nodip_*` books from dip mode. If
+ * `_p4` does not beat `_p0` then the buyer signal is merely correlated with
+ * liquidity and adds nothing once you already filter on it. `rep_any_p*` drops
+ * the liquidity band instead, to price the buyer signal on its own.
+ */
+const ENTRIES_REP: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number }[] = [
+  { name: "rep_hi_p0", dip: 0, liqMin: 1.0, liqMax: 2.0, minProven: 0 },
+  { name: "rep_hi_p1", dip: 0, liqMin: 1.0, liqMax: 2.0, minProven: 1 },
+  { name: "rep_hi_p2", dip: 0, liqMin: 1.0, liqMax: 2.0, minProven: 2 },
+  { name: "rep_hi_p4", dip: 0, liqMin: 1.0, liqMax: 2.0, minProven: 4 },
+  { name: "rep_mid_p0", dip: 0, liqMin: 0.5, liqMax: 1.0, minProven: 0 },
+  { name: "rep_mid_p2", dip: 0, liqMin: 0.5, liqMax: 1.0, minProven: 2 },
+  { name: "rep_mid_p4", dip: 0, liqMin: 0.5, liqMax: 1.0, minProven: 4 },
+  { name: "rep_any_p2", dip: 0, liqMin: 0, liqMax: 1e9, minProven: 2 },
+  { name: "rep_any_p4", dip: 0, liqMin: 0, liqMax: 1e9, minProven: 4 },
+  { name: "rep_any_p6", dip: 0, liqMin: 0, liqMax: 1e9, minProven: 6 },
+];
+
+/**
+ * Migration rules: enter on how far the curve has already funded toward its
+ * graduation threshold, in bands. Graduation is the only event in this dataset
+ * that reliably pays (+224.8% average on graduation exits), so this asks the
+ * obvious question the other modes could not: instead of guessing which launch
+ * will make it, buy one that has ALREADY proved it is most of the way there.
+ *
+ * Bands rather than cumulative thresholds, so a good band cannot be hidden by
+ * being averaged with a bad one. The exits still carry `grad: 92`, so these sell
+ * back into the curve just before it locks — no Uniswap v4 path needed.
+ *
+ * g25_40 overlaps the 1-2 ETH band that won in dip mode, so it ties this grid
+ * back to the previous one: if returns keep improving as the band rises, the
+ * real signal was "how close to graduating" all along, and the liquidity band
+ * was only ever a crude proxy for it.
+ */
+const ENTRIES_GRAD: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number }[] = [
+  { name: "g25_40", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 25, maxGrad: 40 },
+  { name: "g40_50", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 40, maxGrad: 50 },
+  { name: "g50_60", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 50, maxGrad: 60 },
+  { name: "g60_70", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 60, maxGrad: 70 },
+  { name: "g70_80", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 70, maxGrad: 80 },
+  { name: "g80_85", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 80, maxGrad: 85 },
+  { name: "g85_88", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 85, maxGrad: 88 },
+  { name: "g88_90", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 88, maxGrad: 90 },
+  { name: "g50_plus", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 50, maxGrad: 91 },
+  { name: "g80_plus", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 80, maxGrad: 91 },
+];
+
+const ENTRIES =
+  MODE === "rep" ? ENTRIES_REP
+  : MODE === "grad" ? ENTRIES_GRAD
+  : ENTRIES_DIP;
+
+/**
+ * wallet -> how many graduated tokens it was an early buyer of, credited at the
+ * moment that token crossed its threshold. Never reads the future: a curve can
+ * only add to this once it has actually graduated, so a lookup at entry time
+ * sees strictly what had already happened by then.
+ */
+const proven = new Map<string, number>();
+
+/** Distinct buyers of this curve so far that are already proven elsewhere. */
+function countProven(c: Curve): number {
+  let n = 0;
+  for (const w of c.earlyBuyers) if ((proven.get(w) ?? 0) > 0) n++;
+  return n;
+}
 
 const client = createPublicClient({ transport: http(RPC, { retryCount: 3, timeout: 30_000 }) });
 const launchEvent = parseAbiItem(
@@ -361,14 +447,22 @@ function openDipEntry(c: Curve, ei: number, liq: number): void {
  * Must be called BEFORE recordCycle, so `cyclePeak` is still the previous local
  * high — that is the high a live bot would be measuring its drawdown against.
  */
-function checkDipEntries(c: Curve, price: number, liq: number): void {
+function checkDipEntries(c: Curve, price: number, liq: number, gradPct: number): void {
   if (!c.native || !c.dipFired || c.cyclePeak <= 0 || price <= 0) return;
   const drawdown = ((c.cyclePeak - price) / c.cyclePeak) * 100;
+  // Only pay for the reputation lookup if some unfired rule actually wants it.
+  let nProven = -1;
   for (let ei = 0; ei < ENTRIES.length; ei++) {
     if (c.dipFired[ei]) continue;
     const r = ENTRIES[ei];
     if (drawdown < r.dip) continue;
     if (liq < r.liqMin || liq > r.liqMax) continue;
+    if (r.minGrad != null && gradPct < r.minGrad) continue;
+    if (r.maxGrad != null && gradPct > r.maxGrad) continue;
+    if (r.minProven) {
+      if (nProven < 0) nProven = countProven(c);
+      if (nProven < r.minProven) continue;
+    }
     openDipEntry(c, ei, liq);
   }
 }
@@ -437,9 +531,9 @@ async function main() {
   console.log(`blocks ${start} → ${head} (${spanBlocks}, block time ${blockSecs.toFixed(3)}s)`);
   console.log(`${totalChunks} chunks × 2 requests at ${RPS}/s → ~${((totalChunks * 2) / RPS / 60).toFixed(0)} min`);
   console.log(
-    MODE === "dip"
-      ? `mode dip — ${ENTRIES.length} entry rules × ${PRESETS.length} exits, ${Number(ETH_IN) / 1e18} ETH\n`
-      : `mode snipe — entry ${DELAY_SECONDS}s (${delayBlocks} blocks) after launch, ${Number(ETH_IN) / 1e18} ETH\n`,
+    MODE === "snipe"
+      ? `mode snipe — entry ${DELAY_SECONDS}s (${delayBlocks} blocks) after launch, ${Number(ETH_IN) / 1e18} ETH\n`
+      : `mode ${MODE} — ${ENTRIES.length} entry rules × ${PRESETS.length} exits, ${Number(ETH_IN) / 1e18} ETH\n`,
   );
 
   const t0 = Date.now();
@@ -472,7 +566,7 @@ async function main() {
         graduated: false, lastActive: l.blockNumber!,
         entered: false, entryPrice: 0, entryLiquidity: 0, entryVelocity: 0,
         sims: null,
-        dipFired: MODE === "dip" ? new Array(ENTRIES.length).fill(false) : null,
+        dipFired: MODE === "snipe" ? null : new Array(ENTRIES.length).fill(false),
       });
       launchCount++;
     }
@@ -550,7 +644,15 @@ async function main() {
       if (c.quoteReserve > 0n && c.tokenReserve > 0n) {
         const rq = realQuote(c);
         if (rq > c.peakRealQuote) c.peakRealQuote = rq;
-        if (rq >= c.threshold) c.graduated = true;
+        if (rq >= c.threshold && !c.graduated) {
+          c.graduated = true;
+          // Credit this curve's buyers the moment it graduates, not when it
+          // retires — the event has happened, so using it is causal, and
+          // waiting ~17k blocks for retirement would just make the score stale.
+          if (MODE === "rep") {
+            for (const w of c.earlyBuyers) proven.set(w, (proven.get(w) ?? 0) + 1);
+          }
+        }
         const p = priceOf({ quoteReserve: c.quoteReserve, tokenReserve: c.tokenReserve });
         const liq = Number(rq) / 1e18;
         if (p > c.peakPrice) {
@@ -558,7 +660,8 @@ async function main() {
           c.blocksToPeak = Number(e.blockNumber! - c.launchBlock);
         }
         // Before recordCycle: cyclePeak is still the high we are dipping from.
-        if (MODE === "dip") checkDipEntries(c, p, liq);
+        const gradPct = c.threshold > 0n ? (Number(rq) / Number(c.threshold)) * 100 : 0;
+        if (MODE !== "snipe") checkDipEntries(c, p, liq, gradPct);
         recordCycle(c, p, liq);
       }
       stepSims(c);
@@ -603,7 +706,7 @@ async function main() {
   ).get() as Record<string, number>;
   console.log(`  rows       ${row.n}  native ${row.nat}  entered ${row.ent}  graduated ${row.grad}`);
 
-  if (MODE === "dip") {
+  if (MODE !== "snipe") {
     // Every book is 0.01 ETH per entry, so net ETH is directly comparable
     // across rules even though each rule fires a different number of times.
     const inEth = Number(ETH_IN) / 1e18;
@@ -615,7 +718,10 @@ async function main() {
        FROM sims GROUP BY preset ORDER BY net DESC`,
     ).all(inEth) as unknown as Record<string, number | string>[];
 
-    console.log(`\n  DIP-ENTRY GRID — every book enters ${inEth} ETH per signal`);
+    console.log(`\n  ${MODE.toUpperCase()} GRID — every book enters ${inEth} ETH per signal`);
+    if (MODE === "rep") {
+      console.log(`  ${proven.size} wallets earned a proven-buyer credit during the scan`);
+    }
     console.log(`  ${"book".padEnd(22)}${"n".padStart(7)}${"win".padStart(8)}${"avg".padStart(9)}${"net ETH".padStart(11)}`);
     for (const r of rows) {
       const n = Number(r.n);
