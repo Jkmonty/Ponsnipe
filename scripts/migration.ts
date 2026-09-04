@@ -32,7 +32,13 @@ import { createPublicClient, http, parseEventLogs, type Address } from "viem";
 
 const RPC = process.env.BACKTEST_RPC_URL || "https://rpc.mainnet.chain.robinhood.com";
 const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951" as Address;
-const LOG_CHUNK = 2000n;
+/**
+ * The v4 PoolManager is a SINGLETON — one address emits the events of every
+ * pool on the chain, roughly 10 logs per block. A 2000-block window therefore
+ * blows straight past the node's 10k-log cap, so chunks here are far smaller
+ * than the bonding-curve scans use, and fetchLogRange splits further on demand.
+ */
+const LOG_CHUNK = 500n;
 
 function arg(name: string, dflt: number): number {
   const i = process.argv.indexOf(`--${name}`);
@@ -99,6 +105,31 @@ async function rpc<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Fetch one block range, halving it as many times as the node demands.
+ *
+ * Log density is bursty — a quiet stretch fits in one call while a busy one
+ * needs several — so the range cannot be sized correctly up front. Splitting
+ * recursively and concatenating keeps the results in block order, which the
+ * caller depends on: a pool's Initialize has to be seen before its Swaps.
+ */
+async function fetchLogRange(from: bigint, to: bigint): Promise<unknown[]> {
+  try {
+    return (await rpc(() =>
+      client.request({
+        method: "eth_getLogs",
+        params: [{ address: POOL_MANAGER, fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }],
+      }),
+    )) as unknown[];
+  } catch (e) {
+    if (to <= from || !/exceeds limit|more than|too many logs/i.test(String(e))) throw e;
+    const mid = from + (to - from) / 2n;
+    const left = await fetchLogRange(from, mid);
+    const right = await fetchLogRange(mid + 1n, to);
+    return left.concat(right);
+  }
+}
+
 interface Pool {
   token: string;
   openBlock: bigint;
@@ -159,13 +190,8 @@ async function main() {
     const to = from + LOG_CHUNK - 1n > head ? head : from + LOG_CHUNK - 1n;
     chunk++;
 
-    const raw = (await rpc(() =>
-      client.request({
-        method: "eth_getLogs",
-        params: [{ address: POOL_MANAGER, fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      }),
-    )) as any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = (await fetchLogRange(from, to)) as any[];
     const evs = parseEventLogs({ abi: v4Abi, logs: raw });
 
     for (const e of evs) {
