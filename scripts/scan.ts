@@ -89,7 +89,28 @@ const OUT =
 
 /** Verified constants — see the derivation validation in the commit message. */
 const SUPPLY = 10n ** 27n;
+/** Reference only: the native-ETH seed. Curves derive their own, see below. */
 const PHANTOM = 1_680_000_000_000_000_000n; // 1.68 ETH
+/**
+ * The seeded phantom reserve scales with the launch config, so a curve quoted
+ * in USDG (6 decimals, 8,090 threshold) has a completely different one from a
+ * native ETH curve (1.68, 4.2 threshold). Assuming the native value everywhere
+ * made liquidity and graduation wrong for every non-ETH curve — which is most
+ * of the venue. Derived per curve from its own first buy:
+ *   phantom * SUPPLY = (phantom + net) * (SUPPLY - tokensOut)
+ *   => phantom = net * (SUPPLY - tokensOut) / tokensOut
+ */
+function derivePhantom(net: bigint, tokensOut: bigint): bigint {
+  if (tokensOut <= 0n || tokensOut >= SUPPLY || net <= 0n) return 0n;
+  return (net * (SUPPLY - tokensOut)) / tokensOut;
+}
+/**
+ * Stake as a fraction of each curve's own graduation threshold rather than a
+ * fixed amount. Quote tokens differ in decimals, so a fixed raw amount is a
+ * sane bite out of one curve and ten billion tokens out of another. 0.01 ETH
+ * into a 4.2 ETH native curve is the reference proportion.
+ */
+const STAKE_FRACTION = Number(ETH_IN) / 4.2e18;
 const FEE_BPS = 100n;
 /** Retire a curve after this many blocks of silence (~30 min at 0.102s). */
 const RETIRE_BLOCKS = 17_000n;
@@ -110,8 +131,11 @@ const PRESETS: { name: string; tp: number | null; sl: number | null; trail: numb
 
 /**
  * Dip-entry rules, evaluated on every trade with no lookahead: at this tick,
- * how far are we off the running local high, and how much real ETH is in the
- * curve right now? The first tick that satisfies a rule enters it, once.
+ * how far are we off the running local high, and how far has the curve funded
+ * toward its own graduation? The first tick that satisfies a rule enters it.
+ *
+ * Bands are a PERCENTAGE OF THRESHOLD, not an ETH amount, so they mean the same
+ * thing on a 4.2 ETH curve and an 8,090 USDG one. 23.8% is the old "1 ETH".
  *
  * The `nodip_*` rules are CONTROLS: same liquidity band, no drawdown required.
  * If they earn as much as their dip counterpart then the dip is worthless and
@@ -120,15 +144,15 @@ const PRESETS: { name: string; tp: number | null; sl: number | null; trail: numb
  * `dip25_any` is the other control: the dip with no liquidity filter at all.
  */
 const ENTRIES_DIP: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number }[] = [
-  { name: "dip25_lo", dip: 25, liqMin: 0.1, liqMax: 0.5 },
-  { name: "dip25_mid", dip: 25, liqMin: 0.5, liqMax: 1.0 },
-  { name: "dip25_hi", dip: 25, liqMin: 1.0, liqMax: 2.0 },
-  { name: "dip40_mid", dip: 40, liqMin: 0.5, liqMax: 1.0 },
-  { name: "dip40_hi", dip: 40, liqMin: 1.0, liqMax: 2.0 },
-  { name: "dip25_wide", dip: 25, liqMin: 0.5, liqMax: 2.0 },
-  { name: "dip50_wide", dip: 50, liqMin: 0.5, liqMax: 2.0 },
-  { name: "nodip_mid", dip: 0, liqMin: 0.5, liqMax: 1.0 },
-  { name: "nodip_hi", dip: 0, liqMin: 1.0, liqMax: 2.0 },
+  { name: "dip25_lo", dip: 25, liqMin: 2.4, liqMax: 11.9 },
+  { name: "dip25_mid", dip: 25, liqMin: 11.9, liqMax: 23.8 },
+  { name: "dip25_hi", dip: 25, liqMin: 23.8, liqMax: 47.6 },
+  { name: "dip40_mid", dip: 40, liqMin: 11.9, liqMax: 23.8 },
+  { name: "dip40_hi", dip: 40, liqMin: 23.8, liqMax: 47.6 },
+  { name: "dip25_wide", dip: 25, liqMin: 11.9, liqMax: 47.6 },
+  { name: "dip50_wide", dip: 50, liqMin: 11.9, liqMax: 47.6 },
+  { name: "nodip_mid", dip: 0, liqMin: 11.9, liqMax: 23.8 },
+  { name: "nodip_hi", dip: 0, liqMin: 23.8, liqMax: 47.6 },
   { name: "dip25_any", dip: 25, liqMin: 0, liqMax: 1e9 },
 ];
 
@@ -144,13 +168,13 @@ const ENTRIES_DIP: { name: string; dip: number; liqMin: number; liqMax: number; 
  * the liquidity band instead, to price the buyer signal on its own.
  */
 const ENTRIES_REP: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number }[] = [
-  { name: "rep_hi_p0", dip: 0, liqMin: 1.0, liqMax: 2.0, minProven: 0 },
-  { name: "rep_hi_p1", dip: 0, liqMin: 1.0, liqMax: 2.0, minProven: 1 },
-  { name: "rep_hi_p2", dip: 0, liqMin: 1.0, liqMax: 2.0, minProven: 2 },
-  { name: "rep_hi_p4", dip: 0, liqMin: 1.0, liqMax: 2.0, minProven: 4 },
-  { name: "rep_mid_p0", dip: 0, liqMin: 0.5, liqMax: 1.0, minProven: 0 },
-  { name: "rep_mid_p2", dip: 0, liqMin: 0.5, liqMax: 1.0, minProven: 2 },
-  { name: "rep_mid_p4", dip: 0, liqMin: 0.5, liqMax: 1.0, minProven: 4 },
+  { name: "rep_hi_p0", dip: 0, liqMin: 23.8, liqMax: 47.6, minProven: 0 },
+  { name: "rep_hi_p1", dip: 0, liqMin: 23.8, liqMax: 47.6, minProven: 1 },
+  { name: "rep_hi_p2", dip: 0, liqMin: 23.8, liqMax: 47.6, minProven: 2 },
+  { name: "rep_hi_p4", dip: 0, liqMin: 23.8, liqMax: 47.6, minProven: 4 },
+  { name: "rep_mid_p0", dip: 0, liqMin: 11.9, liqMax: 23.8, minProven: 0 },
+  { name: "rep_mid_p2", dip: 0, liqMin: 11.9, liqMax: 23.8, minProven: 2 },
+  { name: "rep_mid_p4", dip: 0, liqMin: 11.9, liqMax: 23.8, minProven: 4 },
   { name: "rep_any_p2", dip: 0, liqMin: 0, liqMax: 1e9, minProven: 2 },
   { name: "rep_any_p4", dip: 0, liqMin: 0, liqMax: 1e9, minProven: 4 },
   { name: "rep_any_p6", dip: 0, liqMin: 0, liqMax: 1e9, minProven: 6 },
@@ -225,11 +249,14 @@ async function rpc<T>(fn: () => Promise<T>): Promise<T> {
     } catch (e) {
       const s = String(e);
       const rateLimited = s.includes("429") || /too many requests/i.test(s);
+      // The node intermittently times out a range it served fine a moment ago,
+      // so this is transient rather than fatal — retry it like a rate limit.
+      const timedOut = /timed out|timeout|ETIMEDOUT|socket hang up/i.test(s);
       // Sustained volume makes Cloudflare serve a bot challenge instead of the
       // node. It clears on its own after a while, so it must be waited out, not
       // treated as fatal — a single 403 used to throw away a whole 60-min scan.
       const challenged = s.includes("403") || /cf-mitigated|challenge|forbidden/i.test(s);
-      if ((!rateLimited && !challenged) || attempt >= 12) throw e;
+      if ((!rateLimited && !challenged && !timedOut) || attempt >= 12) throw e;
       const base = challenged ? 15_000 : 1_000;
       const cap = challenged ? 180_000 : 30_000;
       await sleep(Math.min(cap, base * 2 ** Math.min(attempt, 6)));
@@ -257,6 +284,8 @@ interface Curve {
   launchBlock: bigint;
   native: boolean;
   taxBps: bigint | null;
+  /** Derived from this curve's first buy; 0 until then. */
+  phantom: bigint;
   quoteReserve: bigint;
   tokenReserve: bigint;
   trades: number;
@@ -377,8 +406,13 @@ function recordCycle(c: Curve, p: number, liq: number): void {
     c.cycleLowLiq = liq;
   }
 }
+/** This curve's position size, the same proportion of its own threshold. */
+function stakeFor(c: Curve): bigint {
+  return (c.threshold * BigInt(Math.round(STAKE_FRACTION * 1e9))) / 1_000_000_000n;
+}
+
 function realQuote(c: Curve): bigint {
-  return c.quoteReserve > PHANTOM ? c.quoteReserve - PHANTOM : 0n;
+  return c.quoteReserve > c.phantom ? c.quoteReserve - c.phantom : 0n;
 }
 
 function flush(key: string, c: Curve): void {
@@ -406,15 +440,16 @@ function flush(key: string, c: Curve): void {
 /** Open the simulated positions for this curve at its entry point. */
 function enterSims(c: Curve, blockSecs: number, delayBlocks: bigint): void {
   const res: CurveReserves = { quoteReserve: c.quoteReserve, tokenReserve: c.tokenReserve };
-  const q = quoteBuy(ETH_IN, res, FEE_BPS, c.taxBps ?? 0n);
+  const stake = stakeFor(c);
+  const q = quoteBuy(stake, res, FEE_BPS, c.taxBps ?? 0n);
   if (q.tokensOut <= 0n) return;
   c.entered = true;
   c.entryLiquidity = Number(realQuote(c)) / 1e18;
   c.entryVelocity = c.buysBeforeEntry / (Number(delayBlocks) * blockSecs);
   // Our own buy moves the curve.
-  c.quoteReserve += ETH_IN - q.fee - q.tax;
+  c.quoteReserve += stake - q.fee - q.tax;
   c.tokenReserve -= q.tokensOut;
-  c.entryPrice = Number(ETH_IN) / 1e18 / (Number(q.tokensOut) / 1e18);
+  c.entryPrice = Number(stake) / Number(q.tokensOut);
   c.sims = PRESETS.map((p, i) => ({
     name: p.name, exitIdx: i,
     entryPrice: c.entryPrice, entryLiq: c.entryLiquidity,
@@ -434,10 +469,11 @@ function enterSims(c: Curve, blockSecs: number, delayBlocks: bigint): void {
  */
 function openDipEntry(c: Curve, ei: number, liq: number): void {
   const res: CurveReserves = { quoteReserve: c.quoteReserve, tokenReserve: c.tokenReserve };
-  const q = quoteBuy(ETH_IN, res, FEE_BPS, c.taxBps ?? 0n);
+  const stake = stakeFor(c);
+  const q = quoteBuy(stake, res, FEE_BPS, c.taxBps ?? 0n);
   if (q.tokensOut <= 0n) return;
   c.dipFired![ei] = true;
-  const entryPrice = Number(ETH_IN) / 1e18 / (Number(q.tokensOut) / 1e18);
+  const entryPrice = Number(stake) / Number(q.tokensOut);
   if (!c.sims) c.sims = [];
   for (let xi = 0; xi < PRESETS.length; xi++) {
     c.sims.push({
@@ -454,8 +490,8 @@ function openDipEntry(c: Curve, ei: number, liq: number): void {
  * Must be called BEFORE recordCycle, so `cyclePeak` is still the previous local
  * high — that is the high a live bot would be measuring its drawdown against.
  */
-function checkDipEntries(c: Curve, price: number, liq: number, gradPct: number): void {
-  if (!c.native || !c.dipFired || c.cyclePeak <= 0 || price <= 0) return;
+function checkDipEntries(c: Curve, price: number, liqPct: number, gradPct: number): void {
+  if (!c.dipFired || c.cyclePeak <= 0 || price <= 0) return;
   const drawdown = ((c.cyclePeak - price) / c.cyclePeak) * 100;
   // Only pay for the reputation lookup if some unfired rule actually wants it.
   let nProven = -1;
@@ -463,14 +499,14 @@ function checkDipEntries(c: Curve, price: number, liq: number, gradPct: number):
     if (c.dipFired[ei]) continue;
     const r = ENTRIES[ei];
     if (drawdown < r.dip) continue;
-    if (liq < r.liqMin || liq > r.liqMax) continue;
+    if (liqPct < r.liqMin || liqPct > r.liqMax) continue;
     if (r.minGrad != null && gradPct < r.minGrad) continue;
     if (r.maxGrad != null && gradPct > r.maxGrad) continue;
     if (r.minProven) {
       if (nProven < 0) nProven = countProven(c);
       if (nProven < r.minProven) continue;
     }
-    openDipEntry(c, ei, liq);
+    openDipEntry(c, ei, liqPct);
   }
 }
 
@@ -482,7 +518,7 @@ function stepSims(c: Curve): void {
   const price = priceOf(res);
   const rq = realQuote(c);
   const gradPct = c.threshold > 0n ? (Number(rq) / Number(c.threshold)) * 100 : 0;
-  const inEth = Number(ETH_IN) / 1e18;
+  const inEth = Number(stakeFor(c));
 
   for (const s of c.sims) {
     if (s.closed) continue;
@@ -501,7 +537,7 @@ function stepSims(c: Curve): void {
       const out = quoteSell(s.held, res, FEE_BPS, c.taxBps ?? 0n);
       s.closed = reason !== "stranded";
       s.reason = reason;
-      s.pnlPct = ((Number(out.quoteOut) / 1e18 - inEth) / inEth) * 100;
+      s.pnlPct = ((Number(out.quoteOut) - inEth) / inEth) * 100;
     }
   }
 }
@@ -510,13 +546,13 @@ function stepSims(c: Curve): void {
 function settleSims(c: Curve): void {
   if (!c.sims) return;
   const res: CurveReserves = { quoteReserve: c.quoteReserve, tokenReserve: c.tokenReserve };
-  const inEth = Number(ETH_IN) / 1e18;
+  const inEth = Number(stakeFor(c));
   for (const s of c.sims) {
     if (s.closed || s.reason) continue;
     s.reason = "open_at_end";
     if (res.quoteReserve > 0n && res.tokenReserve > 0n) {
       const out = quoteSell(s.held, res, FEE_BPS, c.taxBps ?? 0n);
-      s.pnlPct = ((Number(out.quoteOut) / 1e18 - inEth) / inEth) * 100;
+      s.pnlPct = ((Number(out.quoteOut) - inEth) / inEth) * 100;
     } else {
       s.pnlPct = -100;
     }
@@ -563,7 +599,8 @@ async function main() {
         launchBlock: l.blockNumber!,
         native: (l.args.pairToken as string).toLowerCase() === NATIVE,
         taxBps: null,
-        quoteReserve: PHANTOM,
+        phantom: 0n,
+        quoteReserve: 0n,
         tokenReserve: SUPPLY,
         trades: 0, buys: 0, sells: 0,
         buyers: new Set(), earlyBuyers: [], buysBeforeEntry: 0,
@@ -633,6 +670,11 @@ async function main() {
           if (!c.entered && e.blockNumber! < c.launchBlock + delayBlocks) c.buysBeforeEntry++;
         }
         const net = quoteIn - fee - tax;
+        // The first buy reveals this curve's own seeded reserve.
+        if (c.phantom === 0n) {
+          c.phantom = derivePhantom(net, tokensOut);
+          c.quoteReserve = c.phantom;
+        }
         c.quoteReserve += net > 0n ? net : 0n;
         c.tokenReserve = c.tokenReserve > tokensOut ? c.tokenReserve - tokensOut : 0n;
       } else {
@@ -643,7 +685,7 @@ async function main() {
       }
 
       // enter once we're past the delay
-      if (MODE === "snipe" && !c.entered && c.native && e.blockNumber! >= c.launchBlock + delayBlocks) {
+      if (MODE === "snipe" && !c.entered && e.blockNumber! >= c.launchBlock + delayBlocks) {
         enterSims(c, blockSecs, delayBlocks);
       }
 
@@ -668,7 +710,7 @@ async function main() {
         }
         // Before recordCycle: cyclePeak is still the high we are dipping from.
         const gradPct = c.threshold > 0n ? (Number(rq) / Number(c.threshold)) * 100 : 0;
-        if (MODE !== "snipe") checkDipEntries(c, p, liq, gradPct);
+        if (MODE !== "snipe") checkDipEntries(c, p, gradPct, gradPct);
         recordCycle(c, p, liq);
       }
       stepSims(c);
@@ -714,29 +756,30 @@ async function main() {
   console.log(`  rows       ${row.n}  native ${row.nat}  entered ${row.ent}  graduated ${row.grad}`);
 
   if (MODE !== "snipe") {
-    // Every book is 0.01 ETH per entry, so net ETH is directly comparable
-    // across rules even though each rule fires a different number of times.
-    const inEth = Number(ETH_IN) / 1e18;
+    // Positions are denominated in each curve's own quote token, so summing
+    // them as ETH would be adding up different currencies. Equal-weighted
+    // percentages are the honest aggregate.
     const rows = db.prepare(
       `SELECT preset, COUNT(*) n,
               AVG(pnl_pct) avg_pnl,
               SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) wins,
-              SUM(pnl_pct) / 100.0 * ? net
-       FROM sims GROUP BY preset ORDER BY net DESC`,
-    ).all(inEth) as unknown as Record<string, number | string>[];
+              SUM(pnl_pct) total
+       FROM sims GROUP BY preset ORDER BY avg_pnl DESC`,
+    ).all() as unknown as Record<string, number | string>[];
 
-    console.log(`\n  ${MODE.toUpperCase()} GRID — every book enters ${inEth} ETH per signal`);
+    console.log(
+      `\n  ${MODE.toUpperCase()} GRID — equal weight, ${(STAKE_FRACTION * 100).toFixed(3)}% of each curve's own threshold per signal`,
+    );
     if (MODE === "rep") {
       console.log(`  ${proven.size} wallets earned a proven-buyer credit during the scan`);
     }
-    console.log(`  ${"book".padEnd(22)}${"n".padStart(7)}${"win".padStart(8)}${"avg".padStart(9)}${"net ETH".padStart(11)}`);
+    console.log(`  ${"book".padEnd(22)}${"n".padStart(7)}${"win".padStart(8)}${"mean".padStart(9)}`);
     for (const r of rows) {
       const n = Number(r.n);
       console.log(
         `  ${String(r.preset).padEnd(22)}${String(n).padStart(7)}` +
           `${((Number(r.wins) / n) * 100).toFixed(2).padStart(7)}%` +
-          `${Number(r.avg_pnl).toFixed(1).padStart(8)}%` +
-          `${Number(r.net).toFixed(4).padStart(11)}`,
+          `${Number(r.avg_pnl).toFixed(1).padStart(8)}%`,
       );
     }
   }

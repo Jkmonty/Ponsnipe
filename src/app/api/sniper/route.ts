@@ -6,12 +6,20 @@ import {
   DEFAULT_CONFIG,
 } from "@/lib/sniper/config";
 import { sniperStatus } from "@/lib/sniper/engine";
+import { recentSniperEvents } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  return json({ config: loadSniperConfig(), status: sniperStatus(), defaults: DEFAULT_CONFIG });
+export async function GET(req: Request) {
+  // The launch feed: every token the sniper has looked at, whatever it decided.
+  const limit = Number(new URL(req.url).searchParams.get("limit") ?? 60);
+  return json({
+    config: loadSniperConfig(),
+    status: sniperStatus(),
+    defaults: DEFAULT_CONFIG,
+    events: recentSniperEvents(Number.isFinite(limit) ? limit : 60),
+  });
 }
 
 export async function POST(req: Request) {

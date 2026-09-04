@@ -108,6 +108,58 @@ function migrate(conn: DatabaseSync): void {
     );
   `);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_sniper_events_ts ON sniper_events(ts DESC);`);
+
+  /**
+   * Columns added after the table shipped, so existing databases need them
+   * bolted on. They exist to make the launch feed verifiable at a glance: the
+   * quote token a launch pairs against, how much was in its curve and how many
+   * others had bought when we looked, and whether it failed our filters or only
+   * failed because we cannot buy that quote token yet.
+   */
+  for (const [col, decl] of [
+    ["quote_symbol", "TEXT"],
+    ["liquidity", "REAL"],
+    ["other_buys", "INTEGER"],
+    ["grad_pct", "REAL"],
+    // 1 when every filter passed except the ETH-quote requirement — i.e. this
+    // is one we would have taken if the zap existed.
+    ["blocked_by_quote", "INTEGER"],
+  ] as const) {
+    try {
+      conn.exec(`ALTER TABLE sniper_events ADD COLUMN ${col} ${decl};`);
+    } catch {
+      /* already present */
+    }
+  }
+}
+
+export interface SniperEventRow {
+  id: number;
+  ts: string;
+  token_address: string;
+  token_symbol: string | null;
+  deployer: string | null;
+  decision: string;
+  reason: string;
+  eth_amount: string | null;
+  buy_tx: string | null;
+  position_id: string | null;
+  quote_symbol: string | null;
+  liquidity: number | null;
+  other_buys: number | null;
+  grad_pct: number | null;
+  blocked_by_quote: number | null;
+}
+
+/** Most recent launches the sniper has looked at, newest first. */
+export function recentSniperEvents(limit = 100): SniperEventRow[] {
+  try {
+    return db()
+      .prepare(`SELECT * FROM sniper_events ORDER BY id DESC LIMIT ?`)
+      .all(Math.max(1, Math.min(500, limit))) as unknown as SniperEventRow[];
+  } catch {
+    return [];
+  }
 }
 
 export function logEngine(

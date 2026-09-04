@@ -29,6 +29,19 @@ export interface FilterInput {
 export interface FilterResult {
   buy: boolean;
   reason: string;
+  /**
+   * True when the ONLY thing standing between us and this launch is that it is
+   * quoted in a stock or stablecoin token rather than ETH. Those are most of
+   * the venue and we cannot reach them until the zap exists, so the feed marks
+   * them separately from launches that genuinely failed the filters.
+   */
+  blockedByQuote?: boolean;
+}
+
+/** Options for evaluation, used to answer "would we have taken it otherwise?". */
+export interface FilterOptions {
+  /** Skip the ETH-quote requirement, to test the rest of the rules against it. */
+  ignoreQuote?: boolean;
 }
 
 function safeRegex(src: string): RegExp | null {
@@ -40,15 +53,27 @@ function safeRegex(src: string): RegExp | null {
 }
 
 /** Pure decision: should the sniper buy this launch? */
-export function evaluateLaunch(input: FilterInput, cfg: SniperConfig): FilterResult {
+export function evaluateLaunch(
+  input: FilterInput,
+  cfg: SniperConfig,
+  opts: FilterOptions = {},
+): FilterResult {
   const { launch, snapshot, liquidityEth, otherBuys } = input;
   const dep = launch.deployer.toLowerCase();
 
   if (snapshot.venue !== "curve" || !snapshot.tradeable) {
     return { buy: false, reason: snapshot.reason ?? "not tradeable" };
   }
-  if (!snapshot.quoteIsNative) {
-    return { buy: false, reason: `pairs against ${snapshot.quoteSymbol}, not ETH` };
+  if (!snapshot.quoteIsNative && !opts.ignoreQuote) {
+    // Re-run everything else to find out whether the quote token is the ONLY
+    // obstacle. That distinction is the difference between "we rejected this"
+    // and "we are simply unable to reach it yet".
+    const rest = evaluateLaunch(input, cfg, { ignoreQuote: true });
+    return {
+      buy: false,
+      reason: `pairs against ${snapshot.quoteSymbol}, not ETH`,
+      blockedByQuote: rest.buy,
+    };
   }
 
   if (cfg.deployerDeny.map((a) => a.toLowerCase()).includes(dep)) {

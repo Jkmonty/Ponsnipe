@@ -261,6 +261,7 @@ export default function Dashboard() {
 
       {/* ── sniper ─────────────────────────────────────────────────── */}
       <SniperCard funded={!!funded} flash={flash} />
+      <LaunchFeed />
 
       {/* ── open positions ─────────────────────────────────────────── */}
       <div className="card">
@@ -1027,6 +1028,124 @@ function SniperCard({
           </div>
         </details>
       )}
+    </div>
+  );
+}
+
+/** One row of the launch feed, as served by /api/sniper. */
+interface LaunchEvent {
+  id: number;
+  ts: string;
+  token_address: string;
+  token_symbol: string | null;
+  decision: string;
+  reason: string;
+  quote_symbol: string | null;
+  liquidity: number | null;
+  other_buys: number | null;
+  grad_pct: number | null;
+  blocked_by_quote: number | null;
+}
+
+function age(ts: string): string {
+  const s = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h`;
+}
+
+/**
+ * Every launch the sniper has looked at, whatever it decided — so you can see
+ * at a glance that it is seeing the whole venue and not just the ETH-quoted
+ * slice, and which ones it would actually take.
+ */
+function LaunchFeed() {
+  const [events, setEvents] = useState<LaunchEvent[]>([]);
+  const [only, setOnly] = useState(false);
+  const [, tick] = useState(0);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const j = await fetch("/api/sniper?limit=80").then((r) => r.json());
+        if (Array.isArray(j.events)) setEvents(j.events);
+      } catch {
+        /* transient */
+      }
+    };
+    load();
+    const iv = setInterval(load, 3000);
+    // Re-render on its own beat so the age column keeps counting up.
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => {
+      clearInterval(iv);
+      clearInterval(t);
+    };
+  }, []);
+
+  // "Would buy" covers both a real buy and the two cases that are only blocked
+  // by something other than our rules: dry-run, and a quote we cannot zap into.
+  const wants = (e: LaunchEvent) =>
+    e.decision === "bought" || e.reason.startsWith("DRY-RUN") || e.blocked_by_quote === 1;
+
+  const shown = only ? events.filter(wants) : events;
+  const eth = events.filter((e) => e.quote_symbol === "ETH").length;
+  const wouldBuy = events.filter(wants).length;
+
+  return (
+    <div className="card">
+      <div className="spread">
+        <h2>Live launches</h2>
+        <label className="small muted" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={only} onChange={(e) => setOnly(e.target.checked)} />
+          only ones it wants
+        </label>
+      </div>
+      <div className="small muted" style={{ marginBottom: 10 }}>
+        last {events.length} seen · {eth} ETH-quoted · {events.length - eth} stock/stable-quoted ·{" "}
+        <strong className="pos">{wouldBuy} it would take</strong>
+      </div>
+
+      {shown.length === 0 && (
+        <div className="small muted">
+          Nothing yet. The watcher evaluates each launch ~20s after it deploys.
+        </div>
+      )}
+
+      <div className="feed">
+        {shown.map((e) => (
+          <div key={e.id} className={`feedrow${wants(e) ? " want" : ""}`}>
+            <div className="feedmain">
+              <span className="fsym">{e.token_symbol ?? "?"}</span>
+              <span className={`qchip q-${(e.quote_symbol ?? "?").toLowerCase()}`}>
+                {e.quote_symbol ?? "?"}
+              </span>
+              <span className="mono small muted">{e.token_address.slice(0, 10)}…</span>
+              <span className="small muted">{age(e.ts)}</span>
+            </div>
+            <div className="feedstats small">
+              <span title="liquidity in the curve's own quote token">
+                liq {e.liquidity != null ? e.liquidity.toFixed(3) : "–"}
+              </span>
+              <span title="other wallets that bought before we looked">
+                {e.other_buys ?? 0} buyers
+              </span>
+              <span title="how far toward graduation">
+                {e.grad_pct != null ? `${e.grad_pct.toFixed(1)}%` : "–"}
+              </span>
+            </div>
+            <div className={`feedverdict ${e.decision === "bought" ? "pos" : wants(e) ? "warn" : "muted"}`}>
+              {e.decision === "bought"
+                ? "BOUGHT"
+                : e.blocked_by_quote === 1
+                  ? `WOULD BUY — needs ${e.quote_symbol} zap`
+                  : e.reason.startsWith("DRY-RUN")
+                    ? "WOULD BUY (dry-run)"
+                    : e.reason}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

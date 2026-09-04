@@ -335,3 +335,53 @@ a {
 a:hover {
   text-decoration: underline;
 }
+
+/* ── live launch feed ─────────────────────────────────────────────────────── */
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.feedrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border-left: 3px solid transparent;
+}
+.feedrow:nth-child(odd) { background: rgba(255, 255, 255, 0.025); }
+/* The ones worth looking at get the accent; everything else stays quiet. */
+.feedrow.want {
+  border-left-color: var(--good, #35c46b);
+  background: rgba(53, 196, 107, 0.09);
+}
+.feedmain { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.fsym { font-weight: 650; letter-spacing: 0.01em; }
+.feedstats { display: flex; gap: 12px; color: var(--muted, #8b93a7); white-space: nowrap; }
+.feedverdict {
+  text-align: right;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feedverdict.warn { color: #e8b339; font-weight: 600; }
+.qchip {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  opacity: 0.85;
+}
+.q-eth { color: #7c9cff; }
+.q-usdg { color: #35c46b; }
+.q-\? { color: #8b93a7; }
+@media (max-width: 720px) {
+  .feedrow { grid-template-columns: 1fr; gap: 3px; }
+  .feedverdict { text-align: left; }
+}

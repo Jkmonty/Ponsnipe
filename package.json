@@ -19,7 +19,8 @@
     "endtoend": "tsx scripts/endtoend.ts",
     "clusters": "tsx scripts/clusters.ts",
     "reputation": "tsx scripts/reputation.ts",
-    "waves": "tsx scripts/waves.ts"
+    "waves": "tsx scripts/waves.ts",
+    "narrative": "tsx scripts/narrative.ts"
   },
   "dependencies": {
     "next": "^16.3.4",

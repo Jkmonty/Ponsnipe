@@ -66,13 +66,20 @@ function record(
     ethAmount?: string;
     buyTx?: string;
     positionId?: string;
+    quoteSymbol?: string;
+    liquidity?: number;
+    otherBuys?: number;
+    gradPct?: number;
+    blockedByQuote?: boolean;
   },
 ): void {
   try {
     db()
       .prepare(
-        `INSERT INTO sniper_events (ts, token_address, token_symbol, deployer, decision, reason, eth_amount, buy_tx, position_id)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sniper_events
+           (ts, token_address, token_symbol, deployer, decision, reason, eth_amount, buy_tx, position_id,
+            quote_symbol, liquidity, other_buys, grad_pct, blocked_by_quote)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         new Date().toISOString(),
@@ -84,6 +91,11 @@ function record(
         info.ethAmount ?? null,
         info.buyTx ?? null,
         info.positionId ?? null,
+        info.quoteSymbol ?? null,
+        info.liquidity ?? null,
+        info.otherBuys ?? null,
+        info.gradPct ?? null,
+        info.blockedByQuote ? 1 : 0,
       );
   } catch {
     /* never throw from the sniper hot path */
@@ -150,15 +162,10 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
   s.evaluated += 1;
   const cfg = loadSniperConfig();
 
-  if (!cfg.enabled) {
-    record("skipped", "sniper disabled before buy", { token: launch.token, deployer: launch.deployer });
-    return;
-  }
-  if (!hasBotWallet()) {
-    record("skipped", "no bot wallet", { token: launch.token, deployer: launch.deployer });
-    return;
-  }
-
+  // A disabled sniper still WATCHES. It costs two RPC calls per launch and it
+  // is the only way to see that the engine is reading the whole venue —
+  // stock-quoted launches included — and which ones it would take. Buying is
+  // gated further down, after the launch has been priced and filtered.
   try {
     // Safety caps. `inFlight*` counts buys that have passed these checks but
     // whose rows aren't written yet — without it, launches evaluated back to
@@ -187,29 +194,39 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
     }
 
     const snapshot = await getTokenSnapshot(launch.token);
-    // Only pay for the CurveBuy log scan if some filter actually needs it.
-    const needBuyers = cfg.minOtherBuys > 0 || cfg.minProvenBuyers > 0 || cfg.minBuyVelocity != null;
-    const buyers = needBuyers
-      ? await otherBuyers(getAddress(launch.curve), getAddress(launch.deployer), launchBlock)
-      : [];
+    const buyers = await otherBuyers(getAddress(launch.curve), getAddress(launch.deployer), launchBlock);
     const otherBuys = buyers.length;
     const liquidityEth = snapshot.graduation.currentQuote;
+    /** Everything the launch feed shows, recorded on every decision alike. */
+    const seen = {
+      token: launch.token,
+      symbol: snapshot.symbol,
+      deployer: launch.deployer,
+      quoteSymbol: snapshot.quoteSymbol,
+      liquidity: liquidityEth,
+      otherBuys,
+      gradPct: snapshot.graduation.progressPct,
+    };
 
     const verdict = evaluateLaunch({ launch, snapshot, liquidityEth, otherBuys, buyers }, cfg);
     if (!verdict.buy) {
-      record("skipped", verdict.reason, {
-        token: launch.token,
-        symbol: snapshot.symbol,
-        deployer: launch.deployer,
-      });
+      record("skipped", verdict.reason, { ...seen, blockedByQuote: verdict.blockedByQuote });
+      return;
+    }
+
+    // It passed. Everything from here is about whether we may actually spend.
+    if (!cfg.enabled) {
+      record("skipped", `DRY-RUN: would snipe (sniper off — ${verdict.reason})`, { ...seen, ethAmount });
+      return;
+    }
+    if (!hasBotWallet()) {
+      record("skipped", `DRY-RUN: would snipe (no bot wallet)`, { ...seen, ethAmount });
       return;
     }
 
     if (!isLive()) {
       record("skipped", `DRY-RUN: would snipe (${verdict.reason})`, {
-        token: launch.token,
-        symbol: snapshot.symbol,
-        deployer: launch.deployer,
+        ...seen,
         ethAmount,
       });
       return;
@@ -367,10 +384,10 @@ function handleLaunchLogs(logs: Log[]): void {
       pairToken: String(l.args.pairToken ?? ""),
       graduationThreshold: (l.args.graduationThreshold as bigint) ?? 0n,
     };
-    if (!cfg.enabled) {
-      record("skipped", "sniper disabled", { token, deployer: launch.deployer });
-      continue;
-    }
+    // A disabled sniper still queues the launch for evaluation. It never buys —
+    // that is gated in evaluate() — but it prices and filters every launch so
+    // the feed can show the whole venue and which ones it would have taken.
+    // Without this the feed is just a list of addresses with no detail.
     const delayMs = Math.max(0, cfg.delaySeconds) * 1000;
     const timer = setTimeout(() => enqueue(launch, l.blockNumber), delayMs);
     if (timer && typeof timer === "object" && "unref" in timer) timer.unref();
