@@ -55,6 +55,29 @@ export const sniperConfigSchema = z.object({
   /** Symbol/name must NOT match this. null = no filter. */
   nameDenyRegex: z.string().nullable(),
 
+  /**
+   * Reject a deployer that has this many prior launches with NONE graduated.
+   *
+   * Measured over 110k launches: a first-ever launch graduates at 1.91%, but a
+   * deployer with 20+ prior launches and no graduate manages 0.17% — 11x worse
+   * than baseline. The reverse carries no signal ("has a prior graduate" runs at
+   * 1.50% against a 1.46% baseline), so there is deliberately no whitelist knob
+   * here. Needs data/reputation.sqlite; null disables.
+   */
+  maxDeployerDudLaunches: z.number().int().min(1).max(1000).nullable(),
+
+  /**
+   * Require this many of the curve's existing buyers to have already been early
+   * on a token that graduated.
+   *
+   * The only filter in testing that moved a book from negative to positive:
+   * 4+ proven buyers took the 1-2 ETH liquidity band from -3.4% to +1.89%, with
+   * the graduation rate rising 2.39% -> 3.32%. Thin, and its confidence interval
+   * touched zero, so treat it as the best available edge rather than a sure one.
+   * Needs data/reputation.sqlite; 0 disables.
+   */
+  minProvenBuyers: z.number().int().min(0).max(50),
+
   /** If non-empty, only snipe launches from these deployer addresses. */
   deployerAllow: z.array(z.string()).max(500),
   /** Never snipe launches from these deployer addresses. */
@@ -82,6 +105,11 @@ export const DEFAULT_CONFIG: SniperConfig = {
   maxCreatorTaxBps: 300,
   minOtherBuys: 3,
   minBuyVelocity: null,
+  // 20 dud launches is where the measured graduation rate collapses to 0.17%.
+  maxDeployerDudLaunches: 20,
+  // Off by default: it is a real but thin edge, and it silently rejects almost
+  // everything, so it should be a deliberate choice rather than a surprise.
+  minProvenBuyers: 0,
   nameAllowRegex: null,
   nameDenyRegex: null,
   deployerAllow: [],

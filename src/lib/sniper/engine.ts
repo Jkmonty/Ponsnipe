@@ -117,8 +117,14 @@ function snipesLastHour(): number {
   return r?.n ?? 0;
 }
 
-/** Count buys on the curve since `fromBlock` by wallets other than the deployer. */
-async function countOtherBuys(curve: Address, deployer: Address, fromBlock: bigint): Promise<number> {
+/**
+ * Wallets other than the deployer that have bought since `fromBlock`.
+ *
+ * Returns the addresses, not just a count: the proven-buyer filter cares WHICH
+ * wallets bought, since a curve backed by people who have been early on a
+ * graduate before is the only signal that beat its control in testing.
+ */
+async function otherBuyers(curve: Address, deployer: Address, fromBlock: bigint): Promise<string[]> {
   try {
     const logs = await publicClient().getContractEvents({
       address: curve,
@@ -133,9 +139,9 @@ async function countOtherBuys(curve: Address, deployer: Address, fromBlock: bigi
       const buyer = (l.args as { buyer?: string }).buyer?.toLowerCase();
       if (buyer && buyer !== dep) buyers.add(buyer);
     }
-    return buyers.size;
+    return [...buyers];
   } catch {
-    return 0;
+    return [];
   }
 }
 
@@ -181,14 +187,15 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
     }
 
     const snapshot = await getTokenSnapshot(launch.token);
-    // Only pay for the CurveBuy log scan if the filter actually needs it.
-    const otherBuys =
-      cfg.minOtherBuys > 0
-        ? await countOtherBuys(getAddress(launch.curve), getAddress(launch.deployer), launchBlock)
-        : 0;
+    // Only pay for the CurveBuy log scan if some filter actually needs it.
+    const needBuyers = cfg.minOtherBuys > 0 || cfg.minProvenBuyers > 0 || cfg.minBuyVelocity != null;
+    const buyers = needBuyers
+      ? await otherBuyers(getAddress(launch.curve), getAddress(launch.deployer), launchBlock)
+      : [];
+    const otherBuys = buyers.length;
     const liquidityEth = snapshot.graduation.currentQuote;
 
-    const verdict = evaluateLaunch({ launch, snapshot, liquidityEth, otherBuys }, cfg);
+    const verdict = evaluateLaunch({ launch, snapshot, liquidityEth, otherBuys, buyers }, cfg);
     if (!verdict.buy) {
       record("skipped", verdict.reason, {
         token: launch.token,

@@ -15,7 +15,10 @@
     "scan": "tsx scripts/scan.ts",
     "analyse": "tsx scripts/analyse.ts",
     "test": "node --import tsx --test tests/*.test.ts",
-    "migration": "tsx scripts/migration.ts"
+    "migration": "tsx scripts/migration.ts",
+    "endtoend": "tsx scripts/endtoend.ts",
+    "clusters": "tsx scripts/clusters.ts",
+    "reputation": "tsx scripts/reputation.ts"
   },
   "dependencies": {
     "next": "^16.3.4",

@@ -1,5 +1,6 @@
 import type { SniperConfig } from "./config";
 import type { TokenSnapshot } from "../pons/tokens";
+import { reputationAvailable, deployerRecord, countProvenBuyers } from "./reputation";
 
 export interface LaunchInfo {
   token: string;
@@ -18,6 +19,11 @@ export interface FilterInput {
   otherBuys: number;
   /** Buys per second across the delay window — momentum, not just a count. */
   buyVelocity?: number;
+  /**
+   * The non-deployer wallets that bought during the delay window. Needed by the
+   * proven-buyer filter, which cares who bought rather than how many.
+   */
+  buyers?: string[];
 }
 
 export interface FilterResult {
@@ -52,6 +58,19 @@ export function evaluateLaunch(input: FilterInput, cfg: SniperConfig): FilterRes
     return { buy: false, reason: "deployer not on allowlist" };
   }
 
+  // Serial deployers who have never produced a graduate. The strongest negative
+  // signal in the data: 0.17% vs a 1.91% baseline for a first-ever launch.
+  // Silently skipped when no reputation database is present.
+  if (cfg.maxDeployerDudLaunches != null && reputationAvailable()) {
+    const rec = deployerRecord(dep);
+    if (rec.graduated === 0 && rec.launches >= cfg.maxDeployerDudLaunches) {
+      return {
+        buy: false,
+        reason: `deployer has ${rec.launches} prior launches, none graduated`,
+      };
+    }
+  }
+
   if (snapshot.creatorTaxBps > cfg.maxCreatorTaxBps) {
     return {
       buy: false,
@@ -68,6 +87,20 @@ export function evaluateLaunch(input: FilterInput, cfg: SniperConfig): FilterRes
 
   if (otherBuys < cfg.minOtherBuys) {
     return { buy: false, reason: `only ${otherBuys} other buys (need ${cfg.minOtherBuys})` };
+  }
+
+  // The one filter that turned a losing book positive in testing.
+  if (cfg.minProvenBuyers > 0) {
+    if (!reputationAvailable()) {
+      return { buy: false, reason: "minProvenBuyers set but no reputation database — run `npm run reputation`" };
+    }
+    const proven = countProvenBuyers(input.buyers ?? []);
+    if (proven < cfg.minProvenBuyers) {
+      return {
+        buy: false,
+        reason: `${proven} proven buyers (need ${cfg.minProvenBuyers})`,
+      };
+    }
   }
 
   if (cfg.minBuyVelocity != null) {
