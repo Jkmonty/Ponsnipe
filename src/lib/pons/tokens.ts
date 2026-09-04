@@ -12,6 +12,8 @@ export interface TokenSnapshot {
   symbol: string;
   decimals: number;
   totalSupply: bigint;
+  /** Artwork URL from the token's own logo() view; "" when it has none. */
+  logo: string;
 
   venue: Venue;
   /** Bonding curve contract (venue === "curve"). */
@@ -78,6 +80,7 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
     name: meta.name,
     symbol: meta.symbol,
     decimals: meta.decimals,
+    logo: "",
     totalSupply: totalSupply as bigint,
     venue: "none",
     curve: null,
@@ -120,7 +123,7 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
     ? { symbol: "ETH", decimals: 18 }
     : await erc20Meta(pairToken).then((m) => ({ symbol: m.symbol, decimals: m.decimals }));
 
-  const [reservesRaw, graduated, readyToGraduate, feeBps, realQuoteReserve] = await Promise.all([
+  const [reservesRaw, graduated, readyToGraduate, feeBps, realQuoteReserve, logo] = await Promise.all([
     c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "getReserves" }) as Promise<
       readonly [bigint, bigint]
     >,
@@ -128,6 +131,10 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
     c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "readyToGraduate" }).catch(() => false),
     c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "feeBps" }).then(Number).catch(() => 100),
     c.readContract({ address: curve, abi: bondingCurveAbi, functionName: "realQuoteReserve" }).catch(() => 0n),
+    // Artwork, for the launch feeds. Absent on some tokens; never fatal.
+    c.readContract({ address: token, abi: erc20Abi, functionName: "logo" })
+      .then((v) => String(v))
+      .catch(() => ""),
   ]);
 
   const reserves: CurveReserves = { quoteReserve: reservesRaw[0], tokenReserve: reservesRaw[1] };
@@ -145,6 +152,7 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
     venue: isGraduated ? "graduated" : "curve",
     curve,
     pairToken,
+    logo,
     quoteSymbol: quoteMeta.symbol,
     quoteDecimals: quoteMeta.decimals,
     quoteIsNative,

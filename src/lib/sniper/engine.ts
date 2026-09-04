@@ -71,6 +71,7 @@ function record(
     otherBuys?: number;
     gradPct?: number;
     blockedByQuote?: boolean;
+    logo?: string;
   },
 ): void {
   try {
@@ -78,8 +79,8 @@ function record(
       .prepare(
         `INSERT INTO sniper_events
            (ts, token_address, token_symbol, deployer, decision, reason, eth_amount, buy_tx, position_id,
-            quote_symbol, liquidity, other_buys, grad_pct, blocked_by_quote)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            quote_symbol, liquidity, other_buys, grad_pct, blocked_by_quote, logo)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         new Date().toISOString(),
@@ -96,6 +97,7 @@ function record(
         info.otherBuys ?? null,
         info.gradPct ?? null,
         info.blockedByQuote ? 1 : 0,
+        info.logo ?? null,
       );
   } catch {
     /* never throw from the sniper hot path */
@@ -206,6 +208,7 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
       liquidity: liquidityEth,
       otherBuys,
       gradPct: snapshot.graduation.progressPct,
+      logo: snapshot.logo,
     };
 
     const verdict = evaluateLaunch({ launch, snapshot, liquidityEth, otherBuys, buyers }, cfg);

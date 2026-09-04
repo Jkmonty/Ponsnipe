@@ -261,7 +261,7 @@ export default function Dashboard() {
 
       {/* ── sniper ─────────────────────────────────────────────────── */}
       <SniperCard funded={!!funded} flash={flash} />
-      <LaunchFeed />
+      <FeedRow />
 
       {/* ── open positions ─────────────────────────────────────────── */}
       <div className="card">
@@ -1045,6 +1045,31 @@ interface LaunchEvent {
   other_buys: number | null;
   grad_pct: number | null;
   blocked_by_quote: number | null;
+  logo: string | null;
+}
+
+interface GraduationEvent {
+  id: number;
+  ts: string;
+  token_address: string;
+  token_symbol: string | null;
+  token_name: string | null;
+  logo: string | null;
+  quote_symbol: string | null;
+}
+
+/**
+ * Token artwork, from the token's own on-chain logo() view. Falls back to the
+ * first letter of the symbol, since plenty of launches have no image and a
+ * broken-image icon in every row would be worse than none.
+ */
+function TokenIcon({ logo, symbol }: { logo: string | null; symbol: string | null }) {
+  const [bad, setBad] = useState(false);
+  if (!logo || bad) {
+    return <span className="ticon ticon-fallback">{(symbol ?? "?").slice(0, 1).toUpperCase()}</span>;
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className="ticon" src={logo} alt="" loading="lazy" onError={() => setBad(true)} />;
 }
 
 function age(ts: string): string {
@@ -1116,6 +1141,7 @@ function LaunchFeed() {
         {shown.map((e) => (
           <div key={e.id} className={`feedrow${wants(e) ? " want" : ""}`}>
             <div className="feedmain">
+              <TokenIcon logo={e.logo} symbol={e.token_symbol} />
               <span className="fsym">{e.token_symbol ?? "?"}</span>
               <span className={`qchip q-${(e.quote_symbol ?? "?").toLowerCase()}`}>
                 {e.quote_symbol ?? "?"}
@@ -1146,6 +1172,73 @@ function LaunchFeed() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Tokens that have just migrated onto a Uniswap v4 pool. */
+function GraduatedFeed() {
+  const [rows, setRows] = useState<GraduationEvent[]>([]);
+  const [, tick] = useState(0);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const j = await fetch("/api/sniper?limit=1").then((r) => r.json());
+        if (Array.isArray(j.graduations)) setRows(j.graduations);
+      } catch {
+        /* transient */
+      }
+    };
+    load();
+    const iv = setInterval(load, 6000);
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => {
+      clearInterval(iv);
+      clearInterval(t);
+    };
+  }, []);
+
+  return (
+    <div className="card">
+      <div className="spread">
+        <h2>Migrated</h2>
+        <span className="small muted">{rows.length} recent</span>
+      </div>
+      <div className="small muted" style={{ marginBottom: 10 }}>
+        Reached their graduation threshold and moved to a Uniswap v4 pool. The curve
+        stops accepting sells at this point.
+      </div>
+      {rows.length === 0 && (
+        <div className="small muted">
+          Nothing yet — graduations are rare, a few hundred a day across the whole venue.
+        </div>
+      )}
+      <div className="feed">
+        {rows.map((r) => (
+          <div key={r.id} className="feedrow grad">
+            <div className="feedmain">
+              <TokenIcon logo={r.logo} symbol={r.token_symbol} />
+              <span className="fsym">{r.token_symbol ?? "?"}</span>
+              <span className={`qchip q-${(r.quote_symbol ?? "?").toLowerCase()}`}>
+                {r.quote_symbol ?? "?"}
+              </span>
+              <span className="small muted">{age(r.ts)}</span>
+            </div>
+            <div className="feedverdict small muted">{r.token_name ?? ""}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** New pairs on the left, migrated on the right, both on one screen. */
+function FeedRow() {
+  return (
+    <div className="feedcols">
+      <LaunchFeed />
+      <GraduatedFeed />
     </div>
   );
 }

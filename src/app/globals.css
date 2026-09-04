@@ -385,3 +385,36 @@ a:hover {
   .feedrow { grid-template-columns: 1fr; gap: 3px; }
   .feedverdict { text-align: left; }
 }
+
+/* Two feeds side by side so neither needs scrolling to reach. */
+.feedcols {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .feedcols { grid-template-columns: 1fr; }
+}
+.ticon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.06);
+}
+.ticon-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted, #8b93a7);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.feedrow.grad {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+  border-left-color: #7c9cff;
+  background: rgba(124, 156, 255, 0.08);
+}

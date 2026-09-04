@@ -124,6 +124,7 @@ function migrate(conn: DatabaseSync): void {
     // 1 when every filter passed except the ETH-quote requirement — i.e. this
     // is one we would have taken if the zap existed.
     ["blocked_by_quote", "INTEGER"],
+    ["logo", "TEXT"],
   ] as const) {
     try {
       conn.exec(`ALTER TABLE sniper_events ADD COLUMN ${col} ${decl};`);
@@ -149,6 +150,7 @@ export interface SniperEventRow {
   other_buys: number | null;
   grad_pct: number | null;
   blocked_by_quote: number | null;
+  logo: string | null;
 }
 
 /** Most recent launches the sniper has looked at, newest first. */
