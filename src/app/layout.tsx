@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "pons autotrade",
+  title: "Ponsnipe",
   description:
-    "Buy pons.family memecoins on Robinhood Chain with automatic take-profit / stop-loss exits.",
+    "Snipe and auto-exit pons.family tokens on Robinhood Chain — take-profit, stop-loss and a graduation exit that fire without you.",
 };
 
 export default function RootLayout({

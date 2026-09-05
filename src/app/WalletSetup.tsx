@@ -22,16 +22,23 @@ export default function WalletSetup({
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
-      <div className="row" style={{ gap: 6 }}>
+      {/* A segmented control, not two primary buttons — these only choose which
+          form to show, and dressing them like the action button made it unclear
+          which of the three golds actually created the wallet. */}
+      <div className="seg" role="tablist">
         <button
-          className={mode === "create" ? "btn btn-primary" : "btn"}
+          className="seg-btn"
+          role="tab"
+          aria-selected={mode === "create"}
           onClick={() => setMode("create")}
           disabled={busy}
         >
           Create a new one
         </button>
         <button
-          className={mode === "import" ? "btn btn-primary" : "btn"}
+          className="seg-btn"
+          role="tab"
+          aria-selected={mode === "import"}
           onClick={() => setMode("import")}
           disabled={busy}
         >

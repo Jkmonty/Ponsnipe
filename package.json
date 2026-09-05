@@ -1,5 +1,5 @@
 {
-  "name": "pons-autotrade",
+  "name": "ponsnipe",
   "version": "0.1.0",
   "private": true,
   "description": "Buy pons.family memecoins on Robinhood Chain with automatic take-profit / stop-loss exits.",

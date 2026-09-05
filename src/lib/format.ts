@@ -55,5 +55,8 @@ export function mediaUrl(raw: string): string {
     : /^(baf[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})/.test(t)
       ? t
       : "";
-  return cid ? `https://dweb.link/ipfs/${cid}` : "";
+  // ipfs.io, specifically. dweb.link 301s to a per-CID subdomain that sets
+  // Cross-Origin-Resource-Policy: same-origin, so the browser refuses to paint
+  // it in an <img> and every avatar silently comes back blank.
+  return cid ? `https://ipfs.io/ipfs/${cid}` : "";
 }

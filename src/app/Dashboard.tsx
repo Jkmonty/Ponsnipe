@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtEth, fmtPct, fmtPrice, shortAddr, weiToUnits, EXPLORER } from "@/lib/format";
 import LaunchComposer from "./LaunchComposer";
+import Logo from "./Logo";
 import WalletSetup from "./WalletSetup";
 import Suggestions from "./Suggestions";
 
@@ -173,8 +174,11 @@ export default function Dashboard() {
     <div className="wrap">
       <div className="spread" style={{ marginBottom: 20 }}>
         <div>
-          <h1>pons autotrade</h1>
-          <p className="sub">Buy a token, set your exit, walk away.</p>
+          <div className="lockup">
+            <Logo size={30} />
+            <h1>Ponsnipe</h1>
+          </div>
+          <p className="sub">Pick your shot. Loose it. Walk away.</p>
         </div>
         <div className="row" style={{ gap: 10 }}>
           <span className={live ? "chip chip-live" : "chip chip-dry"}>

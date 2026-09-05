@@ -1,11 +1,14 @@
-# pons autotrade
+# Ponsnipe
 
-Buy a token on [pons.family](https://ponsfamily.com), set your exit, walk away.
+Pick your shot on [pons.family](https://ponsfamily.com), loose it, walk away.
 
 A local app for Robinhood Chain that watches your positions and sells them for
 you — take-profit, stop-loss, trailing stop, and an exit before the token
 graduates and the curve stops accepting sells. It runs on your machine, holds
 its own wallet, and nothing is custodial to anyone else.
+
+Named for the chain it trades on: Robin Hood took one careful shot at a time,
+which is the opposite of how most people trade a memecoin launch.
 
 ---
 
@@ -71,7 +74,7 @@ npm run setup     # writes .env with a generated passphrase and API token
 npm run dev       # http://127.0.0.1:3000
 ```
 
-Then in the browser: **Create wallet** → fund it → **Buy**.
+Then in the browser: **set up a wallet** → fund it → **Buy**.
 
 The app starts in **DRY-RUN**: it does everything except sign transactions, and
 logs what it would have done. Leave it there until you have watched it decide

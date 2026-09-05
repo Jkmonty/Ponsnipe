@@ -19,16 +19,22 @@
   --line-2: #2d3341;
   --text: #f2f4f8;
   --muted: #8b93a6;
-  --accent: #6d8bff;
-  --accent-2: #8f6dff;
-  --accent-press: #5674f0;
-  --accent-glow: rgba(109, 139, 255, 0.35);
+  /* Robin Hood: Lincoln green and the gold he took. Gold leads because green
+     and red are already spoken for by profit and loss, and a brand colour that
+     doubles as a P&L signal makes both harder to read. */
+  --accent: #f0b429;
+  --accent-2: #1f9d5c;
+  --accent-press: #d69c17;
+  --accent-glow: rgba(240, 180, 41, 0.32);
+  /* Gold and Lincoln green are both too light for white text to sit on. */
+  --on-accent: #12100a;
   --green: #2fd48f;
   --green-bg: #08281d;
   --red: #ff6b6b;
   --red-bg: #2a1116;
-  --amber: #ffc247;
-  --amber-bg: #2b2210;
+  /* Pushed orange so a warning never reads as the gold brand accent. */
+  --amber: #ff9142;
+  --amber-bg: #2e1a0d;
   --radius: 12px;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
 }
@@ -160,7 +166,7 @@ label.field > span {
 }
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-press);
@@ -556,8 +562,10 @@ h2 {
 .btn:active:not(:disabled) { transform: translateY(0); }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  background: linear-gradient(135deg, var(--accent-2), var(--accent));
   border-color: transparent;
+  color: var(--on-accent);
+  font-weight: 650;
   box-shadow: 0 4px 16px -6px var(--accent-glow);
 }
 .btn-primary:hover:not(:disabled) {
@@ -721,3 +729,45 @@ h2 {
   .srow { flex-wrap: wrap; }
   .srow-meta { margin-left: auto; }
 }
+
+/* Wordmark sits on the mark's optical centre, not its box centre — the arrow
+   runs corner to corner, so the glyph reads slightly high without the nudge. */
+.lockup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.lockup h1 { line-height: 1.05; }
+.lockup svg { color: #7b8496; margin-top: 1px; }
+
+/* Segmented control: picks a view, never performs the action. */
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+  /* In a grid parent this would otherwise stretch the full card width. */
+  justify-self: start;
+  align-self: start;
+}
+.seg-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 13px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg-btn:hover:not(:disabled) { color: var(--text); }
+.seg-btn[aria-selected="true"] {
+  background: var(--card-2);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.seg-btn:disabled { opacity: 0.5; cursor: default; }

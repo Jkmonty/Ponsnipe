@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none">
+  <!--
+    Favicon variant of the Ponsnipe mark. The header logo's four reticle ticks
+    are dropped here and the ring thickened: at 16px those ticks land on single
+    pixels around the rim and read as dirt rather than as a crosshair.
+  -->
+  <defs>
+    <linearGradient id="fshaft" x1="7" y1="25" x2="25" y2="7" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1f9d5c"/>
+      <stop offset="100%" stop-color="#f0b429"/>
+    </linearGradient>
+    <mask id="fcut">
+      <rect x="0" y="0" width="32" height="32" fill="#fff"/>
+      <line x1="3" y1="29" x2="29" y2="3" stroke="#000" stroke-width="8" stroke-linecap="round"/>
+    </mask>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="#0b0d13"/>
+  <g mask="url(#fcut)">
+    <circle cx="16" cy="16" r="11" stroke="#8b93a6" stroke-width="3"/>
+  </g>
+  <path d="M7.6 24.4 L21.4 10.6" stroke="url(#fshaft)" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M29 3 L20.3 5.5 L26.5 11.7 Z" fill="#f0b429"/>
+  <path d="M3 29 L5.4 20.2 L11.8 26.6 Z" fill="#1f9d5c"/>
+</svg>
