@@ -1,6 +1,6 @@
 import { getAddress, type Address, type Log } from "viem";
 import { env } from "../env";
-import { publicClient, isWebSocket } from "../chain";
+import { isWebSocket, publicClient, readClient } from "../chain";
 import { logEngine, pruneEngineLog } from "../db/index";
 import {
   claimForClosing,
@@ -361,7 +361,7 @@ async function runPass(): Promise<void> {
         { address, abi: bondingCurveAbi, functionName: "realQuoteReserve" as const },
       ];
     });
-    const results = await publicClient().multicall({ contracts, allowFailure: true });
+    const results = await readClient().multicall({ contracts, allowFailure: true });
 
     for (let i = 0; i < open.length; i++) {
       const row = open[i];

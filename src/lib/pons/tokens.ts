@@ -1,5 +1,5 @@
 import { getAddress, formatEther, type Address } from "viem";
-import { publicClient } from "../chain";
+import { readClient, rpcFailureReason } from "../chain";
 import { PONS, NATIVE_QUOTE, GRADUATION_ETH_THRESHOLD } from "./addresses";
 import { erc20Abi, ponsFactoryAbi, bondingCurveAbi } from "./abis";
 import { priceFromReserves, type TokenPrice, type CurveReserves } from "./pricing";
@@ -51,7 +51,7 @@ export interface TokenSnapshot {
 const ZERO: CurveReserves = { quoteReserve: 0n, tokenReserve: 0n };
 
 async function erc20Meta(addr: Address) {
-  const c = publicClient();
+  const c = readClient();
   const [name, symbol, decimals] = await Promise.all([
     c.readContract({ address: addr, abi: erc20Abi, functionName: "name" }).catch(() => "Unknown"),
     c.readContract({ address: addr, abi: erc20Abi, functionName: "symbol" }).catch(() => "???"),
@@ -65,14 +65,22 @@ async function erc20Meta(addr: Address) {
 
 export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
   const token = getAddress(raw);
-  const c = publicClient();
+  const c = readClient();
+
+  // A failed factory read and a token the factory has never heard of both come
+  // back as "no launch". They mean opposite things to the user, so keep the
+  // error rather than reporting an RPC outage as an unknown token.
+  let readError: string | null = null;
 
   const [meta, totalSupply, launch] = await Promise.all([
     erc20Meta(token),
     c.readContract({ address: token, abi: erc20Abi, functionName: "totalSupply" }).catch(() => 0n),
     c
       .readContract({ address: PONS.factory, abi: ponsFactoryAbi, functionName: "getLaunchedToken", args: [token] })
-      .catch(() => null),
+      .catch((err) => {
+        readError = rpcFailureReason(err);
+        return null;
+      }),
   ]);
 
   const base: TokenSnapshot = {
@@ -105,7 +113,7 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
   };
 
   if (!launch || !(launch as { exists: boolean }).exists) {
-    return { ...base, reason: "not a pons v2 launch (or unknown token)" };
+    return { ...base, reason: readError ?? "not a pons v2 launch (or unknown token)" };
   }
 
   const l = launch as {
@@ -201,7 +209,7 @@ export async function getCurveState(params: {
   quoteDecimals: number;
   creatorTaxBps: number;
 }): Promise<CurveState> {
-  const c = publicClient();
+  const c = readClient();
   const [reservesRaw, graduated, ready, feeBps] = await Promise.all([
     c.readContract({ address: params.curve, abi: bondingCurveAbi, functionName: "getReserves" }) as Promise<
       readonly [bigint, bigint]

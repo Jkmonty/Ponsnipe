@@ -1,22 +1,36 @@
 @import "tailwindcss";
 
+/*
+ * Palette. Deeper and cooler than the old one, with a single saturated accent
+ * doing all the emphasis — a dashboard that shouts in four colours reads as
+ * noise, and the numbers are the thing that should catch the eye.
+ *
+ * Surfaces step up rather than down: the page is near-black, cards sit slightly
+ * above it, and controls above those. That ordering is what makes depth read
+ * without borders everywhere.
+ */
 :root {
   color-scheme: dark;
-  --bg: #0b0c10;
-  --card: #14161d;
-  --card-2: #1b1e27;
-  --line: #262a36;
-  --line-2: #333846;
-  --text: #eceef3;
-  --muted: #9aa0b0;
-  --accent: #5b7cfa;
-  --accent-press: #4a68e0;
-  --green: #34d399;
-  --green-bg: #0f2e22;
-  --red: #f87171;
-  --red-bg: #2c1517;
-  --amber: #fbbf24;
-  --amber-bg: #2c2410;
+  --bg: #07080c;
+  --bg-2: #0b0d13;
+  --card: #101219;
+  --card-2: #171a24;
+  --line: #21252f;
+  --line-2: #2d3341;
+  --text: #f2f4f8;
+  --muted: #8b93a6;
+  --accent: #6d8bff;
+  --accent-2: #8f6dff;
+  --accent-press: #5674f0;
+  --accent-glow: rgba(109, 139, 255, 0.35);
+  --green: #2fd48f;
+  --green-bg: #08281d;
+  --red: #ff6b6b;
+  --red-bg: #2a1116;
+  --amber: #ffc247;
+  --amber-bg: #2b2210;
+  --radius: 12px;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
 }
 
 * {
@@ -493,3 +507,105 @@ body {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── visual polish ─────────────────────────────────────────────────────────── */
+/*
+ * Everything below refines what already exists rather than restyling it, so a
+ * component keeps working if a rule here is deleted.
+ */
+
+body {
+  /* A cool wash top-left and a warm one far right: enough to stop a large dark
+     page reading as flat, faint enough that no text sits on a gradient edge. */
+  background-image:
+    radial-gradient(1100px 700px at 8% -10%, rgba(109, 139, 255, 0.13), transparent 58%),
+    radial-gradient(820px 560px at 96% 2%, rgba(143, 109, 255, 0.09), transparent 60%),
+    radial-gradient(900px 900px at 50% 112%, rgba(47, 212, 143, 0.05), transparent 58%);
+  background-attachment: fixed;
+}
+
+h1 {
+  letter-spacing: -0.02em;
+  background: linear-gradient(100deg, var(--text) 30%, var(--accent) 130%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+h2 {
+  letter-spacing: -0.01em;
+  font-size: 15px;
+}
+
+.card {
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  /* A hairline of light along the top edge — the cheapest way to make a flat
+     surface look lit rather than pasted on. */
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 46%);
+}
+
+.btn {
+  border-radius: 9px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  transition: transform 0.12s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+.btn:hover:not(:disabled) { transform: translateY(-1px); }
+.btn:active:not(:disabled) { transform: translateY(0); }
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+  box-shadow: 0 4px 16px -6px var(--accent-glow);
+}
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 8px 22px -8px var(--accent-glow);
+}
+
+.input {
+  border-radius: 9px;
+  background: var(--bg-2);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(109, 139, 255, 0.15);
+}
+
+/* Numbers line up when they change, which matters on a page that ticks. */
+.pnl-big, .mono, .growmc, .growmove { font-variant-numeric: tabular-nums; }
+
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+
+/* Status chips read at a glance from across the room. */
+.chip { border-radius: 999px; font-weight: 700; letter-spacing: 0.04em; }
+.chip-live {
+  background: var(--green-bg);
+  color: var(--green);
+  box-shadow: 0 0 0 1px rgba(47, 212, 143, 0.25), 0 0 14px -4px rgba(47, 212, 143, 0.5);
+}
+.chip-dry { background: var(--amber-bg); color: var(--amber); box-shadow: 0 0 0 1px rgba(255,194,71,.2); }
+
+/* The live dot should pulse only while something is actually running, so a
+   stopped engine is obvious without reading the label. */
+.dot { box-shadow: 0 0 0 0 currentColor; }
+.chip-live .dot { animation: pulse 2.4s ease-out infinite; }
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(47, 212, 143, 0.55); }
+  70%  { box-shadow: 0 0 0 7px rgba(47, 212, 143, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(47, 212, 143, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip-live .dot { animation: none; }
+  .btn:hover:not(:disabled) { transform: none; }
+}
+
+.pcard {
+  border-radius: var(--radius);
+  transition: border-color 0.15s ease;
+}
+.pcard:hover { border-color: var(--line-2); }

@@ -23,8 +23,17 @@ function num(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Robinhood's own endpoint. Slower than a private provider, but never bills. */
+export const PUBLIC_RPC_URL = "https://rpc.mainnet.chain.robinhood.com";
+
 export const env = {
-  rpcUrl: opt("RPC_URL", "https://rpc.mainnet.chain.robinhood.com"),
+  rpcUrl: opt("RPC_URL", PUBLIC_RPC_URL),
+  /**
+   * Backstop for contract reads when the primary endpoint refuses — a private
+   * provider that has hit its monthly quota fails every call, which otherwise
+   * looks like "this token does not exist" rather than "I am out of credit".
+   */
+  fallbackRpcUrl: opt("FALLBACK_RPC_URL", PUBLIC_RPC_URL),
   /**
    * Optional WebSocket endpoint. When set, the monitor and sniper switch from
    * polling to eth_subscribe — blocks and curve trades are PUSHED to us, which

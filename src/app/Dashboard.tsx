@@ -466,25 +466,29 @@ function BuyCard({
   const g = snap?.graduation;
 
   return (
-    <div className="card" style={{ opacity: funded ? 1 : 0.55 }}>
+    <div className="card">
       <h2>Buy a token</h2>
-      {!funded && (
-        <p className="muted small" style={{ marginTop: 0 }}>
-          Add funds to your wallet first.
-        </p>
-      )}
+      {/*
+        Looking up a token reads the chain and costs nothing, so it must work
+        with an empty wallet — inspecting a token before deciding to fund one is
+        the normal order of events. Only the buy itself needs money.
+      */}
+      <p className="muted small" style={{ marginTop: 0 }}>
+        {funded
+          ? "Paste an address to see its price, liquidity and progress to graduation."
+          : "Look up any token for free. You'll need funds in the wallet to buy."}
+      </p>
 
       <div className="row" style={{ gap: 8 }}>
         <input
           className="input"
           placeholder="Paste a pons.family token address"
           value={addr}
-          disabled={!funded}
           onChange={(e) => setAddr(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && lookup()}
           style={{ flex: 1 }}
         />
-        <button className="btn" onClick={lookup} disabled={!funded || looking}>
+        <button className="btn" onClick={lookup} disabled={looking}>
           {looking ? "…" : "Look up"}
         </button>
       </div>
@@ -600,12 +604,14 @@ function BuyCard({
             Uniswap v4 pool this app can&apos;t exit yet — so it sells just before.
           </p>
 
-          <button className="btn btn-primary btn-lg" onClick={submit} disabled={buying}>
+          <button className="btn btn-primary btn-lg" onClick={submit} disabled={buying || (live && !funded)}>
             {buying
               ? "Submitting…"
-              : live
-                ? `Buy ${snap.symbol} for ${eth} ETH`
-                : `Preview buy (dry-run)`}
+              : live && !funded
+                ? "Add funds to buy"
+                : live
+                  ? `Buy ${snap.symbol} for ${eth} ETH`
+                  : `Preview buy (dry-run)`}
           </button>
           <p className="muted small" style={{ margin: "8px 0 0", textAlign: "center" }}>
             Auto-sells at{" "}

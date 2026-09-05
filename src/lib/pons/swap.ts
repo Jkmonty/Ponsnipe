@@ -7,7 +7,7 @@ import {
   type TransactionReceipt,
 } from "viem";
 import { env } from "../env";
-import { publicClient } from "../chain";
+import { readClient } from "../chain";
 import { botWallet } from "../wallet/botWallet";
 import { NATIVE_QUOTE } from "./addresses";
 import { erc20Abi, bondingCurveAbi } from "./abis";
@@ -44,7 +44,7 @@ type FeeOverride =
   | Record<string, never>;
 
 /** Estimate fees and multiply the priority tip so an auto-sell wins its block. */
-async function bumpedFees(c: ReturnType<typeof publicClient>): Promise<FeeOverride> {
+async function bumpedFees(c: ReturnType<typeof readClient>): Promise<FeeOverride> {
   const mult = env.sellGasMultiplier;
   try {
     const f = await c.estimateFeesPerGas();
@@ -104,7 +104,7 @@ function filledFromReceipt(
 
 async function ensureAllowance(token: Address, spender: Address, need: bigint) {
   const { account, wallet } = botWallet();
-  const c = publicClient();
+  const c = readClient();
   const cur = await c.readContract({
     address: token,
     abi: erc20Abi,
@@ -127,7 +127,7 @@ async function ensureAllowance(token: Address, spender: Address, need: bigint) {
 /** Buy `token` from its bonding curve, spending `quoteInWei` of the quote asset. */
 export async function buyOnCurve(p: CurveCtx & { quoteInWei: bigint }): Promise<SwapResult> {
   const { account, wallet } = botWallet();
-  const c = publicClient();
+  const c = readClient();
   const slippageBps = p.slippageBps ?? env.defaultSlippageBps;
   const native = getAddress(p.pairToken) === NATIVE_QUOTE;
 
@@ -181,7 +181,7 @@ export async function buyOnCurve(p: CurveCtx & { quoteInWei: bigint }): Promise<
 /** Sell `tokensInWei` of `token` back to its bonding curve for the quote asset. */
 export async function sellOnCurve(p: CurveCtx & { tokensInWei: bigint }): Promise<SwapResult> {
   const { account, wallet } = botWallet();
-  const c = publicClient();
+  const c = readClient();
   const slippageBps = p.slippageBps ?? env.defaultSlippageBps;
   const native = getAddress(p.pairToken) === NATIVE_QUOTE;
 

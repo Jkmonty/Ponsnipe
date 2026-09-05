@@ -9,7 +9,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { env } from "../env";
-import { robinhoodChain, publicClient } from "../chain";
+import { readClient, robinhoodChain } from "../chain";
 import { loadKeystoreFile, decryptPrivateKey, keystoreExists } from "./keystore";
 
 interface WalletSingleton {
@@ -71,6 +71,6 @@ export interface BotBalance {
 
 export async function getBotBalance(): Promise<BotBalance> {
   const address = botAddress();
-  const ethWei = await publicClient().getBalance({ address });
+  const ethWei = await readClient().getBalance({ address });
   return { address, eth: formatEther(ethWei), ethWei };
 }

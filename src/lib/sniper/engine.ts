@@ -1,5 +1,5 @@
 import { getAddress, parseEther, type Address, type Log } from "viem";
-import { publicClient, isWebSocket } from "../chain";
+import { isWebSocket, publicClient, readClient } from "../chain";
 import { env } from "../env";
 import { db, logEngine } from "../db/index";
 import { PONS } from "../pons/addresses";
@@ -140,7 +140,7 @@ function snipesLastHour(): number {
  */
 async function otherBuyers(curve: Address, deployer: Address, fromBlock: bigint): Promise<string[]> {
   try {
-    const logs = await publicClient().getContractEvents({
+    const logs = await readClient().getContractEvents({
       address: curve,
       abi: bondingCurveAbi,
       eventName: "CurveBuy",
@@ -383,11 +383,14 @@ function handleLaunchLogs(logs: Log[]): void {
       pairToken: String(l.args.pairToken ?? ""),
       graduationThreshold: (l.args.graduationThreshold as bigint) ?? 0n,
     };
-    // A disabled sniper does not evaluate. Pricing and filtering every launch
-    // costs two RPC calls each at ~24k launches a day, and it only ever existed
-    // to populate a live feed that no longer ships.
-    if (!cfg.enabled) {
-      record("skipped", "sniper disabled", { token, deployer: launch.deployer });
+    // A disabled sniper still watches and still evaluates, so it can SUGGEST
+    // launches that pass the filters without buying them. Buying is gated in
+    // evaluate(); everything before that is just looking.
+    //
+    // `watchWhenDisabled` exists because looking is not free — pricing and
+    // filtering every launch is two RPC calls each at ~24k launches a day, and
+    // someone on a metered endpoint should be able to turn it off.
+    if (!cfg.enabled && !cfg.watchWhenDisabled) {
       continue;
     }
     const delayMs = Math.max(0, cfg.delaySeconds) * 1000;

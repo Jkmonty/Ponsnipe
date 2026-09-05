@@ -1,5 +1,5 @@
 import { parseAbiItem, getAddress, createPublicClient, http, type Address, type PublicClient } from "viem";
-import { robinhoodChain } from "../chain";
+import { redactRpc, robinhoodChain } from "../chain";
 import { db, logEngine } from "../db/index";
 import { PONS } from "../pons/addresses";
 import { ponsFactoryAbi, erc20Abi } from "../pons/abis";
@@ -199,11 +199,6 @@ export function graduationStatus() {
   };
 }
 
-/** Strip any URL so an API key can never reach the UI through an error. */
-function redact(msg: string): string {
-  return msg.replace(/https?:\/\/\S+|wss?:\/\/\S+/gi, "<rpc>");
-}
-
 async function sweep(): Promise<void> {
   const c = logClient();
   try {
@@ -325,7 +320,7 @@ async function sweep(): Promise<void> {
   } catch (e) {
     // A failed sweep is normal under RPC pressure; the next one covers the gap.
     // RPC error strings embed the endpoint URL, which carries the API key.
-    s.lastError = redact(String(e)).slice(0, 200);
+    s.lastError = redactRpc(String(e)).slice(0, 200);
   }
 }
 
@@ -406,7 +401,7 @@ async function refreshStats(): Promise<void> {
     }
     s.lastError = null;
   } catch (e) {
-    s.lastError = redact(String(e)).slice(0, 200);
+    s.lastError = redactRpc(String(e)).slice(0, 200);
   }
 }
 

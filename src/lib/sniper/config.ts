@@ -93,6 +93,15 @@ export const sniperConfigSchema = z.object({
    */
   minProvenBuyers: z.number().int().min(0).max(50),
 
+  /**
+   * Keep evaluating launches while the sniper is off, so it can suggest what it
+   * WOULD have bought without buying anything.
+   *
+   * Costs two RPC calls per launch at roughly 24k launches a day, so it is a
+   * choice rather than a default someone discovers on their bill.
+   */
+  watchWhenDisabled: z.boolean(),
+
   /** If non-empty, only snipe launches from these deployer addresses. */
   deployerAllow: z.array(z.string()).max(500),
   /** Never snipe launches from these deployer addresses. */
@@ -126,6 +135,7 @@ export const DEFAULT_CONFIG: SniperConfig = {
   // Off by default: it is a real but thin edge, and it silently rejects almost
   // everything, so it should be a deliberate choice rather than a surprise.
   minProvenBuyers: 0,
+  watchWhenDisabled: true,
   nameAllowRegex: null,
   nameDenyRegex: null,
   deployerAllow: [],
