@@ -37,9 +37,16 @@ export const TOKEN_LAUNCHED_TOPIC =
 export const GRADUATION_ETH_THRESHOLD = 4.2;
 
 /**
- * Anti-snipe tax: pons v2 charges up to ~99% on buys in the first seconds after
- * launch, decaying to zero over ~15s. We don't model the exact curve; the
- * on-chain minTokensOut check makes an over-taxed buy revert rather than fill
- * at a loss. The sniper feature will handle the decay explicitly.
+ * Anti-snipe tax: 99% on a buy in the launch second, decaying to zero across
+ * THREE seconds — stated verbatim on the pons launch form, not inferred.
+ *
+ * We had 15s here, and the sniper still waits 20s to be safe, which means it
+ * has been entering roughly 17 seconds later than it needs to. On a curve where
+ * price is a function of ETH already deposited, that is real money left behind.
+ *
+ * Our own event data agrees with the 3s figure and resolves what the scanner
+ * logged as "fee anomalies": buys at +0.7s carried 9900bps, +0.9s 718bps,
+ * +2.4s 119bps, +3.5s back to the normal 99bps. That is the decay curve, not
+ * corrupt data. The fee field was right and the earlier diagnosis was wrong.
  */
-export const SNIPE_TAX_WINDOW_SECONDS = 15;
+export const SNIPE_TAX_WINDOW_SECONDS = 3;

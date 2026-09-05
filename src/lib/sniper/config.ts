@@ -27,9 +27,14 @@ export const sniperConfigSchema = z.object({
   slippageBps: z.number().int().min(10).max(5000),
 
   /**
-   * Seconds to wait after a launch before buying. pons charges up to ~99%
-   * anti-snipe tax that decays over ~15s, so buying at block 0 is a trap.
-   * Default sits comfortably past that window.
+   * Seconds to wait after a launch before buying.
+   *
+   * pons charges 99% on a buy in the launch second, decaying to zero across
+   * THREE seconds — stated on its own launch form, and confirmed by our event
+   * data (9900bps at +0.7s, 718bps at +0.9s, 119bps at +2.4s, 99bps at +3.5s).
+   * We had assumed 15s and waited 20, which meant entering ~17 seconds later
+   * than necessary. On a curve where price is a function of ETH already
+   * deposited, every one of those seconds was paid for.
    */
   delaySeconds: z.number().int().min(0).max(600),
 
@@ -99,7 +104,8 @@ export const DEFAULT_CONFIG: SniperConfig = {
   trailingStopPct: null,
   graduationExitPct: 92,
   slippageBps: 800,
-  delaySeconds: 20,
+  // Just past the 3s decay, with a block of margin.
+  delaySeconds: 4,
   minLiquidityEth: 0.05,
   maxLiquidityEth: null,
   maxCreatorTaxBps: 300,

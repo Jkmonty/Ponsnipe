@@ -81,12 +81,17 @@ const MODE = (() => {
   }
   return v;
 })();
-const OUT =
-  MODE === "dip" ? "./data/scan-dip.sqlite"
+/** Explicit output path, so a re-run at a different delay keeps the baseline. */
+const OUT_OVERRIDE = (() => {
+  const i = process.argv.indexOf("--out");
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : "";
+})();
+const OUT = OUT_OVERRIDE ||
+  (MODE === "dip" ? "./data/scan-dip.sqlite"
   : MODE === "rep" ? "./data/scan-rep.sqlite"
   : MODE === "grad" ? "./data/scan-grad.sqlite"
   : MODE === "bundle" ? "./data/scan-bundle.sqlite"
-  : "./data/scan.sqlite";
+  : "./data/scan.sqlite");
 
 /** Verified constants — see the derivation validation in the commit message. */
 const SUPPLY = 10n ** 27n;
