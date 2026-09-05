@@ -124,7 +124,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
   const load = useCallback(async () => {
     if (heldRef.current) return;
     try {
-      const r = await fetch("/api/feed?limit=120");
+      const r = await fetch("/api/feed?limit=250");
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? "feed unavailable");
       setData(j);
@@ -136,7 +136,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
 
   useEffect(() => {
     load();
-    const iv = setInterval(load, 5000);
+    const iv = setInterval(load, 2000);
     return () => clearInterval(iv);
   }, [load]);
 

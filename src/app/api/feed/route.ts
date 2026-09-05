@@ -37,7 +37,7 @@ export async function GET(req: Request) {
       maxDevHold: num(q.get("maxDevHold"), GMGN_DEFAULTS.maxDevHold),
       tradeableOnly: q.get("tradeable") === "1",
       launchpad: q.get("launchpad") || null,
-      limit: Math.min(200, Math.max(1, num(q.get("limit"), GMGN_DEFAULTS.limit) ?? 60)),
+      limit: Math.min(400, Math.max(1, num(q.get("limit"), GMGN_DEFAULTS.limit) ?? 250)),
     };
     const { rows, total, launchpads } = await readGmgnFeed(f);
     return json({

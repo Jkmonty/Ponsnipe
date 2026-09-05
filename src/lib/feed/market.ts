@@ -56,11 +56,17 @@ function logClient(): PublicClient {
 }
 
 /**
- * How often to sweep. Launches arrive every few seconds and the feed is judged
- * on how quickly they appear, so this is the latency floor for a new coin
- * showing up in the list.
+ * Tick interval, and the latency floor for a new coin appearing at all.
+ *
+ * The three stages do not deserve the same cadence. Finding launches is one
+ * cheap getLogs against a single contract and is the whole reason anyone looks
+ * at the feed, so it runs every tick. Sweeping every curve trade on the chain
+ * costs several queries and repricing costs a multicall; those set the rate
+ * limiting, and running them at this speed is what pushed the failure rate to
+ * 13%. They run every HEAVY_EVERY ticks instead.
  */
-const POLL_MS = Math.max(3_000, Number(process.env.FEED_POLL_MS ?? 6_000));
+const POLL_MS = Math.max(1_000, Number(process.env.FEED_POLL_MS ?? 2_000));
+const HEAVY_EVERY = Math.max(1, Number(process.env.FEED_HEAVY_EVERY ?? 3));
 /** Never query more than this many blocks at once. */
 const MAX_SPAN = 1_800n;
 /**
@@ -649,12 +655,14 @@ async function sweep(): Promise<void> {
   try {
     migrate();
     const head = await logClient().getBlockNumber();
-    const ok = [
-      await stage("launches", () => sweepLaunches(head)),
-      await stage("trades", () => sweepTrades(head)),
-      await stage("prices", () => sweepPrices(head)),
-    ];
-    if (s.sweeps % 30 === 0) prune();
+    const ok = [await stage("launches", () => sweepLaunches(head))];
+    // Trades and prices are the expensive half; a new coin does not need them
+    // to appear in the list, only to have numbers next to it a moment later.
+    if (s.sweeps % HEAVY_EVERY === 0) {
+      ok.push(await stage("trades", () => sweepTrades(head)));
+      ok.push(await stage("prices", () => sweepPrices(head)));
+    }
+    if (s.sweeps % 300 === 0) prune();
     s.sweeps += 1;
     if (ok.every(Boolean)) s.lastError = null;
   } catch (err) {

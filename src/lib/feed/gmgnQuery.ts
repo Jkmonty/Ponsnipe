@@ -45,7 +45,7 @@ export const GMGN_DEFAULTS: GmgnFilters = {
   maxDevHold: null,
   tradeableOnly: false,
   launchpad: null,
-  limit: 60,
+  limit: 250,
 };
 
 export interface GmgnRow {
