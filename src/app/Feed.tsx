@@ -25,16 +25,9 @@ interface Row {
   tradeable?: boolean;
 }
 
-interface Groups {
-  fresh: Row[];
-  heating: Row[];
-  closing: Row[];
-}
-
 interface Payload {
   source: "gmgn" | "chain";
   rows: Row[];
-  groups?: Groups;
   ethUsd?: number | null;
   total: number;
   status: { running: boolean; lastError: string | null; ageSeconds?: number | null };
@@ -106,40 +99,15 @@ function FeedRow({ r, onPick }: { r: Row; onPick: (a: string) => void }) {
   );
 }
 
-function Section({
-  title,
-  rows,
-  onPick,
-}: {
-  title: string;
-  rows: Row[];
-  onPick: (a: string) => void;
-}) {
-  if (!rows.length) return null;
-  return (
-    <>
-      <div className="fsec">
-        {title} <span className="muted">· {rows.length}</span>
-      </div>
-      {rows.map((r) => (
-        <FeedRow key={r.token} r={r} onPick={onPick} />
-      ))}
-    </>
-  );
-}
-
 /**
- * New coins, in three groups.
+ * New pairs, newest first. Nothing else.
  *
  * Unfiltered, because a brand-new coin has no volume and no liquidity yet --
  * that is what new means -- and the $3k floors this once had hid every launch
  * until it had already matured: 16 rows survived them against 200 without.
  *
- * But an unfiltered list sorted by age is no better. Roughly 250 pons tokens
- * launch every ten minutes and almost none go anywhere, so one flat stream
- * buries the coin with 74 trades and 66% progress behind a hundred that opened
- * seconds ago at an identical $3k. Grouping by how far each launch has actually
- * got is what makes the interesting one findable.
+ * Each row still carries buyer and trade counts, which is what separates a
+ * launch someone wants from one nobody has touched.
  */
 export default function Feed({ onPick }: { onPick: (address: string) => void }) {
   const [data, setData] = useState<Payload | null>(null);
@@ -173,7 +141,6 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
   }, [load]);
 
   const rows = data?.rows ?? [];
-  const groups: Groups = data?.groups ?? { fresh: rows, heating: [], closing: [] };
 
   return (
     <aside className="feed card">
@@ -223,14 +190,13 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
         onMouseEnter={() => setHeld(true)}
         onMouseLeave={() => setHeld(false)}
       >
-        {rows.length === 0 && (
+        {rows.length === 0 ? (
           <p className="muted small" style={{ margin: "10px 0" }}>
             {data ? "Nothing yet." : "Loading…"}
           </p>
+        ) : (
+          rows.map((r) => <FeedRow key={r.token} r={r} onPick={onPick} />)
         )}
-        <Section title="About to graduate" rows={groups.closing} onPick={onPick} />
-        <Section title="Getting bought" rows={groups.heating} onPick={onPick} />
-        <Section title="Just launched" rows={groups.fresh} onPick={onPick} />
       </div>
     </aside>
   );

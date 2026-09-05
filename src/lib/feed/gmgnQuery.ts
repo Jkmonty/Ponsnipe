@@ -182,40 +182,9 @@ async function ponsRows(f: GmgnFilters, exclude: Set<string>): Promise<GmgnRow[]
   });
 }
 
-export interface FeedGroups {
-  /** Just launched, nothing has happened yet. Newest first. */
-  fresh: GmgnRow[];
-  /** Someone is actually buying. Busiest first. */
-  heating: GmgnRow[];
-  /** Closing on the graduation threshold. Furthest along first. */
-  closing: GmgnRow[];
-}
-
-/**
- * Split the stream the way GMGN's trenches view does.
- *
- * A single list sorted by age is unusable here: ~250 pons tokens launch every
- * ten minutes and almost none go anywhere, so one flat feed buries the coin
- * with 74 trades and 66% progress behind a hundred that opened seconds ago at
- * an identical $3k. Grouping by how far a launch has actually got is what
- * makes the interesting one visible, and each group wants its own sort --
- * newest for the raw stream, busiest for the ones being bought, furthest along
- * for the ones about to graduate.
- */
-function group(rows: GmgnRow[]): FeedGroups {
-  const closing = rows.filter((r) => r.progressPct >= 45);
-  const heating = rows.filter((r) => r.progressPct < 45 && (r.trades >= 8 || r.progressPct >= 3));
-  const fresh = rows.filter((r) => !closing.includes(r) && !heating.includes(r));
-  return {
-    fresh: fresh.sort((a, b) => a.ageMinutes - b.ageMinutes).slice(0, 25),
-    heating: heating.sort((a, b) => b.volumeUsd - a.volumeUsd).slice(0, 20),
-    closing: closing.sort((a, b) => b.progressPct - a.progressPct).slice(0, 20),
-  };
-}
-
 export async function readGmgnFeed(
   f: GmgnFilters,
-): Promise<{ rows: GmgnRow[]; groups: FeedGroups; total: number; launchpads: string[] }> {
+): Promise<{ rows: GmgnRow[]; total: number; launchpads: string[] }> {
   const since = Math.floor((Date.now() - f.maxAgeMin * 60_000) / 1000);
   let raw: Raw[] = [];
   try {
@@ -232,7 +201,7 @@ export async function readGmgnFeed(
       )
       .all(since) as unknown as Raw[];
   } catch {
-    return { rows: [], groups: { fresh: [], heating: [], closing: [] }, total: 0, launchpads: [] };
+    return { rows: [], total: 0, launchpads: [] };
   }
 
   const all: GmgnRow[] = raw.map((r) => ({
@@ -280,5 +249,5 @@ export async function readGmgnFeed(
     return true;
   });
 
-  return { rows: rows.slice(0, f.limit), groups: group(rows), total: merged.length, launchpads };
+  return { rows: rows.slice(0, f.limit), total: merged.length, launchpads };
 }

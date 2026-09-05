@@ -39,11 +39,10 @@ export async function GET(req: Request) {
       launchpad: q.get("launchpad") || null,
       limit: Math.min(200, Math.max(1, num(q.get("limit"), GMGN_DEFAULTS.limit) ?? 60)),
     };
-    const { rows, groups, total, launchpads } = await readGmgnFeed(f);
+    const { rows, total, launchpads } = await readGmgnFeed(f);
     return json({
       source: "gmgn",
       rows,
-      groups,
       total,
       launchpads,
       filters: f,
