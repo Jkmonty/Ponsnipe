@@ -36,24 +36,53 @@ export const robinhoodChain = defineChain({
 const gc = globalThis as typeof globalThis & {
   __ponsPublicClient?: PublicClient;
   __ponsReadClient?: PublicClient;
+  /** Set once the WebSocket has proven dead; survives a route-module reload. */
+  __ponsWsDemoted?: string;
 };
 
 /** True when we're on a WebSocket transport, i.e. events are pushed to us. */
 export function isWebSocket(): boolean {
-  return env.wssUrl.startsWith("ws");
+  return env.wssUrl.startsWith("ws") && !gc.__ponsWsDemoted;
 }
 
-/** Shared read-only RPC client. */
+/**
+ * Give up on the WebSocket and rebuild on HTTP polling.
+ *
+ * A subscription that has stopped delivering is indistinguishable from a quiet
+ * chain, so nothing detects this on its own — the caller has to notice it is
+ * missing events and say so. Watchers must re-arm after calling this, since
+ * their existing unwatch handles belong to the discarded client.
+ *
+ * Returns false when there was nothing to demote.
+ */
+export function demoteWebSocket(reason: string): boolean {
+  if (!env.wssUrl.startsWith("ws") || gc.__ponsWsDemoted) return false;
+  gc.__ponsWsDemoted = reason;
+  gc.__ponsPublicClient = undefined;
+  return true;
+}
+
+/** Why the WebSocket was abandoned, or null while it is still in use. */
+export function webSocketDemotedReason(): string | null {
+  return gc.__ponsWsDemoted ?? null;
+}
+
+/** Shared client for subscriptions. Prefer readClient() for one-off reads. */
 export function publicClient(): PublicClient {
   if (gc.__ponsPublicClient) return gc.__ponsPublicClient;
   gc.__ponsPublicClient = createPublicClient({
     chain: robinhoodChain,
     // A WebSocket lets viem use eth_subscribe for blocks and logs, so new
     // blocks and curve trades arrive as pushes instead of being polled for.
-    // Falls back to HTTP polling when WSS_URL isn't set.
+    // Falls back to HTTP polling when WSS_URL isn't set or has been demoted.
     transport: isWebSocket()
       ? webSocket(env.wssUrl, { retryCount: 3, keepAlive: true, reconnect: true })
-      : http(env.rpcUrl, { batch: true, retryCount: 2 }),
+      : fallback(
+          [env.rpcUrl, env.fallbackRpcUrl]
+            .filter((u, i, a) => u && a.indexOf(u) === i)
+            .map((u) => http(u, { batch: true, retryCount: 2 })),
+          { retryCount: 0 },
+        ),
     // Only meaningful on HTTP; harmless otherwise.
     pollingInterval: env.pollingIntervalMs,
     // Batch all open-position reads into one eth_call per pass.
@@ -84,7 +113,13 @@ export function readClient(): PublicClient {
     chain: robinhoodChain,
     transport: fallback(
       urls.map((u) => http(u, { batch: true, retryCount: 1 })),
-      { retryCount: 0 },
+      {
+        retryCount: 0,
+        // Rank by observed latency and success rate rather than fixed order.
+        // Without it every call pays the cost of trying a dead primary first,
+        // which is exactly the state an exhausted quota leaves us in.
+        rank: urls.length > 1 ? { interval: 30_000, sampleCount: 3 } : false,
+      },
     ),
     batch: { multicall: { wait: 16 } },
   });

@@ -609,3 +609,112 @@ h2 {
   transition: border-color 0.15s ease;
 }
 .pcard:hover { border-color: var(--line-2); }
+
+
+/* ── suggestions ──────────────────────────────────────────────────────
+   A dense list rather than cards: the point is to scan several at once and
+   decide none of them are worth it, which is the usual answer. */
+.shead {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 18px 0 8px;
+}
+.shead:first-of-type { margin-top: 10px; }
+
+.slist { display: grid; gap: 6px; }
+
+.srow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-2);
+  transition: border-color .14s ease, transform .14s ease;
+}
+.srow:hover {
+  border-color: var(--line-2);
+  transform: translateY(-1px);
+}
+
+.savatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  object-fit: cover;
+  flex: none;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+.savatar-blank {
+  position: relative;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: .03em;
+  overflow: hidden;
+}
+
+/* Paints over the initials once the gateway actually delivers. */
+.savatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.srow-meta {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--muted);
+  background: var(--card);
+  border: 1px solid var(--line-2);
+}
+.pill-hot {
+  color: var(--green);
+  background: var(--green-bg);
+  border-color: transparent;
+}
+.pill-cold {
+  color: var(--red);
+  background: var(--red-bg);
+  border-color: transparent;
+}
+
+.ellip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.num { font-variant-numeric: tabular-nums; }
+
+/* The base rates ride along with the list, so the numbers are never separated
+   from the thing they qualify. */
+.caveat {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  line-height: 1.5;
+}
+
+@media (max-width: 620px) {
+  .srow { flex-wrap: wrap; }
+  .srow-meta { margin-left: auto; }
+}

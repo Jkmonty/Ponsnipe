@@ -39,3 +39,21 @@ export function weiToUnits(wei: string | bigint, decimals: number): number {
 }
 
 export const EXPLORER = "https://robinhoodchain.blockscout.com";
+
+/**
+ * Token artwork is whatever the deployer put in logo(): an https URL, an
+ * ipfs:// URI, or a bare CID. Only the first renders in a browser, so
+ * normalise the other two onto a gateway.
+ */
+export function mediaUrl(raw: string): string {
+  if (!raw) return "";
+  const t = raw.trim();
+  if (/^https?:/i.test(t)) return t;
+
+  const cid = t.startsWith("ipfs://")
+    ? t.slice("ipfs://".length).replace(/^ipfs\//, "")
+    : /^(baf[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})/.test(t)
+      ? t
+      : "";
+  return cid ? `https://dweb.link/ipfs/${cid}` : "";
+}

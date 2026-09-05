@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtEth, fmtPct, fmtPrice, shortAddr, weiToUnits, EXPLORER } from "@/lib/format";
 import LaunchComposer from "./LaunchComposer";
+import WalletSetup from "./WalletSetup";
+import Suggestions from "./Suggestions";
 
 interface WalletInfo {
   configured: boolean;
@@ -111,13 +113,13 @@ export default function Dashboard() {
     [],
   );
 
-  const createWallet = async () => {
+  const createWallet = async (privateKey?: string) => {
     setBusy("wallet");
     try {
-      const r = await post("/api/wallet/create");
+      const r = await post("/api/wallet/create", privateKey ? { privateKey } : undefined);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? "could not create wallet");
-      flash("ok", `Wallet created: ${j.address}`);
+      flash("ok", `${privateKey ? "Wallet imported" : "Wallet created"}: ${j.address}`);
       refresh();
     } catch (e) {
       flash("err", e instanceof Error ? e.message : "failed");
@@ -206,14 +208,13 @@ export default function Dashboard() {
       {/* ── setup / wallet ─────────────────────────────────────────── */}
       {!wallet?.configured ? (
         <div className="card">
-          <h2>Step 1 — Create your trading wallet</h2>
+          <h2>Step 1 — Set up your trading wallet</h2>
           <p className="muted small" style={{ marginTop: 0 }}>
-            A fresh wallet the app controls. Its key is encrypted on this machine. You fund
-            it, it does the buying and selling. Nothing is custodial to anyone but you.
+            A wallet this app controls, so it can sell without asking you first. The key is
+            encrypted on this machine with your passphrase. Nothing is custodial to anyone
+            but you.
           </p>
-          <button className="btn btn-primary" disabled={busy === "wallet"} onClick={createWallet}>
-            {busy === "wallet" ? "Creating…" : "Create wallet"}
-          </button>
+          <WalletSetup busy={busy === "wallet"} onSubmit={createWallet} />
           <p className="muted small" style={{ marginBottom: 0 }}>
             If this errors about <span className="mono">KEYSTORE_PASSPHRASE</span>, run{" "}
             <span className="mono">npm run setup</span> once and restart.
@@ -262,6 +263,10 @@ export default function Dashboard() {
 
       {/* ── sniper ─────────────────────────────────────────────────── */}
       <SniperCard funded={!!funded} flash={flash} />
+
+      {/* ── what the sniper would buy ──────────────────────────────── */}
+      <Suggestions flash={flash} />
+
       <LaunchComposer flash={flash} />
 
       {/* ── open positions ─────────────────────────────────────────── */}
@@ -748,6 +753,10 @@ interface SniperStatus {
   snipesLastHour: number;
   openSnipes: number;
   lastError: string | null;
+  /** Launches the reconciliation sweep recovered after the watcher missed them. */
+  missed?: number;
+  /** Set when the WebSocket was abandoned for HTTP polling. */
+  wsDemoted?: string | null;
   recent: {
     ts: string;
     token_address: string;
@@ -859,7 +868,11 @@ function SniperCard({
           {status.spentTodayEth.toFixed(4)} / {cfg.maxDailySpendEth} ETH · open{" "}
           {status.openSnipes}/{cfg.maxConcurrentSnipes}
           {!status.live ? " · DRY‑RUN (no real buys)" : ""}
-          {status.lastError ? ` · error: ${status.lastError.slice(0, 60)}` : ""}
+          {/* A raw viem error truncated mid-word tells the reader nothing. The
+              cases that matter have their own wording; the rest points at the log. */}
+          {status.wsDemoted ? " · polling (websocket dropped)" : ""}
+          {status.missed ? ` · ${status.missed} recovered by sweep` : ""}
+          {status.lastError ? " · last error in the log" : ""}
         </p>
       )}
 

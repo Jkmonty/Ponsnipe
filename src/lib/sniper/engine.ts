@@ -1,5 +1,12 @@
 import { getAddress, parseEther, type Address, type Log } from "viem";
-import { isWebSocket, publicClient, readClient } from "../chain";
+import {
+  demoteWebSocket,
+  isWebSocket,
+  publicClient,
+  readClient,
+  redactRpc,
+  webSocketDemotedReason,
+} from "../chain";
 import { env } from "../env";
 import { db, logEngine } from "../db/index";
 import { PONS } from "../pons/addresses";
@@ -30,6 +37,11 @@ interface SniperState {
   errors: number;
   lastError: string | null;
   startedAt: number;
+  /** Highest block the reconciliation sweep has accounted for. */
+  lastReconciledBlock: bigint;
+  /** Launches the sweep found that the live subscription never delivered. */
+  missed: number;
+  reconcile: ReturnType<typeof setInterval> | undefined;
 }
 
 // globalThis-backed so instrumentation (boot) and the API routes share one
@@ -52,6 +64,9 @@ const s: SniperState =
     errors: 0,
     lastError: null,
     startedAt: 0,
+    lastReconciledBlock: 0n,
+    missed: 0,
+    reconcile: undefined,
   });
 
 type Decision = "bought" | "skipped" | "error";
@@ -400,31 +415,116 @@ function handleLaunchLogs(logs: Log[]): void {
   }
 }
 
+/** How often to check the subscription against the chain it claims to watch. */
+const RECONCILE_MS = 60_000;
+
+function arm(): void {
+  s.unwatch?.();
+  s.unwatch = publicClient().watchContractEvent({
+    address: PONS.factory,
+    abi: ponsFactoryAbi,
+    eventName: "TokenLaunched",
+    // Pushed via eth_subscribe when WSS_URL is set; polled on HTTP.
+    pollingInterval: env.pollingIntervalMs,
+    onLogs: (logs) => onLaunchLogs(logs as Log[]),
+    onError: (err) => {
+      // Swallowing this is how the watcher used to go silently blind: an
+      // endpoint that starts refusing looks exactly like a chain with no
+      // launches on it. Record it; the sweep below decides what to do.
+      s.lastError = err instanceof Error ? err.message : String(err);
+      logEngine("warn", `sniper watcher error: ${redactRpc(s.lastError)}`);
+    },
+  });
+}
+
+/**
+ * Trust, but verify.
+ *
+ * A subscription that stops delivering is indistinguishable from a quiet chain,
+ * so once a minute we ask an independent HTTP client what actually happened in
+ * the blocks since the last check. Anything the live watcher failed to deliver
+ * is both counted and processed, so a dead transport degrades into a slower
+ * sniper rather than a stopped one. Repeated misses demote the WebSocket to
+ * HTTP polling for good.
+ */
+async function reconcile(): Promise<void> {
+  if (!s.running) return;
+  try {
+    const c = readClient();
+    const head = await c.getBlockNumber();
+
+    // First pass only establishes a baseline — everything before boot is not
+    // ours to backfill.
+    if (s.lastReconciledBlock === 0n) {
+      s.lastReconciledBlock = head;
+      return;
+    }
+    if (head <= s.lastReconciledBlock) return;
+
+    // Cap the span so a long stall cannot ask for a range the endpoint refuses.
+    const from = s.lastReconciledBlock + 1n;
+    const to = head - from > 2_000n ? from + 2_000n : head;
+
+    const logs = await c.getContractEvents({
+      address: PONS.factory,
+      abi: ponsFactoryAbi,
+      eventName: "TokenLaunched",
+      fromBlock: from,
+      toBlock: to,
+    });
+    s.lastReconciledBlock = to;
+
+    // handleLaunchLogs de-dupes on s.seen, so anything the subscription already
+    // delivered is dropped here and only genuine misses survive.
+    const before = s.launchesSeen;
+    onLaunchLogs(logs as Log[]);
+    const missed = s.launchesSeen - before;
+    if (missed <= 0) return;
+
+    s.missed += missed;
+    logEngine(
+      "warn",
+      `sniper sweep found ${missed} launch(es) the live watcher missed (blocks ${from}-${to})`,
+    );
+
+    // One miss can be a race at the block boundary. A sweep that finds the
+    // whole window means the subscription is not delivering at all.
+    if (isWebSocket() && missed >= 3 && demoteWebSocket("subscription stopped delivering launches")) {
+      logEngine("warn", "sniper: WebSocket demoted to HTTP polling after missed launches");
+      arm();
+    }
+  } catch (err) {
+    s.lastError = err instanceof Error ? err.message : String(err);
+    logEngine("warn", `sniper sweep failed: ${redactRpc(s.lastError)}`);
+  }
+}
+
 export function startSniper(): void {
   if (s.running) return;
   s.running = true;
   s.startedAt = Date.now();
   try {
-    s.unwatch = publicClient().watchContractEvent({
-      address: PONS.factory,
-      abi: ponsFactoryAbi,
-      eventName: "TokenLaunched",
-      // Pushed via eth_subscribe when WSS_URL is set; polled on HTTP.
-      pollingInterval: env.pollingIntervalMs,
-      onLogs: (logs) => onLaunchLogs(logs as Log[]),
-      onError: () => {},
-    });
+    arm();
     logEngine("info", `sniper watcher started (factory ${PONS.factory})`);
   } catch (err) {
     s.running = false;
     logEngine("error", `sniper failed to start: ${String(err)}`);
+    return;
   }
+
+  s.reconcile = setInterval(() => void reconcile(), RECONCILE_MS);
+  if (s.reconcile && typeof s.reconcile === "object" && "unref" in s.reconcile) {
+    s.reconcile.unref();
+  }
+  void reconcile();
 }
 
 export function stopSniper(): void {
   s.running = false;
   s.unwatch?.();
   s.unwatch = undefined;
+  if (s.reconcile) clearInterval(s.reconcile);
+  s.reconcile = undefined;
   for (const t of s.pending.values()) clearTimeout(t);
   s.pending.clear();
 }
@@ -448,6 +548,9 @@ export function sniperStatus() {
     sniped: s.sniped,
     skipped: s.skipped,
     errors: s.errors,
+    /** Launches recovered by the sweep because the subscription missed them. */
+    missed: s.missed,
+    wsDemoted: webSocketDemotedReason(),
     spentTodayEth: spentTodayEth(),
     snipesLastHour: snipesLastHour(),
     openSnipes: countOpenBySource("sniper"),

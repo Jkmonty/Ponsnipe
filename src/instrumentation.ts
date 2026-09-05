@@ -24,4 +24,13 @@ export async function register(): Promise<void> {
     console.error("Failed to start sniper:", err);
   }
 
+  // Feeds the post-graduation half of the suggestions panel. Read-only, and on
+  // its own public-endpoint client, so it costs nothing on the primary RPC.
+  const { startGraduationWatcher } = await import("./lib/sniper/graduations");
+  try {
+    startGraduationWatcher();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Failed to start graduation watcher:", err);
+  }
 }

@@ -48,6 +48,20 @@ bot wallet than you are actively trading.
   been used and died.
 - **Sniper** — auto-buys new launches through a filter chain. Off by default.
   See the warning above.
+- **Suggestions** — the sniper evaluates every launch whether or not it is
+  armed, so the panel shows what it *would* have bought without buying it,
+  ranked by early-buyer count. Plus a watchlist of tokens that graduated in the
+  last twelve hours, showing what each has actually done since.
+
+## Setting up your wallet
+
+Two options at first run. **Create a new one** is recommended: a fresh key that
+has never touched anything else. **Use my own key** imports an existing private
+key instead, for people who would rather not trust a key this app generated.
+
+Either way the app holds a hot key — it has to, since the whole point is selling
+while you are asleep and a browser wallet cannot sign then. Import a burner, not
+a wallet you keep a balance in.
 
 ## Setup
 
@@ -69,6 +83,7 @@ for a while. The toggle in the header switches to live.
 |---|---|
 | `RPC_URL` | A private endpoint (e.g. Alchemy). The public one is 1–3s behind, which is the difference between a 0.5s exit and a 3s one. |
 | `WSS_URL` | WebSocket pushes rather than polling — measured 96ms between blocks against 570–1456ms polling. |
+| `FALLBACK_RPC_URL` | Where reads go when the primary refuses. Defaults to Robinhood's public endpoint, so a provider that hits its monthly quota costs you latency rather than a dead app. |
 | `ANTHROPIC_API_KEY` | Lets the launch composer draft with Claude instead of a built-in heuristic. Costs a fraction of a penny per draft. |
 
 ## Research tools
