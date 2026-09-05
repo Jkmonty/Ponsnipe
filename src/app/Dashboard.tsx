@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtEth, fmtPct, fmtPrice, shortAddr, weiToUnits, EXPLORER } from "@/lib/format";
 import LaunchComposer from "./LaunchComposer";
+import MigratedFeed from "./MigratedFeed";
 
 interface WalletInfo {
   configured: boolean;
@@ -327,7 +328,7 @@ export default function Dashboard() {
         </div>
 
         <aside className="colside">
-          <GraduatedFeed />
+          <MigratedFeed />
         </aside>
       </div>
 
