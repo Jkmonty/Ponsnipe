@@ -29,12 +29,22 @@ export const sniperConfigSchema = z.object({
   /**
    * Seconds to wait after a launch before buying.
    *
-   * pons charges 99% on a buy in the launch second, decaying to zero across
-   * THREE seconds — stated on its own launch form, and confirmed by our event
-   * data (9900bps at +0.7s, 718bps at +0.9s, 119bps at +2.4s, 99bps at +3.5s).
-   * We had assumed 15s and waited 20, which meant entering ~17 seconds later
-   * than necessary. On a curve where price is a function of ETH already
-   * deposited, every one of those seconds was paid for.
+   * The anti-snipe tax really is only 3 seconds — pons says so on its launch
+   * form and our event data agrees (9900bps at +0.7s, 119bps at +2.4s, 99bps
+   * at +3.5s). So this was dropped to 4s on the reasoning that the extra 16
+   * seconds were being paid for in price.
+   *
+   * A scan of the same five days at both delays says otherwise. 4s was WORSE
+   * on every exit rule — trail25 -2.2% against -2.1%, balanced -6.0% against
+   * -5.2%, hold -10.1% against -8.1% — and the medians degraded much further
+   * than the means. Win rate rose while returns fell: more small wins, bigger
+   * losses.
+   *
+   * The delay is therefore NOT an anti-tax measure, it is an OBSERVATION
+   * WINDOW. Waiting is what lets us see whether anyone else bought, and that
+   * is the strongest signal in the dataset: 8+ other buyers in the first 20s
+   * graduate at 5.65% against 0.11% for none. Buying 16 seconds cheaper and
+   * blind costs more than it saves.
    */
   delaySeconds: z.number().int().min(0).max(600),
 
@@ -104,8 +114,8 @@ export const DEFAULT_CONFIG: SniperConfig = {
   trailingStopPct: null,
   graduationExitPct: 92,
   slippageBps: 800,
-  // Just past the 3s decay, with a block of margin.
-  delaySeconds: 4,
+  // An observation window, not a tax dodge — see the note on the field.
+  delaySeconds: 20,
   minLiquidityEth: 0.05,
   maxLiquidityEth: null,
   maxCreatorTaxBps: 300,
