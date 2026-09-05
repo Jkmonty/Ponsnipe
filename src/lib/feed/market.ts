@@ -121,9 +121,32 @@ function migrate(): void {
       liquidity       REAL,
       progress_pct    REAL,
       graduated       INTEGER DEFAULT 0,
-      priced_at       TEXT
+      priced_at       TEXT,
+      -- Exact curve state, carried as wei strings. Seeded by one poll and then
+      -- advanced by trade events, which reproduce it to the wei.
+      quote_reserve   TEXT,
+      token_reserve   TEXT,
+      -- getReserves includes the curve's phantom reserve; realQuoteReserve does
+      -- not. The difference is fixed per curve, so record it once and real
+      -- liquidity stays derivable as the reserves move.
+      phantom         TEXT,
+      -- Block the reserves are true as of. Events at or before it are already
+      -- baked in and must not be applied twice.
+      reserves_block  INTEGER DEFAULT 0
     );
   `);
+  for (const [col, decl] of [
+    ["quote_reserve", "TEXT"],
+    ["token_reserve", "TEXT"],
+    ["phantom", "TEXT"],
+    ["reserves_block", "INTEGER DEFAULT 0"],
+  ] as const) {
+    try {
+      conn.exec(`ALTER TABLE feed_tokens ADD COLUMN ${col} ${decl};`);
+    } catch {
+      /* already present */
+    }
+  }
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_created ON feed_tokens(created_at DESC);`);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_curve ON feed_tokens(curve);`);
 
@@ -141,6 +164,37 @@ function migrate(): void {
     );
   `);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_vol_bucket ON feed_volume(bucket DESC);`);
+
+  // Where the sweeps got to. Held on disk, not just in memory, so a restart
+  // resumes rather than skipping whatever happened while the app was down.
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS feed_cursor (
+      name  TEXT PRIMARY KEY,
+      block INTEGER NOT NULL
+    );
+  `);
+}
+
+function loadCursor(name: string): bigint {
+  try {
+    const r = db().prepare(`SELECT block FROM feed_cursor WHERE name = ?`).get(name) as
+      | { block: number }
+      | undefined;
+    return r ? BigInt(r.block) : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+function saveCursor(name: string, block: bigint): void {
+  try {
+    db()
+      .prepare(`INSERT INTO feed_cursor (name, block) VALUES (?,?)
+                  ON CONFLICT(name) DO UPDATE SET block = excluded.block`)
+      .run(name, Number(block));
+  } catch {
+    /* a cursor that fails to save only costs a re-scan next boot */
+  }
 }
 
 const nowBucket = () => Math.floor(Date.now() / 60_000);
@@ -148,13 +202,20 @@ const nowBucket = () => Math.floor(Date.now() / 60_000);
 /** New launches -> feed rows, with the metadata the list needs to render. */
 async function sweepLaunches(head: bigint): Promise<void> {
   const c = logClient();
-  if (s.lastLaunchBlock === 0n) s.lastLaunchBlock = head - 600n;
+  if (s.lastLaunchBlock === 0n) {
+    // Resume where the last run stopped. Falling back to a fixed lookback would
+    // silently drop every launch during a restart, which is the one thing a
+    // feed claiming to show new coins must not do.
+    const saved = loadCursor("launches");
+    s.lastLaunchBlock = saved > 0n && head - saved < MAX_SPAN * 20n ? saved : head - 600n;
+  }
   let from = s.lastLaunchBlock + 1n;
   if (head < from) return;
   if (head - from > MAX_SPAN) from = head - MAX_SPAN;
 
   const found = await c.getLogs({ address: PONS.factory, event: LAUNCH_EVENT, fromBlock: from, toBlock: head });
   s.lastLaunchBlock = head;
+  saveCursor("launches", head);
   if (!found.length) return;
 
   const fresh = found
@@ -175,8 +236,16 @@ async function sweepLaunches(head: bigint): Promise<void> {
   const add = fresh.filter((x) => !known.has(x.token.toLowerCase()));
   if (!add.length) return;
 
-  // Names, artwork and the quote asset's own symbol/decimals, in one call.
-  const PER = 5;
+  /*
+   * Metadata AND opening reserves in one call, pinned to one block.
+   *
+   * Seeding here rather than leaving it to the pricing pass is what keeps the
+   * feed live: a curve with no reserves recorded cannot have trade events
+   * applied to it, so it would show a market cap only as fresh as its turn in
+   * a 90-per-pass rotation. Seeded at birth, it is carried forward exactly by
+   * events from its first trade onward.
+   */
+  const PER = 7;
   const meta = await c.multicall({
     contracts: add.flatMap((x) => [
       { address: x.token, abi: erc20Abi, functionName: "symbol" as const },
@@ -184,15 +253,20 @@ async function sweepLaunches(head: bigint): Promise<void> {
       { address: x.token, abi: erc20Abi, functionName: "logo" as const },
       { address: x.pairToken, abi: erc20Abi, functionName: "symbol" as const },
       { address: x.pairToken, abi: erc20Abi, functionName: "decimals" as const },
+      { address: x.curve, abi: bondingCurveAbi, functionName: "getReserves" as const },
+      { address: x.curve, abi: bondingCurveAbi, functionName: "realQuoteReserve" as const },
     ]),
     allowFailure: true,
+    blockNumber: head,
   });
 
   const ins = db().prepare(
     `INSERT OR IGNORE INTO feed_tokens
        (token, curve, deployer, symbol, name, logo, quote_token, quote_symbol,
-        quote_decimals, quote_is_native, threshold, launch_block, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        quote_decimals, quote_is_native, threshold, launch_block, created_at,
+        quote_reserve, token_reserve, phantom, reserves_block,
+        price, mcap, liquidity, progress_pct, priced_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   );
   const at = new Date().toISOString();
   for (let i = 0; i < add.length; i++) {
@@ -202,6 +276,22 @@ async function sweepLaunches(head: bigint): Promise<void> {
     const isNative = x.pairToken.toLowerCase() === NATIVE;
     // currency0 is the zero address on native pairs, where symbol() reverts.
     const qDec = isNative ? 18 : Number(cell(4)?.status === "success" ? cell(4).result : 18);
+    const rv = cell(5);
+    const real = cell(6);
+    let q = 0n;
+    let t = 0n;
+    let phantom = 0n;
+    let price = 0;
+    let liquidity = 0;
+    if (rv?.status === "success") {
+      [q, t] = rv.result as readonly [bigint, bigint];
+      const realQuote = real?.status === "success" ? (real.result as bigint) : 0n;
+      phantom = q > realQuote ? q - realQuote : 0n;
+      liquidity = Number(realQuote) / 10 ** qDec;
+      if (q > 0n && t > 0n) price = Number(q) / 10 ** qDec / (Number(t) / 1e18);
+    }
+    const threshold = Number(x.threshold) / 10 ** qDec;
+
     ins.run(
       x.token.toLowerCase(),
       x.curve.toLowerCase(),
@@ -213,8 +303,17 @@ async function sweepLaunches(head: bigint): Promise<void> {
       isNative ? "ETH" : (str(3) ?? "?"),
       qDec,
       isNative ? 1 : 0,
-      Number(x.threshold) / 10 ** qDec,
+      threshold,
       Number(x.block),
+      at,
+      rv?.status === "success" ? q.toString() : null,
+      rv?.status === "success" ? t.toString() : null,
+      rv?.status === "success" ? phantom.toString() : null,
+      rv?.status === "success" ? Number(head) : 0,
+      price,
+      price * (SUPPLY_RAW / 1e18),
+      liquidity,
+      threshold > 0 ? Math.min(100, (liquidity / threshold) * 100) : 0,
       at,
     );
     s.seen += 1;
@@ -230,30 +329,80 @@ async function sweepLaunches(head: bigint): Promise<void> {
  */
 async function sweepTrades(head: bigint): Promise<void> {
   const c = logClient();
-  if (s.lastTradeBlock === 0n) s.lastTradeBlock = head - 200n;
+  if (s.lastTradeBlock === 0n) {
+    const saved = loadCursor("trades");
+    s.lastTradeBlock = saved > 0n && head - saved < MAX_SPAN * 20n ? saved : head - 200n;
+  }
   if (head <= s.lastTradeBlock) return;
 
-  // Only curves we are actually showing, and their quote decimals, so raw
-  // amounts can be scaled once here rather than on every read.
+  // Curves we are showing, with the exact state each was last known to be in.
   const rows = db()
-    .prepare(`SELECT curve, quote_decimals FROM feed_tokens`)
-    .all() as { curve: string; quote_decimals: number }[];
-  const dec = new Map(rows.map((r) => [r.curve, r.quote_decimals ?? 18]));
-  if (!dec.size) {
+    .prepare(
+      `SELECT curve, quote_decimals, quote_reserve, token_reserve, phantom,
+              reserves_block, threshold
+         FROM feed_tokens WHERE graduated = 0`,
+    )
+    .all() as {
+    curve: string;
+    quote_decimals: number;
+    quote_reserve: string | null;
+    token_reserve: string | null;
+    phantom: string | null;
+    reserves_block: number;
+    threshold: number | null;
+  }[];
+  const meta = new Map(rows.map((r) => [r.curve, r]));
+  if (!meta.size) {
     s.lastTradeBlock = head;
     return;
   }
 
   const bucket = nowBucket();
   const agg = new Map<string, { quote: number; buys: number; sells: number }>();
+  /** Curves whose reserves this pass advanced, and to which block. */
+  const moved = new Map<string, { q: bigint; t: bigint; block: number }>();
+
   const add = (curve: string, raw: bigint, isBuy: boolean) => {
-    const d = dec.get(curve);
-    if (d === undefined) return;
+    const m = meta.get(curve);
+    if (!m) return;
     const cur = agg.get(curve) ?? { quote: 0, buys: 0, sells: 0 };
-    cur.quote += Number(raw) / 10 ** d;
+    cur.quote += Number(raw) / 10 ** (m.quote_decimals ?? 18);
     if (isBuy) cur.buys += 1;
     else cur.sells += 1;
     agg.set(curve, cur);
+  };
+
+  /**
+   * Advance a curve's reserves by one trade.
+   *
+   * Verified against the chain rather than derived from the contract: polling
+   * reserves, replaying every event over the next 45 seconds and re-polling
+   * reproduced both sides to the wei across 232 trades. That is what lets the
+   * feed price 2,000+ curves live without a read each — the events already in
+   * hand carry the whole state transition.
+   */
+  const applyTrade = (
+    curve: string,
+    block: number,
+    ev: { quoteIn?: bigint; tokensOut?: bigint; tokensIn?: bigint; quoteOut?: bigint; fee: bigint; tax: bigint },
+    isBuy: boolean,
+  ) => {
+    const m = meta.get(curve);
+    if (!m || m.quote_reserve == null || m.token_reserve == null) return;
+    // Anything at or before the polled block is already in those reserves.
+    if (block <= (m.reserves_block ?? 0)) return;
+
+    const held = moved.get(curve);
+    let q = held ? held.q : BigInt(m.quote_reserve);
+    let t = held ? held.t : BigInt(m.token_reserve);
+    if (isBuy) {
+      q += (ev.quoteIn ?? 0n) - ev.fee - ev.tax;
+      t -= ev.tokensOut ?? 0n;
+    } else {
+      t += ev.tokensIn ?? 0n;
+      q -= (ev.quoteOut ?? 0n) + ev.fee + ev.tax;
+    }
+    moved.set(curve, { q, t, block });
   };
 
   let cursor = s.lastTradeBlock;
@@ -264,61 +413,121 @@ async function sweepTrades(head: bigint): Promise<void> {
     // count matters here: the public node intermittently refuses under burst,
     // and this stage was the one failing.
     const found = await c.getLogs({ events: [BUY_EVENT, SELL_EVENT], fromBlock: from, toBlock: to });
+    // getLogs returns ascending, and the chunks run in order, so trades reach
+    // applyTrade in the sequence the chain executed them.
     for (const l of found) {
-      const a = l.args as { quoteIn?: bigint; quoteOut?: bigint };
+      const curve = String(l.address).toLowerCase();
       const isBuy = l.eventName === "CurveBuy";
-      add(String(l.address).toLowerCase(), (isBuy ? a.quoteIn : a.quoteOut) ?? 0n, isBuy);
+      const a = l.args as {
+        quoteIn?: bigint;
+        tokensOut?: bigint;
+        tokensIn?: bigint;
+        quoteOut?: bigint;
+        fee: bigint;
+        tax: bigint;
+      };
+      add(curve, (isBuy ? a.quoteIn : a.quoteOut) ?? 0n, isBuy);
+      applyTrade(curve, Number(l.blockNumber ?? 0n), a, isBuy);
     }
     cursor = to;
   }
-  // A stall longer than the chunk budget leaves a hole in the volume window.
-  // Skipping to the head keeps the feed current; the alternative is falling
-  // permanently behind and reporting stale volume as if it were live.
-  s.lastTradeBlock = head - cursor > MAX_SPAN ? head : cursor;
-  if (!agg.size) return;
+  // A stall longer than the chunk budget leaves a hole. Skipping to the head
+  // keeps the feed current; the alternative is falling permanently behind and
+  // reporting stale volume as if it were live.
+  const skipped = head - cursor > MAX_SPAN;
+  s.lastTradeBlock = skipped ? head : cursor;
+  saveCursor("trades", s.lastTradeBlock);
 
-  const up = db().prepare(
-    `INSERT INTO feed_volume (curve, bucket, quote, buys, sells) VALUES (?,?,?,?,?)
-       ON CONFLICT(curve, bucket) DO UPDATE SET
-         quote = quote + excluded.quote,
-         buys  = buys  + excluded.buys,
-         sells = sells + excluded.sells`,
-  );
-  for (const [curve, v] of agg) up.run(curve, bucket, v.quote, v.buys, v.sells);
+  if (skipped) {
+    // Reserves are carried forward by applying every trade in order, so a hole
+    // in that sequence makes them quietly wrong rather than merely old — and
+    // wrong reserves are a wrong market cap, which is a wrong filter result.
+    // Discard them and let the seeding pass re-read from the chain. The last
+    // known price stays on screen meanwhile rather than blanking the feed.
+    db()
+      .prepare(`UPDATE feed_tokens SET quote_reserve=NULL, token_reserve=NULL WHERE graduated=0`)
+      .run();
+    logEngine("warn", `feed skipped ${head - cursor} blocks — reserves will be re-read`);
+  }
+
+  if (agg.size) {
+    const up = db().prepare(
+      `INSERT INTO feed_volume (curve, bucket, quote, buys, sells) VALUES (?,?,?,?,?)
+         ON CONFLICT(curve, bucket) DO UPDATE SET
+           quote = quote + excluded.quote,
+           buys  = buys  + excluded.buys,
+           sells = sells + excluded.sells`,
+    );
+    for (const [curve, v] of agg) up.run(curve, bucket, v.quote, v.buys, v.sells);
+  }
+
+  // Write the advanced reserves back, with the price and market cap they imply.
+  if (moved.size) {
+    const upd = db().prepare(
+      `UPDATE feed_tokens
+          SET quote_reserve=?, token_reserve=?, reserves_block=?,
+              price=?, mcap=?, liquidity=?, progress_pct=?, priced_at=?
+        WHERE curve=?`,
+    );
+    const at = new Date().toISOString();
+    for (const [curve, v] of moved) {
+      const m = meta.get(curve);
+      if (!m) continue;
+      const qDec = m.quote_decimals ?? 18;
+      const quote = Number(v.q) / 10 ** qDec;
+      const token = Number(v.t) / 1e18;
+      const price = token > 0 && quote > 0 ? quote / token : 0;
+      const phantom = m.phantom ? Number(BigInt(m.phantom)) / 10 ** qDec : 0;
+      const liquidity = Math.max(0, quote - phantom);
+      const threshold = m.threshold ?? 0;
+      upd.run(
+        v.q.toString(),
+        v.t.toString(),
+        v.block,
+        price,
+        price * (SUPPLY_RAW / 1e18),
+        liquidity,
+        threshold > 0 ? Math.min(100, (liquidity / threshold) * 100) : 0,
+        at,
+        curve,
+      );
+    }
+  }
 }
 
-/** Reserves for the newest curves, and the price/mcap/liquidity that follow. */
-async function sweepPrices(): Promise<void> {
-  /*
-   * Priority matters more than it looks. The window holds three hours of
-   * launches — at ~33 a minute that is a few thousand rows — and only 90 are
-   * repriced per pass, so a plain round-robin would revisit each one about
-   * every ten minutes and the feed would show ten-minute-old market caps.
-   *
-   * Almost all of those tokens never see a second trade and can never clear a
-   * filter. Ordering by recent trading puts the reprice budget on the handful
-   * that are actually moving, which are exactly the rows on screen.
-   */
-  const since = nowBucket() - 10;
+/**
+ * Seed reserves for curves that have none, and re-check a few that do.
+ *
+ * Once a curve is seeded the trade sweep carries it forward exactly, so this is
+ * no longer how prices stay current — it is how they start, and how they are
+ * repaired. A poll is still needed for: a token that has just launched, a curve
+ * whose events were missed while the sweep was behind, and spotting graduation,
+ * which ends the curve without emitting a trade.
+ *
+ * Unseeded curves come first because until one is seeded it has no price at all.
+ */
+async function sweepPrices(head: bigint): Promise<void> {
   const rows = db()
     .prepare(
-      `SELECT t.token, t.curve, t.quote_decimals, t.threshold
-         FROM feed_tokens t
-         LEFT JOIN (
-           SELECT curve, SUM(quote) AS vol FROM feed_volume WHERE bucket >= ? GROUP BY curve
-         ) v ON v.curve = t.curve
-        WHERE t.graduated = 0
-        ORDER BY (v.vol IS NULL) ASC, COALESCE(t.priced_at, '') ASC
+      `SELECT token, curve, quote_decimals, threshold, quote_reserve
+         FROM feed_tokens
+        WHERE graduated = 0
+        ORDER BY (quote_reserve IS NOT NULL) ASC, COALESCE(priced_at, '') ASC
         LIMIT ?`,
     )
-    .all(since, PRICE_BATCH) as {
+    .all(PRICE_BATCH) as {
     token: string;
     curve: string;
     quote_decimals: number;
     threshold: number | null;
+    quote_reserve: string | null;
   }[];
   if (!rows.length) return;
 
+  // Pin the read to one block so the reserves and the block they are true as of
+  // cannot disagree — the trade sweep uses that block to decide which events
+  // are already baked in, and an off-by-one there double-counts a trade.
+  const at = head;
   const res = await logClient().multicall({
     contracts: rows.flatMap((r) => [
       { address: getAddress(r.curve), abi: bondingCurveAbi, functionName: "getReserves" as const },
@@ -326,33 +535,51 @@ async function sweepPrices(): Promise<void> {
       { address: getAddress(r.curve), abi: bondingCurveAbi, functionName: "graduated" as const },
     ]),
     allowFailure: true,
+    blockNumber: at,
   });
 
   const upd = db().prepare(
-    `UPDATE feed_tokens SET price=?, mcap=?, liquidity=?, progress_pct=?, graduated=?, priced_at=? WHERE token=?`,
+    `UPDATE feed_tokens
+        SET price=?, mcap=?, liquidity=?, progress_pct=?, graduated=?, priced_at=?,
+            quote_reserve=?, token_reserve=?, phantom=?, reserves_block=?
+      WHERE token=?`,
   );
-  const at = new Date().toISOString();
+  const now = new Date().toISOString();
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const rv = res[i * 3];
     const real = res[i * 3 + 1];
     const grad = res[i * 3 + 2];
+    if (rv?.status !== "success") continue;
 
+    const [q, t] = rv.result as readonly [bigint, bigint];
     const qDec = r.quote_decimals ?? 18;
-    let price = 0;
-    if (rv?.status === "success") {
-      const [q, t] = rv.result as readonly [bigint, bigint];
-      // Curve reserves are (quote, token). Token side is always 18 decimals.
-      if (q > 0n && t > 0n) price = (Number(q) / 10 ** qDec) / (Number(t) / 1e18);
-    }
-    const liquidity = real?.status === "success" ? Number(real.result as bigint) / 10 ** qDec : 0;
+    const quote = Number(q) / 10 ** qDec;
+    const token = Number(t) / 1e18;
+    const price = q > 0n && t > 0n ? quote / token : 0;
+
+    // Phantom is the fixed part of the quote reserve that is not real money.
+    // Taken as the difference at a single block so the two agree by
+    // construction, then held constant as the reserves move.
+    const realQuote = real?.status === "success" ? (real.result as bigint) : 0n;
+    const phantom = q > realQuote ? q - realQuote : 0n;
+    const liquidity = Number(realQuote) / 10 ** qDec;
     const graduated = grad?.status === "success" ? (grad.result as boolean) : false;
-    const mcap = price * (SUPPLY_RAW / 1e18);
-
     const threshold = r.threshold ?? 0;
-    const progress = threshold > 0 ? Math.min(100, (liquidity / threshold) * 100) : 0;
 
-    upd.run(price, mcap, liquidity, progress, graduated ? 1 : 0, at, r.token);
+    upd.run(
+      price,
+      price * (SUPPLY_RAW / 1e18),
+      liquidity,
+      threshold > 0 ? Math.min(100, (liquidity / threshold) * 100) : 0,
+      graduated ? 1 : 0,
+      now,
+      q.toString(),
+      t.toString(),
+      phantom.toString(),
+      Number(at),
+      r.token,
+    );
   }
 }
 
@@ -391,7 +618,7 @@ async function sweep(): Promise<void> {
     const ok = [
       await stage("launches", () => sweepLaunches(head)),
       await stage("trades", () => sweepTrades(head)),
-      await stage("prices", () => sweepPrices()),
+      await stage("prices", () => sweepPrices(head)),
     ];
     if (s.sweeps % 30 === 0) prune();
     s.sweeps += 1;
