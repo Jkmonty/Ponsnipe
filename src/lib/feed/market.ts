@@ -169,6 +169,22 @@ function migrate(): void {
   `);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_vol_bucket ON feed_volume(bucket DESC);`);
 
+  /*
+   * Distinct buyers per curve.
+   *
+   * The buyer address is already in every CurveBuy we sweep and was being
+   * discarded. Counting them is the difference between a feed where every new
+   * row reads "$3k, 0 holders" and one where you can see which launch actually
+   * attracted people -- which is the whole job of the list.
+   */
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS feed_buyers (
+      curve TEXT NOT NULL,
+      buyer TEXT NOT NULL,
+      PRIMARY KEY (curve, buyer)
+    );
+  `);
+
   // Where the sweeps got to. Held on disk, not just in memory, so a restart
   // resumes rather than skipping whatever happened while the app was down.
   conn.exec(`
@@ -365,6 +381,8 @@ async function sweepTrades(head: bigint): Promise<void> {
   const agg = new Map<string, { quote: number; buys: number; sells: number }>();
   /** Curves whose reserves this pass advanced, and to which block. */
   const moved = new Map<string, { q: bigint; t: bigint; block: number }>();
+  /** (curve, buyer) pairs seen this pass; the table de-duplicates them. */
+  const buyers: [string, string][] = [];
 
   const add = (curve: string, raw: bigint, isBuy: boolean) => {
     const m = meta.get(curve);
@@ -432,6 +450,10 @@ async function sweepTrades(head: bigint): Promise<void> {
       };
       add(curve, (isBuy ? a.quoteIn : a.quoteOut) ?? 0n, isBuy);
       applyTrade(curve, Number(l.blockNumber ?? 0n), a, isBuy);
+      if (isBuy && meta.has(curve)) {
+        const who = String((l.args as { buyer?: string }).buyer ?? "").toLowerCase();
+        if (who) buyers.push([curve, who]);
+      }
     }
     cursor = to;
   }
@@ -463,6 +485,11 @@ async function sweepTrades(head: bigint): Promise<void> {
            sells = sells + excluded.sells`,
     );
     for (const [curve, v] of agg) up.run(curve, bucket, v.quote, v.buys, v.sells);
+  }
+
+  if (buyers.length) {
+    const b = db().prepare(`INSERT OR IGNORE INTO feed_buyers (curve, buyer) VALUES (?,?)`);
+    for (const [curve, who] of buyers) b.run(curve, who);
   }
 
   // Write the advanced reserves back, with the price and market cap they imply.
@@ -592,6 +619,9 @@ function prune(): void {
   const cutoff = new Date(Date.now() - KEEP_MINUTES * 60_000).toISOString();
   db().prepare(`DELETE FROM feed_tokens WHERE created_at < ?`).run(cutoff);
   db().prepare(`DELETE FROM feed_volume WHERE bucket < ?`).run(nowBucket() - KEEP_MINUTES);
+  db()
+    .prepare(`DELETE FROM feed_buyers WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
+    .run();
 }
 
 /**

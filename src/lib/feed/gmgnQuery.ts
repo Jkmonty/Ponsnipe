@@ -118,7 +118,7 @@ async function ponsRows(f: GmgnFilters, exclude: Set<string>): Promise<GmgnRow[]
     token: string; symbol: string | null; name: string | null; logo: string | null;
     quote_symbol: string | null; quote_is_native: number; created_at: string;
     mcap: number | null; liquidity: number | null; progress_pct: number | null;
-    vol: number | null; buys: number | null; sells: number | null;
+    vol: number | null; buys: number | null; sells: number | null; holders: number | null;
   }[] = [];
   try {
     raw = db()
@@ -128,12 +128,15 @@ async function ponsRows(f: GmgnFilters, exclude: Set<string>): Promise<GmgnRow[]
         // no volume number at all.
         `SELECT t.token, t.symbol, t.name, t.logo, t.quote_symbol, t.quote_is_native,
                 t.created_at, t.mcap, t.liquidity, t.progress_pct,
-                v.vol, v.buys, v.sells
+                v.vol, v.buys, v.sells, h.holders
            FROM feed_tokens t
            LEFT JOIN (
              SELECT curve, SUM(quote) AS vol, SUM(buys) AS buys, SUM(sells) AS sells
                FROM feed_volume WHERE bucket >= ? GROUP BY curve
            ) v ON v.curve = t.curve
+           LEFT JOIN (
+             SELECT curve, COUNT(*) AS holders FROM feed_buyers GROUP BY curve
+           ) h ON h.curve = t.curve
           WHERE t.created_at >= ? AND t.graduated = 0
           ORDER BY t.created_at DESC LIMIT 300`,
       )
@@ -163,7 +166,7 @@ async function ponsRows(f: GmgnFilters, exclude: Set<string>): Promise<GmgnRow[]
       trades: (r.buys ?? 0) + (r.sells ?? 0),
       buys: r.buys ?? 0,
       sells: r.sells ?? 0,
-      holders: 0,
+      holders: r.holders ?? 0,
       progressPct: r.progress_pct ?? 0,
       devHoldRate: 0,
       top10HoldRate: 0,
@@ -179,9 +182,40 @@ async function ponsRows(f: GmgnFilters, exclude: Set<string>): Promise<GmgnRow[]
   });
 }
 
+export interface FeedGroups {
+  /** Just launched, nothing has happened yet. Newest first. */
+  fresh: GmgnRow[];
+  /** Someone is actually buying. Busiest first. */
+  heating: GmgnRow[];
+  /** Closing on the graduation threshold. Furthest along first. */
+  closing: GmgnRow[];
+}
+
+/**
+ * Split the stream the way GMGN's trenches view does.
+ *
+ * A single list sorted by age is unusable here: ~250 pons tokens launch every
+ * ten minutes and almost none go anywhere, so one flat feed buries the coin
+ * with 74 trades and 66% progress behind a hundred that opened seconds ago at
+ * an identical $3k. Grouping by how far a launch has actually got is what
+ * makes the interesting one visible, and each group wants its own sort --
+ * newest for the raw stream, busiest for the ones being bought, furthest along
+ * for the ones about to graduate.
+ */
+function group(rows: GmgnRow[]): FeedGroups {
+  const closing = rows.filter((r) => r.progressPct >= 45);
+  const heating = rows.filter((r) => r.progressPct < 45 && (r.trades >= 8 || r.progressPct >= 3));
+  const fresh = rows.filter((r) => !closing.includes(r) && !heating.includes(r));
+  return {
+    fresh: fresh.sort((a, b) => a.ageMinutes - b.ageMinutes).slice(0, 25),
+    heating: heating.sort((a, b) => b.volumeUsd - a.volumeUsd).slice(0, 20),
+    closing: closing.sort((a, b) => b.progressPct - a.progressPct).slice(0, 20),
+  };
+}
+
 export async function readGmgnFeed(
   f: GmgnFilters,
-): Promise<{ rows: GmgnRow[]; total: number; launchpads: string[] }> {
+): Promise<{ rows: GmgnRow[]; groups: FeedGroups; total: number; launchpads: string[] }> {
   const since = Math.floor((Date.now() - f.maxAgeMin * 60_000) / 1000);
   let raw: Raw[] = [];
   try {
@@ -198,7 +232,7 @@ export async function readGmgnFeed(
       )
       .all(since) as unknown as Raw[];
   } catch {
-    return { rows: [], total: 0, launchpads: [] };
+    return { rows: [], groups: { fresh: [], heating: [], closing: [] }, total: 0, launchpads: [] };
   }
 
   const all: GmgnRow[] = raw.map((r) => ({
@@ -246,5 +280,5 @@ export async function readGmgnFeed(
     return true;
   });
 
-  return { rows: rows.slice(0, f.limit), total: merged.length, launchpads };
+  return { rows: rows.slice(0, f.limit), groups: group(rows), total: merged.length, launchpads };
 }

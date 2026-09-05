@@ -25,9 +25,16 @@ interface Row {
   tradeable?: boolean;
 }
 
+interface Groups {
+  fresh: Row[];
+  heating: Row[];
+  closing: Row[];
+}
+
 interface Payload {
   source: "gmgn" | "chain";
   rows: Row[];
+  groups?: Groups;
   ethUsd?: number | null;
   total: number;
   status: { running: boolean; lastError: string | null; ageSeconds?: number | null };
@@ -66,14 +73,73 @@ function Avatar({ row }: { row: Row }) {
   );
 }
 
+function FeedRow({ r, onPick }: { r: Row; onPick: (a: string) => void }) {
+  return (
+    <button className="frow-item" onClick={() => onPick(r.token)}>
+      <Avatar row={r} />
+      <div className="fmain">
+        <div className="row" style={{ gap: 6 }}>
+          <strong className="ellip">{r.symbol}</strong>
+          {r.isHoneypot === "yes" && <span className="pill pill-cold">honeypot</span>}
+          {(r.devHoldRate ?? 0) > 0.15 && (
+            <span className="pill pill-cold">dev {Math.round((r.devHoldRate ?? 0) * 100)}%</span>
+          )}
+          {(r.renowned ?? 0) > 0 && <span className="pill pill-hot">{r.renowned} smart</span>}
+        </div>
+        <div className="muted small ellip">
+          {/* Abbreviated hard: the column is ~200px and the full words were
+              being ellipsed away, which lost the numbers rather than the
+              labels. */}
+          {r.launchpad ? `${r.launchpad} · ` : ""}
+          {age(r.ageMinutes)}
+          {r.holders ? ` · ${r.holders} buy` : ""}
+          {r.trades ? ` · ${r.trades} tx` : ""}
+          {r.tradeable === false ? " · view" : ""}
+        </div>
+      </div>
+      <span className="num small ta-r">{money(r.mcapUsd)}</span>
+      <span className="num small ta-r">{money(r.volumeUsd)}</span>
+      <span className="num small ta-r">
+        {r.progressPct > 0 ? `${r.progressPct.toFixed(0)}%` : "—"}
+      </span>
+    </button>
+  );
+}
+
+function Section({
+  title,
+  rows,
+  onPick,
+}: {
+  title: string;
+  rows: Row[];
+  onPick: (a: string) => void;
+}) {
+  if (!rows.length) return null;
+  return (
+    <>
+      <div className="fsec">
+        {title} <span className="muted">· {rows.length}</span>
+      </div>
+      {rows.map((r) => (
+        <FeedRow key={r.token} r={r} onPick={onPick} />
+      ))}
+    </>
+  );
+}
+
 /**
- * New coins, newest first, unfiltered.
+ * New coins, in three groups.
  *
- * There were thresholds here and they were the wrong idea: a brand-new coin has
- * no volume and no liquidity yet, because that is what new means, so a $3k floor
- * on either hid every launch until it had already matured. Measured at the time:
- * 16 rows survived the floors against 200 without them, 180 of which had
- * launched in the previous five minutes. A new-pairs feed should show new pairs.
+ * Unfiltered, because a brand-new coin has no volume and no liquidity yet --
+ * that is what new means -- and the $3k floors this once had hid every launch
+ * until it had already matured: 16 rows survived them against 200 without.
+ *
+ * But an unfiltered list sorted by age is no better. Roughly 250 pons tokens
+ * launch every ten minutes and almost none go anywhere, so one flat stream
+ * buries the coin with 74 trades and 66% progress behind a hundred that opened
+ * seconds ago at an identical $3k. Grouping by how far each launch has actually
+ * got is what makes the interesting one findable.
  */
 export default function Feed({ onPick }: { onPick: (address: string) => void }) {
   const [data, setData] = useState<Payload | null>(null);
@@ -107,6 +173,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
   }, [load]);
 
   const rows = data?.rows ?? [];
+  const groups: Groups = data?.groups ?? { fresh: rows, heating: [], closing: [] };
 
   return (
     <aside className="feed card">
@@ -148,7 +215,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
         <span>Coin</span>
         <span className="ta-r">MC</span>
         <span className="ta-r">Vol</span>
-        <span className="ta-r">Liq</span>
+        <span className="ta-r">Grad</span>
       </div>
 
       <div
@@ -156,41 +223,14 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
         onMouseEnter={() => setHeld(true)}
         onMouseLeave={() => setHeld(false)}
       >
-        {rows.length === 0 ? (
+        {rows.length === 0 && (
           <p className="muted small" style={{ margin: "10px 0" }}>
             {data ? "Nothing yet." : "Loading…"}
           </p>
-        ) : (
-          rows.map((r) => (
-            <button key={r.token} className="frow-item" onClick={() => onPick(r.token)}>
-              <Avatar row={r} />
-              <div className="fmain">
-                <div className="row" style={{ gap: 6 }}>
-                  <strong className="ellip">{r.symbol}</strong>
-                  {r.quoteSymbol ? <span className="muted small">/{r.quoteSymbol}</span> : null}
-                  {r.isHoneypot === "yes" && <span className="pill pill-cold">honeypot</span>}
-                  {(r.devHoldRate ?? 0) > 0.15 && (
-                    <span className="pill pill-cold">dev {Math.round((r.devHoldRate ?? 0) * 100)}%</span>
-                  )}
-                  {(r.renowned ?? 0) > 0 && <span className="pill pill-hot">{r.renowned} smart</span>}
-                </div>
-                {/* Launchpad leads the sub-line rather than sitting as a chip:
-                    the column is too narrow for another one, and it is the
-                    first thing worth knowing about a row. */}
-                <div className="muted small ellip">
-                  {r.launchpad ? `${r.launchpad} · ` : ""}
-                  {age(r.ageMinutes)}
-                  {r.trades ? ` · ${r.trades} tx` : ""}
-                  {r.holders ? ` · ${r.holders} holders` : ""}
-                  {r.tradeable === false ? " · view only" : ""}
-                </div>
-              </div>
-              <span className="num small ta-r">{money(r.mcapUsd)}</span>
-              <span className="num small ta-r">{money(r.volumeUsd)}</span>
-              <span className="num small ta-r">{money(r.liquidityUsd)}</span>
-            </button>
-          ))
         )}
+        <Section title="About to graduate" rows={groups.closing} onPick={onPick} />
+        <Section title="Getting bought" rows={groups.heating} onPick={onPick} />
+        <Section title="Just launched" rows={groups.fresh} onPick={onPick} />
       </div>
     </aside>
   );
