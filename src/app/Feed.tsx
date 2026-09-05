@@ -8,18 +8,25 @@ interface Row {
   symbol: string;
   name: string;
   logo: string;
-  quoteSymbol: string;
   ageMinutes: number;
-  mcap: number;
-  volume: number;
-  liquidity: number;
+  trades: number;
+  progressPct: number;
+  /** Chain-source rows carry a quote asset; GMGN rows are already in dollars. */
+  quoteSymbol?: string;
   mcapUsd: number | null;
   volumeUsd: number | null;
   liquidityUsd: number | null;
-  buys: number;
-  sells: number;
-  trades: number;
-  progressPct: number;
+  /** GMGN only. */
+  launchpad?: string;
+  holders?: number;
+  devHoldRate?: number;
+  top10HoldRate?: number;
+  freshWalletRate?: number;
+  sniperHoldRate?: number;
+  insiderHoldRate?: number;
+  isHoneypot?: string;
+  renowned?: number;
+  tradeable?: boolean;
 }
 
 interface Filters {
@@ -32,12 +39,14 @@ interface Filters {
 }
 
 interface Payload {
+  source: "gmgn" | "chain";
   rows: Row[];
-  ethUsd: number | null;
+  ethUsd?: number | null;
   total: number;
-  /** Quote assets in the window with no dollar rate. Usually empty. */
-  unpriced: string[];
-  status: { running: boolean; sweeps: number; lastError: string | null };
+  launchpads?: string[];
+  /** Quote assets with no dollar rate. Chain source only; usually empty. */
+  unpriced?: string[];
+  status: { running: boolean; lastError: string | null; ageSeconds?: number | null };
 }
 
 /** Compact money: $12.3k, $1.2M — the feed has no room for full numbers. */
@@ -98,6 +107,8 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
     includeUnpriced: false,
     quote: "all",
   });
+  const [tradeableOnly, setTradeableOnly] = useState(false);
+  const [launchpad, setLaunchpad] = useState("");
 
   const load = useCallback(async () => {
     const q = new URLSearchParams({
@@ -107,7 +118,9 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       window: String(f.volumeWindowMin),
       unpriced: f.includeUnpriced ? "1" : "0",
       quote: f.quote,
+      tradeable: tradeableOnly ? "1" : "0",
     });
+    if (launchpad) q.set("launchpad", launchpad);
     if (heldRef.current) return;
     try {
       const r = await fetch(`/api/feed?${q}`);
@@ -118,11 +131,11 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed");
     }
-  }, [f]);
+  }, [f, tradeableOnly, launchpad]);
 
   useEffect(() => {
     load();
-    const iv = setInterval(load, 6000);
+    const iv = setInterval(load, 8000);
     return () => clearInterval(iv);
   }, [load]);
 
@@ -154,10 +167,20 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       </div>
 
       <p className="muted small" style={{ margin: "4px 0 10px" }}>
-        Live from the chain, newest first.{" "}
-        {data?.ethUsd
-          ? `Priced in USD via ETH $${Math.round(data.ethUsd).toLocaleString()} and live share prices.`
-          : "No price feed — dollar figures unavailable."}
+        {data?.source === "gmgn" ? (
+          <>
+            Every launchpad on the chain, via GMGN
+            {data.status.ageSeconds != null ? ` · updated ${data.status.ageSeconds}s ago` : ""}.
+            Rows marked <em>view only</em> are not pons launches, so this app cannot buy them.
+          </>
+        ) : (
+          <>
+            Live from the chain, newest first.{" "}
+            {data?.ethUsd
+              ? `Priced in USD via ETH $${Math.round(data.ethUsd).toLocaleString()} and live share prices.`
+              : "No price feed — dollar figures unavailable."}
+          </>
+        )}
       </p>
 
       {open && (
@@ -217,7 +240,32 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
               <option value="stable">Not ETH</option>
             </select>
           </label>
-          <label className="f frow">
+          {data?.source === "gmgn" && (
+            <>
+              <label className="f">
+                <span>Launchpad</span>
+                <select className="input" value={launchpad} onChange={(e) => setLaunchpad(e.target.value)}>
+                  <option value="">All</option>
+                  {(data.launchpads ?? []).map((lp) => (
+                    <option key={lp} value={lp}>
+                      {lp}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="f frow">
+                <input
+                  type="checkbox"
+                  checked={tradeableOnly}
+                  onChange={(e) => setTradeableOnly(e.target.checked)}
+                />
+                <span className="muted small">
+                  Only coins this app can buy (pons curves). Everything else is view only.
+                </span>
+              </label>
+            </>
+          )}
+          <label className="f frow" hidden={data?.source === "gmgn"}>
             <input
               type="checkbox"
               checked={f.includeUnpriced}

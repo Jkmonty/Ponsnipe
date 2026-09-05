@@ -34,4 +34,17 @@ export async function register(): Promise<void> {
     // eslint-disable-next-line no-console
     console.error("Failed to start feed:", err);
   }
+
+  // GMGN covers every launchpad on the chain, not just pons curves, so it is
+  // the feed's source when a key is configured. The chain indexer keeps running
+  // regardless: it is what tells the feed which rows this app can actually buy,
+  // and it is what the sniper prices against.
+  const { gmgnConfigured, startGmgn } = await import("./lib/feed/gmgn");
+  try {
+    if (await gmgnConfigured()) startGmgn();
+    else console.info("GMGN key not configured — feed will use the on-chain pons index only.");
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Failed to start GMGN feed:", err);
+  }
 }
