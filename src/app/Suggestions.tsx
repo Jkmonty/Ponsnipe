@@ -40,7 +40,7 @@ function Row({ s, onPick }: { s: Suggestion; onPick: (addr: string) => void }) {
   const [broken, setBroken] = useState(false);
   const logo = mediaUrl(s.logo);
   return (
-    <div className="srow">
+    <div className={s.actionable ? "srow" : "srow srow-dim"}>
       {/* Initials sit underneath, so a gateway that is slow or never answers
           leaves a readable tile rather than an empty box. */}
       <div className="savatar savatar-blank">

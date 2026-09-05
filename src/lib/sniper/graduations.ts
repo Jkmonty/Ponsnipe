@@ -135,6 +135,15 @@ function migrate(): void {
   `);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_grad_events_id ON graduation_events(id DESC);`);
 
+  // Somewhere to record one-off data repairs, so they run once rather than on
+  // every boot.
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS engine_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    );
+  `);
+
   // CREATE TABLE IF NOT EXISTS will not add columns to a table that already
   // exists, so anything added after the first release has to be bolted on.
   for (const [col, decl] of [
@@ -153,6 +162,26 @@ function migrate(): void {
     } catch {
       /* already present */
     }
+  }
+
+  // Rows written before the phase and pool-identity checks are not trustworthy:
+  // the table accepted any pons token appearing in any V4 pool, bonding or not,
+  // and took its opening price from whichever pool matched first.
+  // There is no way to tell the good rows from the bad without a chain read
+  // each, and the sweep refills ~30 minutes of history on the next pass, so
+  // discard the lot once and let it rebuild.
+  try {
+    const done = conn
+      .prepare(`SELECT value FROM engine_meta WHERE key = 'grad_pool_match_purge'`)
+      .get() as { value: string } | undefined;
+    if (!done) {
+      conn.exec(`DELETE FROM graduation_events;`);
+      conn
+        .prepare(`INSERT OR REPLACE INTO engine_meta (key, value) VALUES ('grad_pool_match_purge', ?)`)
+        .run(new Date().toISOString());
+    }
+  } catch {
+    /* engine_meta absent on an old database; the purge is best-effort */
   }
 }
 
@@ -222,7 +251,15 @@ async function sweep(): Promise<void> {
 
     // A pons token can be either side of the pair depending on address
     // ordering, so both currencies are candidates until the factory decides.
-    const candidates: { token: Address; other: Address; pool: string; block: bigint; openSqrt: number }[] = [];
+    const candidates: {
+      token: Address;
+      other: Address;
+      pool: string;
+      block: bigint;
+      openSqrt: number;
+      fee: number;
+      tickSpacing: number;
+    }[] = [];
     for (const l of logs) {
       const c0 = l.args.currency0 as Address | undefined;
       const c1 = l.args.currency1 as Address | undefined;
@@ -231,8 +268,10 @@ async function sweep(): Promise<void> {
       const pool = String(l.topics[1] ?? "");
       // The opening price, so later swaps can be read as a multiple of it.
       const openSqrt = Number((l.args as unknown as Record<string, bigint>).sqrtPriceX96 ?? 0n) / 2 ** 96;
-      candidates.push({ token: getAddress(c1), other: getAddress(c0), pool, block, openSqrt });
-      candidates.push({ token: getAddress(c0), other: getAddress(c1), pool, block, openSqrt });
+      const fee = Number(l.args.fee ?? -1);
+      const tickSpacing = Number(l.args.tickSpacing ?? 0);
+      candidates.push({ token: getAddress(c1), other: getAddress(c0), pool, block, openSqrt, fee, tickSpacing });
+      candidates.push({ token: getAddress(c0), other: getAddress(c1), pool, block, openSqrt, fee, tickSpacing });
     }
     const fresh = candidates.filter((x) => !s.seen.has(x.token.toLowerCase()));
     if (!fresh.length) return;
@@ -254,8 +293,34 @@ async function sweep(): Promise<void> {
       const r = res[i];
       s.seen.add(fresh[i].token.toLowerCase());
       if (r.status !== "success") continue;
-      const info = r.result as unknown as { exists: boolean };
-      if (info?.exists) ours.push(fresh[i]);
+      const info = r.result as unknown as {
+        exists: boolean;
+        phase: number;
+        pairToken: Address;
+        poolFee: number;
+        tickSpacing: number;
+      };
+      if (!info?.exists) continue;
+
+      // `exists` only says the token was launched on pons, NOT that it left its
+      // curve — and V4 pool creation is permissionless, so anyone can open a
+      // pool against a token still bonding. Testing `exists` alone filled this
+      // table with live curves: TABS at 8.7% of its threshold, PonsLife at 9.1%.
+      // phase is the authority, and 2 (PoolCreated) is the only one with a pool
+      // behind it: 0 is still bonding, 1 is swept but not yet migrated.
+      if (Number(info.phase) !== 2) continue;
+
+      // Even for a genuine graduate this Initialize may be a different pool for
+      // the same token, so match the exact pool the factory says it created.
+      // Currency alone is not enough — every native pool pairs against 0x0, so
+      // a squatter pool opened at an arbitrary price passes that test and its
+      // opening price becomes the reported market cap. That is where ZZZ's
+      // 8,840 ETH came from, against the ~20.6 ETH a real migration opens at.
+      if (getAddress(info.pairToken) !== getAddress(fresh[i].other)) continue;
+      if (Number(info.poolFee) !== fresh[i].fee) continue;
+      if (Number(info.tickSpacing) !== fresh[i].tickSpacing) continue;
+
+      ours.push(fresh[i]);
     }
     if (s.seen.size > 8000) s.seen = new Set([...s.seen].slice(-4000));
     if (!ours.length) return;

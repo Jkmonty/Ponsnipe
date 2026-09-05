@@ -636,6 +636,9 @@ h2 {
   background: var(--card-2);
   transition: border-color .14s ease, transform .14s ease;
 }
+/* Still legible, plainly not a candidate: graduated, drained, or unreadable. */
+.srow-dim { opacity: .5; }
+
 .srow:hover {
   border-color: var(--line-2);
   transform: translateY(-1px);

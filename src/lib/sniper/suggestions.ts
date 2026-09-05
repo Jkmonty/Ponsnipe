@@ -14,6 +14,7 @@
 import { db } from "../db/index";
 import { getTokenSnapshot } from "../pons/tokens";
 import { recentGraduations } from "./graduations";
+import { loadSniperConfig } from "./config";
 
 export interface Suggestion {
   token: string;
@@ -107,11 +108,30 @@ async function enrich(row: EventRow): Promise<Suggestion> {
 
   const snap = await getTokenSnapshot(row.token_address).catch(() => null);
   const graduated = snap?.venue === "graduated";
+
+  /**
+   * These rows are a filter verdict from minutes ago, and a curve can be
+   * emptied in that time — FIAT and CMC turned up here with 9 and 6 buyers
+   * while sitting back at their phantom reserve, every token unsold. Such a
+   * curve still quotes and still passes `tradeable`, so it reads as live.
+   *
+   * Re-applying the sniper's own liquidity floor is the honest test: if it
+   * would not pass the filter now, it is not a candidate now. Only meaningful
+   * on ETH-quoted curves, since the floor is denominated in ETH.
+   */
+  const floor = loadSniperConfig().minLiquidityEth ?? 0;
+  const drained =
+    !!snap &&
+    !graduated &&
+    snap.quoteIsNative &&
+    snap.graduation.currentQuote < floor;
+
   // A snapshot we could not read is not evidence the curve is gone, so fall
   // back to what was recorded rather than declaring it dead.
-  const actionable = snap ? snap.tradeable : false;
+  const actionable = snap ? snap.tradeable && !drained : false;
 
   const notes: string[] = [];
+  if (drained) notes.push("liquidity has drained below the filter floor since it passed");
   if (blockedByQuote) {
     notes.push(`passes every filter but pays in ${row.quote_symbol ?? "a non-ETH quote"}, which the bot cannot buy yet`);
   }
@@ -197,7 +217,13 @@ export async function getSuggestions(windowMinutes = 45): Promise<SuggestionSet>
     preGraduation: enriched
       // A curve that graduated while sitting in the list is no longer a buy.
       .filter((s) => s.kind === "curve")
-      .sort((a, b) => b.otherBuys - a.otherBuys || a.ageMinutes - b.ageMinutes),
+      // Still shown, but never above something you could actually act on.
+      .sort(
+        (a, b) =>
+          Number(b.actionable) - Number(a.actionable) ||
+          b.otherBuys - a.otherBuys ||
+          a.ageMinutes - b.ageMinutes,
+      ),
     postGraduation: graduatedWatchlist(12),
     windowMinutes,
     caveat:
