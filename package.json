@@ -20,7 +20,8 @@
     "clusters": "tsx scripts/clusters.ts",
     "reputation": "tsx scripts/reputation.ts",
     "waves": "tsx scripts/waves.ts",
-    "narrative": "tsx scripts/narrative.ts"
+    "narrative": "tsx scripts/narrative.ts",
+    "bundles": "tsx scripts/bundles.ts"
   },
   "dependencies": {
     "next": "^16.3.4",
