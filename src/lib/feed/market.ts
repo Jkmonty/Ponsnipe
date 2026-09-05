@@ -24,6 +24,7 @@ import { robinhoodChain, redactRpc } from "../chain";
 import { db, logEngine } from "../db/index";
 import { PONS } from "../pons/addresses";
 import { ponsFactoryAbi, erc20Abi, bondingCurveAbi } from "../pons/abis";
+import { warmImages } from "./images";
 
 /** Every pons v2 token mints the same fixed supply. */
 const SUPPLY_RAW = 1e27;
@@ -344,6 +345,12 @@ async function sweepLaunches(head: bigint): Promise<void> {
     );
     s.seen += 1;
   }
+
+  // Start fetching the artwork now rather than when a browser first asks. These
+  // rows will be at the top of the feed within seconds and an ipfs gateway
+  // takes longer than that, so without this the newest coins -- the ones anyone
+  // is actually looking at -- would always show initials.
+  warmImages(add.map((_, i) => (meta[i * PER + 2]?.status === "success" ? String(meta[i * PER + 2].result) : null)));
 }
 
 /**

@@ -114,6 +114,17 @@ interface Raw {
  */
 async function ponsRows(f: GmgnFilters, exclude: Set<string>): Promise<GmgnRow[]> {
   const since = new Date(Date.now() - f.maxAgeMin * 60_000).toISOString();
+  /*
+   * Fetch wide, slice narrow.
+   *
+   * This was a flat LIMIT 300, which at ~29 pons launches a minute meant the
+   * feed only ever considered the last ten minutes. Anything older simply did
+   * not exist as far as the list was concerned -- 519 rows offered from an
+   * index holding 5,293 -- so a coin seen a quarter of an hour ago could not be
+   * found at any display limit. The caller slices to `limit` afterwards, so
+   * reading more here costs a wider query and nothing on the wire.
+   */
+  const depth = Math.min(2000, Math.max(600, f.limit * 4));
   let raw: {
     token: string; symbol: string | null; name: string | null; logo: string | null;
     quote_symbol: string | null; quote_is_native: number; created_at: string;
@@ -138,9 +149,9 @@ async function ponsRows(f: GmgnFilters, exclude: Set<string>): Promise<GmgnRow[]
              SELECT curve, COUNT(*) AS holders FROM feed_buyers GROUP BY curve
            ) h ON h.curve = t.curve
           WHERE t.created_at >= ? AND t.graduated = 0
-          ORDER BY t.created_at DESC LIMIT 300`,
+          ORDER BY t.created_at DESC LIMIT ?`,
       )
-      .all(Math.floor(Date.now() / 60_000) - 1440, since) as never;
+      .all(Math.floor(Date.now() / 60_000) - 1440, since, depth) as never;
   } catch {
     return [];
   }
@@ -197,7 +208,7 @@ export async function readGmgnFeed(
            LEFT JOIN feed_tokens p ON p.token = g.address
           WHERE g.created_ts >= ?
           ORDER BY g.created_ts DESC
-          LIMIT 400`,
+          LIMIT 1000`,
       )
       .all(since) as unknown as Raw[];
   } catch {

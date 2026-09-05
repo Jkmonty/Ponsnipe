@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { mediaUrl } from "@/lib/format";
+import { directMediaUrl, mediaUrl } from "@/lib/format";
 
 interface Row {
   token: string;
@@ -50,26 +50,49 @@ function age(m: number): string {
   return `${(m / 60).toFixed(1)}h`;
 }
 
-function Avatar({ row }: { row: Row }) {
-  // Artwork is deployer-supplied and often pinned to a slow gateway, so the
-  // initials sit underneath rather than leaving an empty tile.
-  const [broken, setBroken] = useState(false);
-  const logo = mediaUrl(row.logo);
+/** Rows that get artwork. Beyond this the initials tile stands in. */
+const IMAGE_ROWS = 70;
+
+function Avatar({ row, eager }: { row: Row; eager: boolean }) {
+  /*
+   * Only the first rows load an image, and that limit is the point.
+   *
+   * All 250 rows requesting artwork at once put 164 of them in a queue behind
+   * the browser's ~6-connections-per-origin cap, and the dozen actually on
+   * screen waited in it with the rest -- which is why "most of the images do
+   * not work". `loading="lazy"` does not help inside a scrolling container.
+   *
+   * An IntersectionObserver would be the neater answer and is probably what a
+   * real browser wants, but it never fires in the preview this was tested in,
+   * so it could not be verified. A fixed count can be, and it bounds the
+   * queue just as well.
+   *
+   * Three sources are tried in turn: the proxy, which resolves ipfs and caches
+   * it but is 403'd by Cloudflare-fronted CDNs; then the URL directly, which
+   * handles those; then the initials underneath, which are always there.
+   */
+  const [stage, setStage] = useState<0 | 1 | 2>(0);
+  const src = !eager ? "" : stage === 0 ? mediaUrl(row.logo) : stage === 1 ? directMediaUrl(row.logo) : "";
   return (
     <div className="savatar savatar-blank">
       {row.symbol.slice(0, 2).toUpperCase()}
-      {logo && !broken && (
+      {src && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img className="savatar-img" src={logo} alt="" loading="lazy" onError={() => setBroken(true)} />
+        <img
+          className="savatar-img"
+          src={src}
+          alt=""
+          onError={() => setStage((v) => (v === 0 ? 1 : 2))}
+        />
       )}
     </div>
   );
 }
 
-function FeedRow({ r, onPick }: { r: Row; onPick: (a: string) => void }) {
+function FeedRow({ r, onPick, eager }: { r: Row; onPick: (a: string) => void; eager: boolean }) {
   return (
     <button className="frow-item" onClick={() => onPick(r.token)}>
-      <Avatar row={r} />
+      <Avatar row={r} eager={eager} />
       <div className="fmain">
         <div className="row" style={{ gap: 6 }}>
           <strong className="ellip">{r.symbol}</strong>
@@ -195,7 +218,9 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
             {data ? "Nothing yet." : "Loading…"}
           </p>
         ) : (
-          rows.map((r) => <FeedRow key={r.token} r={r} onPick={onPick} />)
+          rows.map((r, i) => (
+            <FeedRow key={r.token} r={r} onPick={onPick} eager={i < IMAGE_ROWS} />
+          ))
         )}
       </div>
     </aside>

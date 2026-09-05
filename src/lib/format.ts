@@ -41,22 +41,36 @@ export function weiToUnits(wei: string | bigint, decimals: number): number {
 export const EXPLORER = "https://robinhoodchain.blockscout.com";
 
 /**
- * Token artwork is whatever the deployer put in logo(): an https URL, an
- * ipfs:// URI, or a bare CID. Only the first renders in a browser, so
- * normalise the other two onto a gateway.
+ * Token artwork, routed through our own proxy.
+ *
+ * The raw value is whatever the deployer wrote into logo(): an https URL, an
+ * ipfs:// URI, or a bare CID. Over half are ipfs, and public gateways are slow,
+ * rate-limit, and sometimes send headers that stop the browser painting the
+ * result at all. /api/img resolves and caches them server-side, so the choice
+ * of gateway stops being the browser's problem.
  */
 export function mediaUrl(raw: string): string {
   if (!raw) return "";
   const t = raw.trim();
-  if (/^https?:/i.test(t)) return t;
+  if (t.length > 512) return "";
+  return `/api/img?u=${encodeURIComponent(t)}`;
+}
 
+/**
+ * The same artwork without the proxy.
+ *
+ * Some CDNs — GMGN's among them — sit behind Cloudflare and refuse
+ * server-side fetches with a 403 while serving a real browser fine, so the
+ * proxy cannot be the only route. Used as the second attempt when it 404s.
+ */
+export function directMediaUrl(raw: string): string {
+  if (!raw) return "";
+  const t = raw.trim();
+  if (/^https?:\/\//i.test(t)) return t;
   const cid = t.startsWith("ipfs://")
     ? t.slice("ipfs://".length).replace(/^ipfs\//, "")
     : /^(baf[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})/.test(t)
       ? t
       : "";
-  // ipfs.io, specifically. dweb.link 301s to a per-CID subdomain that sets
-  // Cross-Origin-Resource-Policy: same-origin, so the browser refuses to paint
-  // it in an <img> and every avatar silently comes back blank.
   return cid ? `https://ipfs.io/ipfs/${cid}` : "";
 }
