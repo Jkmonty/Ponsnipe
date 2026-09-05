@@ -9,6 +9,10 @@ npm-debug.log*
 .env
 .env.local
 .env*.local
+# Anything else sitting beside .env holds the same secrets — .env.bak, .env.old,
+# a timestamped copy made before an edit. Ignore the lot; keep only the example.
+.env.*
+!.env.example
 
 # Bot wallet keystore & database — contain / control real funds
 /data
