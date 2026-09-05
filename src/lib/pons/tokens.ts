@@ -183,13 +183,17 @@ export async function getTokenSnapshot(raw: string): Promise<TokenSnapshot> {
       progressPct: thresholdQuote > 0 ? Math.min(100, (currentQuote / thresholdQuote) * 100) : 0,
     },
     tradeable,
-    reason: !priceable
-      ? "curve did not report reserves"
-      : isGraduated
-      ? "graduated to a Uniswap v4 pool — sell via pons.family for now"
+    // Graduation is tested FIRST. Migrating empties the curve, so a graduated
+    // token always fails the reserves check too — and reporting that symptom
+    // ("curve did not report reserves") instead of the cause told the user
+    // nothing and looked like a fault in the app.
+    reason: isGraduated
+      ? "already graduated — its curve is closed, trade it on pons.family"
       : readyToGraduate
-        ? "curve is about to graduate — trading paused"
-        : undefined,
+        ? "about to graduate — the curve has stopped trading"
+        : !priceable
+          ? "curve did not report reserves"
+          : undefined,
   };
 }
 

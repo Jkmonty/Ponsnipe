@@ -24,13 +24,14 @@ export async function register(): Promise<void> {
     console.error("Failed to start sniper:", err);
   }
 
-  // Feeds the post-graduation half of the suggestions panel. Read-only, and on
-  // its own public-endpoint client, so it costs nothing on the primary RPC.
-  const { startGraduationWatcher } = await import("./lib/sniper/graduations");
+  // The new-coins feed. Read-only, on its own public-endpoint client, and
+  // deliberately independent of the sniper — the list has to keep updating
+  // whether or not anything is armed to trade.
+  const { startFeed } = await import("./lib/feed/market");
   try {
-    startGraduationWatcher();
+    startFeed();
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error("Failed to start graduation watcher:", err);
+    console.error("Failed to start feed:", err);
   }
 }

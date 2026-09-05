@@ -1,0 +1,275 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { mediaUrl } from "@/lib/format";
+
+interface Row {
+  token: string;
+  symbol: string;
+  name: string;
+  logo: string;
+  quoteSymbol: string;
+  ageMinutes: number;
+  mcap: number;
+  volume: number;
+  liquidity: number;
+  mcapUsd: number | null;
+  volumeUsd: number | null;
+  liquidityUsd: number | null;
+  buys: number;
+  sells: number;
+  trades: number;
+  progressPct: number;
+}
+
+interface Filters {
+  minMcapUsd: number | null;
+  minVolumeUsd: number | null;
+  minLiquidityUsd: number | null;
+  volumeWindowMin: number;
+  includeUnpriced: boolean;
+  quote: "all" | "eth" | "stable";
+}
+
+interface Payload {
+  rows: Row[];
+  ethUsd: number | null;
+  total: number;
+  status: { running: boolean; sweeps: number; lastError: string | null };
+}
+
+/** Compact money: $12.3k, $1.2M — the feed has no room for full numbers. */
+function money(n: number | null): string {
+  if (n == null) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (a >= 1e3) return `$${(n / 1e3).toFixed(1)}k`;
+  if (a >= 1) return `$${n.toFixed(0)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+function age(m: number): string {
+  if (m < 1) return "now";
+  if (m < 60) return `${Math.round(m)}m`;
+  return `${(m / 60).toFixed(1)}h`;
+}
+
+function Avatar({ row }: { row: Row }) {
+  const [broken, setBroken] = useState(false);
+  const logo = mediaUrl(row.logo);
+  return (
+    <div className="savatar savatar-blank">
+      {row.symbol.slice(0, 2).toUpperCase()}
+      {logo && !broken && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className="savatar-img" src={logo} alt="" loading="lazy" onError={() => setBroken(true)} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * New coins, newest first.
+ *
+ * Filters default to on. An unfiltered feed of this chain is ~24,000 launches a
+ * day, nearly all of which never attract a second buyer, so the useful default
+ * is a floor rather than everything.
+ */
+export default function Feed({ onPick }: { onPick: (address: string) => void }) {
+  const [data, setData] = useState<Payload | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  /**
+   * Rows re-sort on every poll, so a list that refreshed under the cursor moved
+   * the row you were aiming at out from under the click. Hovering freezes it,
+   * the way every other live feed does.
+   */
+  const [held, setHeld] = useState(false);
+  const heldRef = useRef(false);
+  heldRef.current = held;
+  const [f, setF] = useState<Filters>({
+    minMcapUsd: 3000,
+    minVolumeUsd: 3000,
+    minLiquidityUsd: 3000,
+    volumeWindowMin: 60,
+    includeUnpriced: false,
+    quote: "all",
+  });
+
+  const load = useCallback(async () => {
+    const q = new URLSearchParams({
+      minMcap: f.minMcapUsd == null ? "off" : String(f.minMcapUsd),
+      minVolume: f.minVolumeUsd == null ? "off" : String(f.minVolumeUsd),
+      minLiquidity: f.minLiquidityUsd == null ? "off" : String(f.minLiquidityUsd),
+      window: String(f.volumeWindowMin),
+      unpriced: f.includeUnpriced ? "1" : "0",
+      quote: f.quote,
+    });
+    if (heldRef.current) return;
+    try {
+      const r = await fetch(`/api/feed?${q}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? "feed unavailable");
+      setData(j);
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed");
+    }
+  }, [f]);
+
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 6000);
+    return () => clearInterval(iv);
+  }, [load]);
+
+  const rows = data?.rows ?? [];
+  const num = (v: number | null) => (v == null ? "" : String(v));
+  const parse = (v: string): number | null => {
+    const t = v.trim();
+    if (!t) return null;
+    const n = Number(t);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+
+  return (
+    <aside className="feed card">
+      <div className="spread" style={{ alignItems: "baseline" }}>
+        <h2 style={{ margin: 0 }}>
+          New coins{" "}
+          <span className="muted" style={{ fontWeight: 400 }}>
+            · {rows.length}
+            {data && data.total > rows.length ? ` of ${data.total}` : ""}
+          </span>
+        </h2>
+        <div className="row" style={{ gap: 10 }}>
+          {held && <span className="muted small">paused</span>}
+          <button className="linkish" onClick={() => setOpen((v) => !v)}>
+            {open ? "Hide filters" : "Filters"}
+          </button>
+        </div>
+      </div>
+
+      <p className="muted small" style={{ margin: "4px 0 10px" }}>
+        Live from the chain, newest first.{" "}
+        {data?.ethUsd
+          ? `ETH $${Math.round(data.ethUsd).toLocaleString()}.`
+          : "No ETH price — dollar figures unavailable."}
+      </p>
+
+      {open && (
+        <div className="filters">
+          <label className="f">
+            <span>Min market cap $</span>
+            <input
+              className="input"
+              inputMode="numeric"
+              value={num(f.minMcapUsd)}
+              placeholder="off"
+              onChange={(e) => setF({ ...f, minMcapUsd: parse(e.target.value) })}
+            />
+          </label>
+          <label className="f">
+            <span>Min volume $</span>
+            <input
+              className="input"
+              inputMode="numeric"
+              value={num(f.minVolumeUsd)}
+              placeholder="off"
+              onChange={(e) => setF({ ...f, minVolumeUsd: parse(e.target.value) })}
+            />
+          </label>
+          <label className="f">
+            <span>Min liquidity $</span>
+            <input
+              className="input"
+              inputMode="numeric"
+              value={num(f.minLiquidityUsd)}
+              placeholder="off"
+              onChange={(e) => setF({ ...f, minLiquidityUsd: parse(e.target.value) })}
+            />
+          </label>
+          <label className="f">
+            <span>Volume window</span>
+            <select
+              className="input"
+              value={f.volumeWindowMin}
+              onChange={(e) => setF({ ...f, volumeWindowMin: Number(e.target.value) })}
+            >
+              <option value={5}>5 min</option>
+              <option value={15}>15 min</option>
+              <option value={60}>1 hour</option>
+              <option value={180}>3 hours</option>
+            </select>
+          </label>
+          <label className="f">
+            <span>Paired with</span>
+            <select
+              className="input"
+              value={f.quote}
+              onChange={(e) => setF({ ...f, quote: e.target.value as Filters["quote"] })}
+            >
+              <option value="all">Anything</option>
+              <option value="eth">ETH only</option>
+              <option value="stable">Not ETH</option>
+            </select>
+          </label>
+          <label className="f frow">
+            <input
+              type="checkbox"
+              checked={f.includeUnpriced}
+              onChange={(e) => setF({ ...f, includeUnpriced: e.target.checked })}
+            />
+            <span className="muted small">
+              Include stock-paired coins. There is no dollar rate for NVDA, SPY and the
+              rest on this chain, so the dollar filters cannot be applied to them.
+            </span>
+          </label>
+        </div>
+      )}
+
+      {err && <p className="neg small">{err}</p>}
+      {!err && data && !data.status.running && (
+        <p className="neg small">Feed is not running — restart the app.</p>
+      )}
+
+      <div className="fhead">
+        <span>Coin</span>
+        <span className="ta-r">MC</span>
+        <span className="ta-r">Vol</span>
+        <span className="ta-r">Liq</span>
+      </div>
+
+      <div
+        className="flist"
+        onMouseEnter={() => setHeld(true)}
+        onMouseLeave={() => setHeld(false)}
+      >
+        {rows.length === 0 ? (
+          <p className="muted small" style={{ margin: "10px 0" }}>
+            {data ? "Nothing clears these filters yet. Lower them or wait." : "Loading…"}
+          </p>
+        ) : (
+          rows.map((r) => (
+            <button key={r.token} className="frow-item" onClick={() => onPick(r.token)}>
+              <Avatar row={r} />
+              <div className="fmain">
+                <div className="row" style={{ gap: 6 }}>
+                  <strong className="ellip">{r.symbol}</strong>
+                  <span className="muted small">/{r.quoteSymbol}</span>
+                </div>
+                <div className="muted small ellip">
+                  {age(r.ageMinutes)} · {r.trades} tx · {r.progressPct.toFixed(0)}%
+                </div>
+              </div>
+              <span className="num small ta-r">{money(r.mcapUsd)}</span>
+              <span className="num small ta-r">{money(r.volumeUsd)}</span>
+              <span className="num small ta-r">{money(r.liquidityUsd)}</span>
+            </button>
+          ))
+        )}
+      </div>
+    </aside>
+  );
+}

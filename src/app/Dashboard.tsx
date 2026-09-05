@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtEth, fmtPct, fmtPrice, shortAddr, weiToUnits, EXPLORER } from "@/lib/format";
 import LaunchComposer from "./LaunchComposer";
 import Logo from "./Logo";
+import Feed from "./Feed";
 import WalletSetup from "./WalletSetup";
-import Suggestions from "./Suggestions";
 
 interface WalletInfo {
   configured: boolean;
@@ -77,6 +77,12 @@ export default function Dashboard() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /**
+   * Set when a coin is clicked in the feed. Carries a nonce as well as the
+   * address so that re-picking the SAME coin still re-triggers the lookup —
+   * with the address alone the effect would not fire the second time.
+   */
+  const [picked, setPicked] = useState<{ address: string; n: number } | null>(null);
 
   const flash = useCallback((kind: "ok" | "err", msg: string) => {
     setToast({ kind, msg });
@@ -209,6 +215,15 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/*
+        Two columns: the feed is what you watch, the right-hand column is what
+        you do about it. Clicking a coin fills in the buy form rather than
+        making you copy an address between two panels.
+      */}
+      <div className="cols">
+        <Feed onPick={(address) => setPicked({ address, n: Date.now() })} />
+
+        <div className="colmain">
       {/* ── setup / wallet ─────────────────────────────────────────── */}
       {/*
         The stepper is shown while setup is incomplete, because a card headed
@@ -269,13 +284,10 @@ export default function Dashboard() {
       )}
 
       {/* ── buy ────────────────────────────────────────────────────── */}
-      <BuyCard funded={!!funded} live={live} flash={flash} onDone={refresh} />
+      <BuyCard funded={!!funded} live={live} flash={flash} onDone={refresh} picked={picked} />
 
       {/* ── sniper ─────────────────────────────────────────────────── */}
       <SniperCard funded={!!funded} flash={flash} />
-
-      {/* ── what the sniper would buy ──────────────────────────────── */}
-      <Suggestions flash={flash} />
 
       <LaunchComposer flash={flash} />
 
@@ -332,6 +344,8 @@ export default function Dashboard() {
           </div>
         </details>
       </div>
+        </div>
+      </div>
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.msg}</div>}
     </div>
@@ -384,11 +398,13 @@ function BuyCard({
   live,
   flash,
   onDone,
+  picked,
 }: {
   funded: boolean;
   live: boolean;
   flash: (k: "ok" | "err", m: string) => void;
   onDone: () => void;
+  picked: { address: string; n: number } | null;
 }) {
   const [addr, setAddr] = useState("");
   const [snap, setSnap] = useState<TokenSnap | null>(null);
@@ -402,6 +418,7 @@ function BuyCard({
   const [gradExit, setGradExit] = useState("92");
   const [buying, setBuying] = useState(false);
   const last = useRef("");
+  const lookupRef = useRef<() => void>(() => {});
 
   const targets = useMemo(() => {
     if (mode === "custom") {
@@ -434,6 +451,17 @@ function BuyCard({
       setLooking(false);
     }
   }, [addr, flash]);
+  lookupRef.current = lookup;
+
+  // Picking from the feed fills the box and looks the coin up, so the list and
+  // the buy form are one flow rather than a copy-paste between two panels.
+  useEffect(() => {
+    if (!picked) return;
+    setAddr(picked.address);
+    setSnap(null);
+    const t = setTimeout(() => lookupRef.current(), 0);
+    return () => clearTimeout(t);
+  }, [picked]);
 
   const submit = async () => {
     if (!snap) return;
