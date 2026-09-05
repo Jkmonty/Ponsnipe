@@ -35,6 +35,8 @@ interface Payload {
   rows: Row[];
   ethUsd: number | null;
   total: number;
+  /** Quote assets in the window with no dollar rate. Usually empty. */
+  unpriced: string[];
   status: { running: boolean; sweeps: number; lastError: string | null };
 }
 
@@ -154,8 +156,8 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       <p className="muted small" style={{ margin: "4px 0 10px" }}>
         Live from the chain, newest first.{" "}
         {data?.ethUsd
-          ? `ETH $${Math.round(data.ethUsd).toLocaleString()}.`
-          : "No ETH price — dollar figures unavailable."}
+          ? `Priced in USD via ETH $${Math.round(data.ethUsd).toLocaleString()} and live share prices.`
+          : "No price feed — dollar figures unavailable."}
       </p>
 
       {open && (
@@ -222,8 +224,9 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
               onChange={(e) => setF({ ...f, includeUnpriced: e.target.checked })}
             />
             <span className="muted small">
-              Include stock-paired coins. There is no dollar rate for NVDA, SPY and the
-              rest on this chain, so the dollar filters cannot be applied to them.
+              Show coins whose quote asset has no dollar price
+              {data?.unpriced?.length ? ` (${data.unpriced.join(", ")})` : ""}. The dollar
+              filters cannot be applied to those, so they are hidden by default.
             </span>
           </label>
         </div>

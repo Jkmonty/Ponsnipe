@@ -6,7 +6,7 @@
  * are in dollars and the stored numbers are in each token's own quote asset.
  */
 import { db } from "../db/index";
-import { ethUsd, quoteToUsd } from "./usd";
+import { buildRates, ethUsd } from "./usd";
 
 export interface FeedFilters {
   /** Dollar floors. null = off. */
@@ -81,7 +81,9 @@ interface Raw {
   sells: number | null;
 }
 
-export async function readFeed(f: FeedFilters): Promise<{ rows: FeedRow[]; ethUsd: number | null; total: number }> {
+export async function readFeed(
+  f: FeedFilters,
+): Promise<{ rows: FeedRow[]; ethUsd: number | null; total: number; unpriced: string[] }> {
   const eth = await ethUsd();
   const sinceBucket = Math.floor(Date.now() / 60_000) - Math.max(1, f.volumeWindowMin);
   const sinceTs = new Date(Date.now() - f.maxAgeMin * 60_000).toISOString();
@@ -104,12 +106,19 @@ export async function readFeed(f: FeedFilters): Promise<{ rows: FeedRow[]; ethUs
       )
       .all(sinceBucket, sinceTs) as unknown as Raw[];
   } catch {
-    return { rows: [], ethUsd: eth, total: 0 };
+    return { rows: [], ethUsd: eth, total: 0, unpriced: [] };
   }
 
+  // One rate lookup per distinct quote asset in the window, not per row.
+  const rates = await buildRates(
+    raw.map((r) => (r.quote_is_native === 1 ? "ETH" : (r.quote_symbol ?? "?"))),
+  );
+  const unpriced = new Set<string>();
+
   const all: FeedRow[] = raw.map((r) => {
-    const quoteSymbol = r.quote_symbol ?? "?";
-    const rate = quoteToUsd(quoteSymbol, r.quote_is_native === 1, eth);
+    const quoteSymbol = r.quote_is_native === 1 ? "ETH" : (r.quote_symbol ?? "?");
+    const rate = rates.get(quoteSymbol.toUpperCase()) ?? null;
+    if (rate == null) unpriced.add(quoteSymbol);
     const mcap = r.mcap ?? 0;
     const volume = r.vol ?? 0;
     const liquidity = r.liquidity ?? 0;
@@ -157,5 +166,10 @@ export async function readFeed(f: FeedFilters): Promise<{ rows: FeedRow[]; ethUs
     return true;
   });
 
-  return { rows: rows.slice(0, f.limit), ethUsd: eth, total: all.length };
+  return {
+    rows: rows.slice(0, f.limit),
+    ethUsd: eth,
+    total: all.length,
+    unpriced: [...unpriced].sort(),
+  };
 }

@@ -29,6 +29,6 @@ export async function GET(req: Request) {
     limit: Math.min(200, Math.max(1, num(q.get("limit"), DEFAULT_FILTERS.limit) ?? 60)),
   };
 
-  const { rows, ethUsd, total } = await readFeed(filters);
-  return json({ rows, ethUsd, total, filters, defaults: DEFAULT_FILTERS, status: feedStatus() });
+  const { rows, ethUsd, total, unpriced } = await readFeed(filters);
+  return json({ rows, ethUsd, total, unpriced, filters, defaults: DEFAULT_FILTERS, status: feedStatus() });
 }
