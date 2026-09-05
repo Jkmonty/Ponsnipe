@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtEth, fmtPct, fmtPrice, shortAddr, weiToUnits, EXPLORER } from "@/lib/format";
+import LaunchComposer from "./LaunchComposer";
 
 interface WalletInfo {
   configured: boolean;
@@ -267,6 +268,7 @@ export default function Dashboard() {
 
       {/* ── sniper ─────────────────────────────────────────────────── */}
       <SniperCard funded={!!funded} flash={flash} />
+      <LaunchComposer flash={flash} />
 
       {/* ── open positions ─────────────────────────────────────────── */}
       <div className="card">
