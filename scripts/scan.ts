@@ -27,7 +27,7 @@ try {
 }
 
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import {
   createPublicClient,
   http,
@@ -76,8 +76,8 @@ const DELAY_SECONDS = arg("delay", 20);
 const MODE = (() => {
   const i = process.argv.indexOf("--mode");
   const v = i >= 0 ? process.argv[i + 1] : "snipe";
-  if (v !== "snipe" && v !== "dip" && v !== "rep" && v !== "grad") {
-    throw new Error(`--mode must be snipe|dip|rep|grad, got ${v}`);
+  if (v !== "snipe" && v !== "dip" && v !== "rep" && v !== "grad" && v !== "bundle") {
+    throw new Error(`--mode must be snipe|dip|rep|grad|bundle, got ${v}`);
   }
   return v;
 })();
@@ -85,6 +85,7 @@ const OUT =
   MODE === "dip" ? "./data/scan-dip.sqlite"
   : MODE === "rep" ? "./data/scan-rep.sqlite"
   : MODE === "grad" ? "./data/scan-grad.sqlite"
+  : MODE === "bundle" ? "./data/scan-bundle.sqlite"
   : "./data/scan.sqlite";
 
 /** Verified constants — see the derivation validation in the commit message. */
@@ -111,6 +112,28 @@ function derivePhantom(net: bigint, tokensOut: bigint): bigint {
  * into a 4.2 ETH native curve is the reference proportion.
  */
 const STAKE_FRACTION = Number(ETH_IN) / 4.2e18;
+
+/**
+ * wallet -> operator cluster, from `npm run bundles -- --causal`.
+ *
+ * Coordinated buying is the strongest predictor found in this project: tokens
+ * with 5-9 clustered early buyers graduate at 18.83% against a 2.44% baseline.
+ * But that was measured over the first 20 buyers of a token's LIFE, while the
+ * decision happens seconds in with almost nobody visible yet. Loading the map
+ * here lets the scan record the count AS OF THE ENTRY MOMENT, which is the only
+ * version of the number that can be traded.
+ */
+const clusterOf = new Map<string, number>();
+if (existsSync("./data/bundles.sqlite")) {
+  const bdb = new DatabaseSync("./data/bundles.sqlite", { readOnly: true });
+  for (const r of bdb.prepare("SELECT wallet, cluster FROM wallet_cluster").all() as unknown as {
+    wallet: string;
+    cluster: number;
+  }[]) {
+    clusterOf.set(r.wallet.toLowerCase(), r.cluster);
+  }
+  bdb.close();
+}
 const FEE_BPS = 100n;
 /** Retire a curve after this many blocks of silence (~30 min at 0.102s). */
 const RETIRE_BLOCKS = 17_000n;
@@ -143,7 +166,7 @@ const PRESETS: { name: string; tp: number | null; sl: number | null; trail: numb
  * before building anything around dip-buying.
  * `dip25_any` is the other control: the dip with no liquidity filter at all.
  */
-const ENTRIES_DIP: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number }[] = [
+const ENTRIES_DIP: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number; minCluster?: number }[] = [
   { name: "dip25_lo", dip: 25, liqMin: 2.4, liqMax: 11.9 },
   { name: "dip25_mid", dip: 25, liqMin: 11.9, liqMax: 23.8 },
   { name: "dip25_hi", dip: 25, liqMin: 23.8, liqMax: 47.6 },
@@ -167,7 +190,7 @@ const ENTRIES_DIP: { name: string; dip: number; liqMin: number; liqMax: number; 
  * liquidity and adds nothing once you already filter on it. `rep_any_p*` drops
  * the liquidity band instead, to price the buyer signal on its own.
  */
-const ENTRIES_REP: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number }[] = [
+const ENTRIES_REP: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number; minCluster?: number }[] = [
   { name: "rep_hi_p0", dip: 0, liqMin: 23.8, liqMax: 47.6, minProven: 0 },
   { name: "rep_hi_p1", dip: 0, liqMin: 23.8, liqMax: 47.6, minProven: 1 },
   { name: "rep_hi_p2", dip: 0, liqMin: 23.8, liqMax: 47.6, minProven: 2 },
@@ -196,7 +219,7 @@ const ENTRIES_REP: { name: string; dip: number; liqMin: number; liqMax: number; 
  * real signal was "how close to graduating" all along, and the liquidity band
  * was only ever a crude proxy for it.
  */
-const ENTRIES_GRAD: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number }[] = [
+const ENTRIES_GRAD: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number; minCluster?: number }[] = [
   { name: "g25_40", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 25, maxGrad: 40 },
   { name: "g40_50", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 40, maxGrad: 50 },
   { name: "g50_60", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 50, maxGrad: 60 },
@@ -209,8 +232,34 @@ const ENTRIES_GRAD: { name: string; dip: number; liqMin: number; liqMax: number;
   { name: "g80_plus", dip: 0, liqMin: 0, liqMax: 1e9, minGrad: 80, maxGrad: 91 },
 ];
 
+/**
+ * Coordinated-buyer rules. `minCluster` is how many wallets from a SINGLE known
+ * operator cluster must have bought before we enter — counted as they arrive,
+ * so the trigger fires at the moment the condition becomes true rather than at
+ * an arbitrary 20s. That timing is the whole point: the +35% measured earlier
+ * counted clusters over a token's first 20 buyers, which can span minutes.
+ *
+ * `c0` is the control: identical machinery, no coordination required, so the
+ * difference between it and the rest is what coordination is actually worth.
+ */
+const ENTRIES_BUNDLE: { name: string; dip: number; liqMin: number; liqMax: number; minProven?: number; minGrad?: number; maxGrad?: number; minCluster?: number }[] = [
+  { name: "c0_control", dip: 0, liqMin: 0, liqMax: 1e9 },
+  { name: "c2", dip: 0, liqMin: 0, liqMax: 1e9, minCluster: 2 },
+  { name: "c3", dip: 0, liqMin: 0, liqMax: 1e9, minCluster: 3 },
+  { name: "c4", dip: 0, liqMin: 0, liqMax: 1e9, minCluster: 4 },
+  { name: "c5", dip: 0, liqMin: 0, liqMax: 1e9, minCluster: 5 },
+  { name: "c6", dip: 0, liqMin: 0, liqMax: 1e9, minCluster: 6 },
+  { name: "c8", dip: 0, liqMin: 0, liqMax: 1e9, minCluster: 8 },
+  // Coordination plus the liquidity band that survived dip mode.
+  { name: "c5_liq", dip: 0, liqMin: 11.9, liqMax: 47.6, minCluster: 5 },
+  // Coordination plus proven buyers — the two signals that ever worked.
+  { name: "c5_rep2", dip: 0, liqMin: 0, liqMax: 1e9, minCluster: 5, minProven: 2 },
+  { name: "c4_early", dip: 0, liqMin: 0, liqMax: 23.8, minCluster: 4 },
+];
+
 const ENTRIES =
-  MODE === "rep" ? ENTRIES_REP
+  MODE === "bundle" ? ENTRIES_BUNDLE
+  : MODE === "rep" ? ENTRIES_REP
   : MODE === "grad" ? ENTRIES_GRAD
   : ENTRIES_DIP;
 
@@ -317,6 +366,12 @@ interface Curve {
   entryPrice: number;
   entryLiquidity: number;
   entryVelocity: number;
+  /** cluster id -> how many of its wallets have bought this curve so far. */
+  clusterHits: Map<number, number>;
+  /** Largest single-cluster count at the moment we entered. */
+  clusteredAtEntry: number;
+  /** Largest it ever reached, for comparison against the entry-time value. */
+  clusteredPeak: number;
   sims: Sim[] | null;
   /** dip mode: which entry rules have already fired for this curve. */
   dipFired: boolean[] | null;
@@ -347,7 +402,10 @@ db.exec(`
     blocks_to_peak INTEGER,
     graduated INTEGER, lifetime_blocks INTEGER,
     entered INTEGER, entry_price REAL, entry_liq_eth REAL,
-    entry_other_buys INTEGER, entry_velocity REAL
+    entry_other_buys INTEGER, entry_velocity REAL,
+    -- coordinated wallets from one operator: at the entry moment, and ever.
+    -- The gap between them is exactly what made the earlier +35% unusable.
+    clustered_at_entry INTEGER, clustered_peak INTEGER
   );
   CREATE TABLE early_buyers (token TEXT, idx INTEGER, wallet TEXT);
   CREATE TABLE sims (
@@ -360,7 +418,7 @@ db.exec(`
   CREATE INDEX i_sim ON sims(preset);
 `);
 const insLaunch = db.prepare(
-  `INSERT OR REPLACE INTO launches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  `INSERT OR REPLACE INTO launches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 );
 const insBuyer = db.prepare(`INSERT INTO early_buyers VALUES (?,?,?)`);
 const insSim = db.prepare(`INSERT INTO sims VALUES (?,?,?,?,?,?,?)`);
@@ -406,6 +464,13 @@ function recordCycle(c: Curve, p: number, liq: number): void {
     c.cycleLowLiq = liq;
   }
 }
+/** Largest number of wallets from one operator cluster seen on this curve. */
+function biggestCluster(c: Curve): number {
+  let n = 0;
+  for (const [, v] of c.clusterHits) if (v > n) n = v;
+  return n;
+}
+
 /** This curve's position size, the same proportion of its own threshold. */
 function stakeFor(c: Curve): bigint {
   return (c.threshold * BigInt(Math.round(STAKE_FRACTION * 1e9))) / 1_000_000_000n;
@@ -426,6 +491,7 @@ function flush(key: string, c: Curve): void {
     c.graduated ? 1 : 0, lifetime,
     c.entered ? 1 : 0, c.entryPrice, c.entryLiquidity,
     c.buysBeforeEntry, c.entryVelocity,
+    c.clusteredAtEntry, c.clusteredPeak,
   );
   for (let i = 0; i < c.earlyBuyers.length; i++) insBuyer.run(c.token, i, c.earlyBuyers[i]);
   if (c.sims) {
@@ -444,6 +510,7 @@ function enterSims(c: Curve, blockSecs: number, delayBlocks: bigint): void {
   const q = quoteBuy(stake, res, FEE_BPS, c.taxBps ?? 0n);
   if (q.tokensOut <= 0n) return;
   c.entered = true;
+  c.clusteredAtEntry = biggestCluster(c);
   c.entryLiquidity = Number(realQuote(c)) / 1e18;
   c.entryVelocity = c.buysBeforeEntry / (Number(delayBlocks) * blockSecs);
   // Our own buy moves the curve.
@@ -473,6 +540,7 @@ function openDipEntry(c: Curve, ei: number, liq: number): void {
   const q = quoteBuy(stake, res, FEE_BPS, c.taxBps ?? 0n);
   if (q.tokensOut <= 0n) return;
   c.dipFired![ei] = true;
+  if (!c.clusteredAtEntry) c.clusteredAtEntry = biggestCluster(c);
   const entryPrice = Number(stake) / Number(q.tokensOut);
   if (!c.sims) c.sims = [];
   for (let xi = 0; xi < PRESETS.length; xi++) {
@@ -502,6 +570,7 @@ function checkDipEntries(c: Curve, price: number, liqPct: number, gradPct: numbe
     if (liqPct < r.liqMin || liqPct > r.liqMax) continue;
     if (r.minGrad != null && gradPct < r.minGrad) continue;
     if (r.maxGrad != null && gradPct > r.maxGrad) continue;
+    if (r.minCluster != null && biggestCluster(c) < r.minCluster) continue;
     if (r.minProven) {
       if (nProven < 0) nProven = countProven(c);
       if (nProven < r.minProven) continue;
@@ -609,6 +678,7 @@ async function main() {
         bestDipDepth: 0, bestRipFromDip: 0, bestDipLiq: 0, blocksToPeak: 0,
         graduated: false, lastActive: l.blockNumber!,
         entered: false, entryPrice: 0, entryLiquidity: 0, entryVelocity: 0,
+        clusterHits: new Map(), clusteredAtEntry: 0, clusteredPeak: 0,
         sims: null,
         dipFired: MODE === "snipe" ? null : new Array(ENTRIES.length).fill(false),
       });
@@ -662,6 +732,13 @@ async function main() {
         }
         const buyer = String(a.buyer).toLowerCase();
         c.buys++;
+        // Count this buyer against its operator cluster, once per wallet.
+        const cl = clusterOf.get(buyer);
+        if (cl !== undefined && buyer !== c.deployer && !c.buyers.has(buyer)) {
+          const n = (c.clusterHits.get(cl) ?? 0) + 1;
+          c.clusterHits.set(cl, n);
+          if (n > c.clusteredPeak) c.clusteredPeak = n;
+        }
         if (buyer !== c.deployer) {
           if (!c.buyers.has(buyer)) {
             c.buyers.add(buyer);
