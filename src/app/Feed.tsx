@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { directMediaUrl, mediaUrl } from "@/lib/format";
 
 interface Row {
@@ -89,7 +89,25 @@ function Avatar({ row, eager }: { row: Row; eager: boolean }) {
   );
 }
 
-function FeedRow({ r, onPick, eager }: { r: Row; onPick: (a: string) => void; eager: boolean }) {
+/**
+ * Memoised, and the comparator is the point.
+ *
+ * The poll replaces the whole array every two seconds, so without this all 250
+ * rows re-render on every tick -- measured at 8 long tasks totalling 488ms in
+ * a nine-second window, which is the main thread locking for ~60ms each
+ * refresh and is what made the list feel slow to scroll. Most rows are dead
+ * launches whose numbers never move, so comparing the handful of displayed
+ * fields skips nearly all of that work.
+ */
+const FeedRow = memo(function FeedRow({
+  r,
+  onPick,
+  eager,
+}: {
+  r: Row;
+  onPick: (a: string) => void;
+  eager: boolean;
+}) {
   return (
     <button className="frow-item" onClick={() => onPick(r.token)}>
       <Avatar row={r} eager={eager} />
@@ -120,7 +138,17 @@ function FeedRow({ r, onPick, eager }: { r: Row; onPick: (a: string) => void; ea
       </span>
     </button>
   );
-}
+},
+(a, b) =>
+  a.eager === b.eager &&
+  a.r.token === b.r.token &&
+  a.r.mcapUsd === b.r.mcapUsd &&
+  a.r.volumeUsd === b.r.volumeUsd &&
+  a.r.trades === b.r.trades &&
+  a.r.holders === b.r.holders &&
+  a.r.progressPct === b.r.progressPct &&
+  // Age is rendered coarsely, so only a change in the rendered string matters.
+  Math.round(a.r.ageMinutes) === Math.round(b.r.ageMinutes));
 
 /**
  * New pairs, newest first. Nothing else.
@@ -143,6 +171,13 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
   const [held, setHeld] = useState(false);
   const heldRef = useRef(false);
   heldRef.current = held;
+  /**
+   * A finder, not a filter: it never hides a coin that would otherwise be
+   * shown, it just gets you to one you already know about. Both coins reported
+   * missing were present -- at positions 46 and 147 of 250 near-identical rows
+   * -- which is a findability problem rather than a data one.
+   */
+  const [find, setFind] = useState("");
 
   const load = useCallback(async () => {
     if (heldRef.current) return;
@@ -163,7 +198,17 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
     return () => clearInterval(iv);
   }, [load]);
 
-  const rows = data?.rows ?? [];
+  const all = useMemo(() => data?.rows ?? [], [data]);
+  const rows = useMemo(() => {
+    const q = find.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(
+      (r) =>
+        r.symbol.toLowerCase().includes(q) ||
+        r.name.toLowerCase().includes(q) ||
+        r.token.toLowerCase().includes(q),
+    );
+  }, [all, find]);
 
   return (
     <aside className="feed card">
@@ -172,10 +217,19 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
           New coins{" "}
           <span className="muted" style={{ fontWeight: 400 }}>
             · {rows.length}
+            {find.trim() && all.length !== rows.length ? ` of ${all.length}` : ""}
           </span>
         </h2>
         {held && <span className="muted small">paused</span>}
       </div>
+
+      <input
+        className="input"
+        style={{ margin: "8px 0 4px", padding: "7px 10px", fontSize: 13 }}
+        placeholder="Find a ticker, name or address"
+        value={find}
+        onChange={(e) => setFind(e.target.value)}
+      />
 
       <p className="muted small" style={{ margin: "4px 0 10px" }}>
         {data?.source === "gmgn" ? (
