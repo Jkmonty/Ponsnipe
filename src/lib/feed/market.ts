@@ -55,8 +55,12 @@ function logClient(): PublicClient {
   return logs;
 }
 
-/** How often to sweep. Launches arrive every few seconds. */
-const POLL_MS = 10_000;
+/**
+ * How often to sweep. Launches arrive every few seconds and the feed is judged
+ * on how quickly they appear, so this is the latency floor for a new coin
+ * showing up in the list.
+ */
+const POLL_MS = Math.max(3_000, Number(process.env.FEED_POLL_MS ?? 6_000));
 /** Never query more than this many blocks at once. */
 const MAX_SPAN = 1_800n;
 /**

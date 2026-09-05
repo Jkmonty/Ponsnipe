@@ -11,31 +11,18 @@ interface Row {
   ageMinutes: number;
   trades: number;
   progressPct: number;
-  /** Chain-source rows carry a quote asset; GMGN rows are already in dollars. */
-  quoteSymbol?: string;
   mcapUsd: number | null;
   volumeUsd: number | null;
   liquidityUsd: number | null;
-  /** GMGN only. */
+  /** Chain-source rows carry a quote asset; GMGN rows are already in dollars. */
+  quoteSymbol?: string;
   launchpad?: string;
   holders?: number;
   devHoldRate?: number;
-  top10HoldRate?: number;
-  freshWalletRate?: number;
-  sniperHoldRate?: number;
-  insiderHoldRate?: number;
   isHoneypot?: string;
   renowned?: number;
+  /** False when the token is not a pons launch, so this app cannot buy it. */
   tradeable?: boolean;
-}
-
-interface Filters {
-  minMcapUsd: number | null;
-  minVolumeUsd: number | null;
-  minLiquidityUsd: number | null;
-  volumeWindowMin: number;
-  includeUnpriced: boolean;
-  quote: "all" | "eth" | "stable";
 }
 
 interface Payload {
@@ -43,9 +30,6 @@ interface Payload {
   rows: Row[];
   ethUsd?: number | null;
   total: number;
-  launchpads?: string[];
-  /** Quote assets with no dollar rate. Chain source only; usually empty. */
-  unpriced?: string[];
   status: { running: boolean; lastError: string | null; ageSeconds?: number | null };
 }
 
@@ -67,6 +51,8 @@ function age(m: number): string {
 }
 
 function Avatar({ row }: { row: Row }) {
+  // Artwork is deployer-supplied and often pinned to a slow gateway, so the
+  // initials sit underneath rather than leaving an empty tile.
   const [broken, setBroken] = useState(false);
   const logo = mediaUrl(row.logo);
   return (
@@ -81,49 +67,30 @@ function Avatar({ row }: { row: Row }) {
 }
 
 /**
- * New coins, newest first.
+ * New coins, newest first, unfiltered.
  *
- * Filters default to on. An unfiltered feed of this chain is ~24,000 launches a
- * day, nearly all of which never attract a second buyer, so the useful default
- * is a floor rather than everything.
+ * There were thresholds here and they were the wrong idea: a brand-new coin has
+ * no volume and no liquidity yet, because that is what new means, so a $3k floor
+ * on either hid every launch until it had already matured. Measured at the time:
+ * 16 rows survived the floors against 200 without them, 180 of which had
+ * launched in the previous five minutes. A new-pairs feed should show new pairs.
  */
 export default function Feed({ onPick }: { onPick: (address: string) => void }) {
   const [data, setData] = useState<Payload | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+
   /**
-   * Rows re-sort on every poll, so a list that refreshed under the cursor moved
-   * the row you were aiming at out from under the click. Hovering freezes it,
-   * the way every other live feed does.
+   * Rows re-sort on every poll, so a list refreshing under the cursor moved the
+   * row you were aiming at out from under the click. Hovering freezes it.
    */
   const [held, setHeld] = useState(false);
   const heldRef = useRef(false);
   heldRef.current = held;
-  const [f, setF] = useState<Filters>({
-    minMcapUsd: 3000,
-    minVolumeUsd: 3000,
-    minLiquidityUsd: 3000,
-    volumeWindowMin: 60,
-    includeUnpriced: false,
-    quote: "all",
-  });
-  const [tradeableOnly, setTradeableOnly] = useState(false);
-  const [launchpad, setLaunchpad] = useState("");
 
   const load = useCallback(async () => {
-    const q = new URLSearchParams({
-      minMcap: f.minMcapUsd == null ? "off" : String(f.minMcapUsd),
-      minVolume: f.minVolumeUsd == null ? "off" : String(f.minVolumeUsd),
-      minLiquidity: f.minLiquidityUsd == null ? "off" : String(f.minLiquidityUsd),
-      window: String(f.volumeWindowMin),
-      unpriced: f.includeUnpriced ? "1" : "0",
-      quote: f.quote,
-      tradeable: tradeableOnly ? "1" : "0",
-    });
-    if (launchpad) q.set("launchpad", launchpad);
     if (heldRef.current) return;
     try {
-      const r = await fetch(`/api/feed?${q}`);
+      const r = await fetch("/api/feed?limit=120");
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? "feed unavailable");
       setData(j);
@@ -131,22 +98,15 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed");
     }
-  }, [f, tradeableOnly, launchpad]);
+  }, []);
 
   useEffect(() => {
     load();
-    const iv = setInterval(load, 8000);
+    const iv = setInterval(load, 5000);
     return () => clearInterval(iv);
   }, [load]);
 
   const rows = data?.rows ?? [];
-  const num = (v: number | null) => (v == null ? "" : String(v));
-  const parse = (v: string): number | null => {
-    const t = v.trim();
-    if (!t) return null;
-    const n = Number(t);
-    return Number.isFinite(n) && n >= 0 ? n : null;
-  };
 
   return (
     <aside className="feed card">
@@ -155,130 +115,29 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
           New coins{" "}
           <span className="muted" style={{ fontWeight: 400 }}>
             · {rows.length}
-            {data && data.total > rows.length ? ` of ${data.total}` : ""}
           </span>
         </h2>
-        <div className="row" style={{ gap: 10 }}>
-          {held && <span className="muted small">paused</span>}
-          <button className="linkish" onClick={() => setOpen((v) => !v)}>
-            {open ? "Hide filters" : "Filters"}
-          </button>
-        </div>
+        {held && <span className="muted small">paused</span>}
       </div>
 
       <p className="muted small" style={{ margin: "4px 0 10px" }}>
         {data?.source === "gmgn" ? (
           <>
-            Every launchpad on the chain, via GMGN
-            {data.status.ageSeconds != null ? ` · updated ${data.status.ageSeconds}s ago` : ""}.
+            {/* Naming both sources, because they are not interchangeable: GMGN's
+                new-token stream for this chain does not carry pons launches at
+                all — pons appears there only once graduated — so the pons rows,
+                which are the ones this app can buy, come from our own index. */}
+            pons launches indexed here, every other launchpad via GMGN
+            {data.status.ageSeconds != null ? ` (updated ${data.status.ageSeconds}s ago)` : ""}.
             Rows marked <em>view only</em> are not pons launches, so this app cannot buy them.
           </>
         ) : (
           <>
             Live from the chain, newest first.{" "}
-            {data?.ethUsd
-              ? `Priced in USD via ETH $${Math.round(data.ethUsd).toLocaleString()} and live share prices.`
-              : "No price feed — dollar figures unavailable."}
+            {data?.ethUsd ? `ETH $${Math.round(data.ethUsd).toLocaleString()}.` : ""}
           </>
         )}
       </p>
-
-      {open && (
-        <div className="filters">
-          <label className="f">
-            <span>Min market cap $</span>
-            <input
-              className="input"
-              inputMode="numeric"
-              value={num(f.minMcapUsd)}
-              placeholder="off"
-              onChange={(e) => setF({ ...f, minMcapUsd: parse(e.target.value) })}
-            />
-          </label>
-          <label className="f">
-            <span>Min volume $</span>
-            <input
-              className="input"
-              inputMode="numeric"
-              value={num(f.minVolumeUsd)}
-              placeholder="off"
-              onChange={(e) => setF({ ...f, minVolumeUsd: parse(e.target.value) })}
-            />
-          </label>
-          <label className="f">
-            <span>Min liquidity $</span>
-            <input
-              className="input"
-              inputMode="numeric"
-              value={num(f.minLiquidityUsd)}
-              placeholder="off"
-              onChange={(e) => setF({ ...f, minLiquidityUsd: parse(e.target.value) })}
-            />
-          </label>
-          <label className="f">
-            <span>Volume window</span>
-            <select
-              className="input"
-              value={f.volumeWindowMin}
-              onChange={(e) => setF({ ...f, volumeWindowMin: Number(e.target.value) })}
-            >
-              <option value={5}>5 min</option>
-              <option value={15}>15 min</option>
-              <option value={60}>1 hour</option>
-              <option value={180}>3 hours</option>
-            </select>
-          </label>
-          <label className="f">
-            <span>Paired with</span>
-            <select
-              className="input"
-              value={f.quote}
-              onChange={(e) => setF({ ...f, quote: e.target.value as Filters["quote"] })}
-            >
-              <option value="all">Anything</option>
-              <option value="eth">ETH only</option>
-              <option value="stable">Not ETH</option>
-            </select>
-          </label>
-          {data?.source === "gmgn" && (
-            <>
-              <label className="f">
-                <span>Launchpad</span>
-                <select className="input" value={launchpad} onChange={(e) => setLaunchpad(e.target.value)}>
-                  <option value="">All</option>
-                  {(data.launchpads ?? []).map((lp) => (
-                    <option key={lp} value={lp}>
-                      {lp}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="f frow">
-                <input
-                  type="checkbox"
-                  checked={tradeableOnly}
-                  onChange={(e) => setTradeableOnly(e.target.checked)}
-                />
-                <span className="muted small">
-                  Only coins this app can buy (pons curves). Everything else is view only.
-                </span>
-              </label>
-            </>
-          )}
-          <label className="f frow" hidden={data?.source === "gmgn"}>
-            <input
-              type="checkbox"
-              checked={f.includeUnpriced}
-              onChange={(e) => setF({ ...f, includeUnpriced: e.target.checked })}
-            />
-            <span className="muted small">
-              Show coins whose quote asset has no dollar price
-              {data?.unpriced?.length ? ` (${data.unpriced.join(", ")})` : ""}. The dollar
-              filters cannot be applied to those, so they are hidden by default.
-            </span>
-          </label>
-        </div>
-      )}
 
       {err && <p className="neg small">{err}</p>}
       {!err && data && !data.status.running && (
@@ -299,7 +158,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       >
         {rows.length === 0 ? (
           <p className="muted small" style={{ margin: "10px 0" }}>
-            {data ? "Nothing clears these filters yet. Lower them or wait." : "Loading…"}
+            {data ? "Nothing yet." : "Loading…"}
           </p>
         ) : (
           rows.map((r) => (
@@ -308,10 +167,22 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
               <div className="fmain">
                 <div className="row" style={{ gap: 6 }}>
                   <strong className="ellip">{r.symbol}</strong>
-                  <span className="muted small">/{r.quoteSymbol}</span>
+                  {r.quoteSymbol ? <span className="muted small">/{r.quoteSymbol}</span> : null}
+                  {r.isHoneypot === "yes" && <span className="pill pill-cold">honeypot</span>}
+                  {(r.devHoldRate ?? 0) > 0.15 && (
+                    <span className="pill pill-cold">dev {Math.round((r.devHoldRate ?? 0) * 100)}%</span>
+                  )}
+                  {(r.renowned ?? 0) > 0 && <span className="pill pill-hot">{r.renowned} smart</span>}
                 </div>
+                {/* Launchpad leads the sub-line rather than sitting as a chip:
+                    the column is too narrow for another one, and it is the
+                    first thing worth knowing about a row. */}
                 <div className="muted small ellip">
-                  {age(r.ageMinutes)} · {r.trades} tx · {r.progressPct.toFixed(0)}%
+                  {r.launchpad ? `${r.launchpad} · ` : ""}
+                  {age(r.ageMinutes)}
+                  {r.trades ? ` · ${r.trades} tx` : ""}
+                  {r.holders ? ` · ${r.holders} holders` : ""}
+                  {r.tradeable === false ? " · view only" : ""}
                 </div>
               </div>
               <span className="num small ta-r">{money(r.mcapUsd)}</span>

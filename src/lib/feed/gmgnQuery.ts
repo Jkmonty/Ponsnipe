@@ -26,10 +26,19 @@ export interface GmgnFilters {
   limit: number;
 }
 
+/*
+ * Defaults are deliberately open.
+ *
+ * A brand-new coin has no volume and no liquidity yet -- that is what "new"
+ * means -- so a $3k floor on either hides every launch until it has already
+ * matured, and the feed stops moving. Measured: 16 rows passed the $3k floors
+ * against 200 without them, 180 of which had launched in the last five minutes.
+ * The floors are still one click away as a preset.
+ */
 export const GMGN_DEFAULTS: GmgnFilters = {
-  minMcapUsd: 3000,
-  minVolumeUsd: 3000,
-  minLiquidityUsd: 3000,
+  minMcapUsd: null,
+  minVolumeUsd: null,
+  minLiquidityUsd: null,
   minHolders: null,
   maxAgeMin: 180,
   hideHoneypots: true,
