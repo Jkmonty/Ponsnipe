@@ -76,7 +76,7 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 const toks = (
   scan
     .prepare(
-      "SELECT token, launch_block, entry_other_buys, graduated FROM launches WHERE native = 1 ORDER BY launch_block",
+      "SELECT token, launch_block, entry_other_buys, graduated FROM launches ORDER BY launch_block",
     )
     .all() as unknown as {
     token: string;

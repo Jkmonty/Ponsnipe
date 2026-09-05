@@ -16,6 +16,11 @@
  * share a ticker, and split into waves so the same ticker reused a week later
  * is not treated as the same event.
  *
+ * EVERY quote type is included. Symbols were originally fetched for ETH-quoted
+ * launches only, which made the whole narrative-wave finding half-blind: a real
+ * wave like $CONCERN was two-thirds USDG/AMZN/NVDA and we were looking at the
+ * ETH third of it.
+ *
  * Symbols are cached in data/symbols.sqlite so re-analysis costs no RPC.
  *
  * Reads only. Nothing is signed.
@@ -97,7 +102,7 @@ async function fetchSymbols(): Promise<void> {
     (sym.prepare("SELECT token FROM symbols").all() as unknown as { token: string }[]).map((r) => r.token),
   );
   const all = scan
-    .prepare("SELECT token FROM launches WHERE native = 1")
+    .prepare("SELECT token FROM launches")
     .all() as unknown as { token: string }[];
   const todo = all.map((r) => r.token).filter((t) => !have.has(t));
   if (!todo.length) {
@@ -139,7 +144,7 @@ function normalise(s: string): string {
 function analyse(): void {
   const rows = scan
     .prepare(
-      "SELECT token, launch_block, graduated, unique_buyers, peak_liq_eth, entered FROM launches WHERE native = 1",
+      "SELECT token, launch_block, graduated, unique_buyers, peak_liq_eth, entered FROM launches",
     )
     .all() as unknown as Row[];
   const symbols = new Map(
