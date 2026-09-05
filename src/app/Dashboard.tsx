@@ -210,9 +210,15 @@ export default function Dashboard() {
       )}
 
       {/* ── setup / wallet ─────────────────────────────────────────── */}
+      {/*
+        The stepper is shown while setup is incomplete, because a card headed
+        "Step 2" with no Step 1 anywhere on the page reads as something failing
+        to render rather than as something already done.
+      */}
+      {!funded && <Steps done={wallet?.configured ? 1 : 0} />}
       {!wallet?.configured ? (
         <div className="card">
-          <h2>Step 1 — Set up your trading wallet</h2>
+          <h2>Set up your trading wallet</h2>
           <p className="muted small" style={{ marginTop: 0 }}>
             A wallet this app controls, so it can sell without asking you first. The key is
             encrypted on this machine with your passphrase. Nothing is custodial to anyone
@@ -226,7 +232,7 @@ export default function Dashboard() {
         </div>
       ) : !funded ? (
         <div className="card">
-          <h2>Step 2 — Add funds</h2>
+          <h2>Add funds</h2>
           <p className="muted small" style={{ marginTop: 0 }}>
             Send ETH on <strong>Robinhood Chain</strong> to your bot wallet. A little goes a
             long way — 0.02 ETH is plenty to test.
@@ -1056,3 +1062,21 @@ function SniperCard({
   );
 }
 
+/** Where you are in first-run setup. Disappears once there is money to trade. */
+function Steps({ done }: { done: number }) {
+  const labels = ["Create a wallet", "Add funds", "Buy a token"];
+  return (
+    <ol className="steps">
+      {labels.map((label, i) => (
+        <li
+          key={label}
+          className="step"
+          data-state={i < done ? "done" : i === done ? "now" : "todo"}
+        >
+          <span className="step-num">{i < done ? "✓" : i + 1}</span>
+          <span>{label}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}

@@ -771,3 +771,42 @@ h2 {
   box-shadow: inset 0 0 0 1px var(--line-2);
 }
 .seg-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* First-run stepper. */
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  font-size: 13px;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.step[data-state="now"] { color: var(--text); font-weight: 600; }
+.step[data-state="done"] { color: var(--green); }
+.step-num {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  font-size: 11px;
+  font-weight: 700;
+  flex: none;
+}
+.step[data-state="now"] .step-num {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+.step[data-state="done"] .step-num {
+  border-color: var(--green);
+  color: var(--green);
+}
