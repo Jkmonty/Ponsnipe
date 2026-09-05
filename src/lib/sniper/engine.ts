@@ -164,10 +164,6 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
   s.evaluated += 1;
   const cfg = loadSniperConfig();
 
-  // A disabled sniper still WATCHES. It costs two RPC calls per launch and it
-  // is the only way to see that the engine is reading the whole venue —
-  // stock-quoted launches included — and which ones it would take. Buying is
-  // gated further down, after the launch has been priced and filtered.
   try {
     // Safety caps. `inFlight*` counts buys that have passed these checks but
     // whose rows aren't written yet — without it, launches evaluated back to
@@ -387,10 +383,13 @@ function handleLaunchLogs(logs: Log[]): void {
       pairToken: String(l.args.pairToken ?? ""),
       graduationThreshold: (l.args.graduationThreshold as bigint) ?? 0n,
     };
-    // A disabled sniper still queues the launch for evaluation. It never buys —
-    // that is gated in evaluate() — but it prices and filters every launch so
-    // the feed can show the whole venue and which ones it would have taken.
-    // Without this the feed is just a list of addresses with no detail.
+    // A disabled sniper does not evaluate. Pricing and filtering every launch
+    // costs two RPC calls each at ~24k launches a day, and it only ever existed
+    // to populate a live feed that no longer ships.
+    if (!cfg.enabled) {
+      record("skipped", "sniper disabled", { token, deployer: launch.deployer });
+      continue;
+    }
     const delayMs = Math.max(0, cfg.delaySeconds) * 1000;
     const timer = setTimeout(() => enqueue(launch, l.blockNumber), delayMs);
     if (timer && typeof timer === "object" && "unref" in timer) timer.unref();

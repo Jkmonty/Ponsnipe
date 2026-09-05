@@ -24,13 +24,4 @@ export async function register(): Promise<void> {
     console.error("Failed to start sniper:", err);
   }
 
-  // Separate try: a graduation watcher failure must not stop the sniper, and
-  // vice versa — they are independent feeds.
-  const { startGraduationWatcher } = await import("./lib/sniper/graduations");
-  try {
-    startGraduationWatcher();
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("Failed to start graduation watcher:", err);
-  }
 }

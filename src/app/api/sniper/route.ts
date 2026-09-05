@@ -7,7 +7,6 @@ import {
 } from "@/lib/sniper/config";
 import { sniperStatus } from "@/lib/sniper/engine";
 import { recentSniperEvents } from "@/lib/db";
-import { recentGraduations, graduationStatus } from "@/lib/sniper/graduations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,8 +19,6 @@ export async function GET(req: Request) {
     status: sniperStatus(),
     defaults: DEFAULT_CONFIG,
     events: recentSniperEvents(Number.isFinite(limit) ? limit : 60),
-    graduations: recentGraduations(40),
-    gradStatus: graduationStatus(),
   });
 }
 

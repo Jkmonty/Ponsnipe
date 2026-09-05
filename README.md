@@ -1,127 +1,103 @@
 # pons autotrade
 
-Buy [pons.family](https://www.ponsfamily.com) memecoins on **Robinhood Chain** (chain 4663)
-and have them **sell automatically** when your PnL hits a take‑profit or stop‑loss target —
-so the exit isn't an emotional decision made at 2am.
+Buy a token on [pons.family](https://ponsfamily.com), set your exit, walk away.
 
-> ⚠️ This trades real money on a permissionless launchpad. Memecoins routinely go to
-> zero. Start in dry‑run, test with dust, and only risk what you can lose.
-
----
-
-## How it works
-
-pons v2 launches every token onto its own **constant‑product bonding curve** contract.
-You trade by calling `buy()` / `sell()` on that curve until the token graduates
-(~4.2 ETH raised) into a locked Uniswap v4 pool.
-
-- **Buy** – the app calls `curve.buy{value: eth}(quoteIn, minTokensOut, you)` from your
-  bot wallet and records the entry price.
-- **Watch** – an in‑process, **event‑driven monitor**: it re‑prices every open position
-  on every new block *and* the instant any buy/sell hits your token's curve (whichever is
-  sooner), with a heartbeat sweep as a safety net. All open positions are priced in one
-  `multicall` per pass.
-- **Auto‑sell** – when unrealised PnL crosses your `takeProfit` / `stopLoss` /
-  `trailingStop`, it calls `curve.sell()` immediately. No clicks, no tab required.
-
-**Reaction speed is capped by your RPC.** The public Robinhood Chain RPC serves stale state
-(~1–3 s between updates) and has no WebSocket, so exits lag by that much. Point `RPC_URL` at
-a private endpoint (Alchemy etc.) and reaction drops to roughly one block. The UI shows the
-measured RPC lag and warns when it's slow.
-
-The bot wallet's private key is stored **AES‑256‑GCM encrypted** in
-`data/bot.keystore.json`, unlocked by `KEYSTORE_PASSPHRASE`. Nothing is custodial to
-anyone but you.
-
-### Sniper
-
-Watches the pons v2 factory for `TokenLaunched`, waits `delaySeconds` (default 20 — past
-the ~99%→0 anti‑snipe‑tax window), then buys launches that pass your filters and hands the
-position straight to the auto‑sell monitor with your default targets.
-
-Filters: min/max liquidity, max creator tax, min "other buys" during the delay, deployer
-allow/deny lists, symbol/name regex. Safety caps: max concurrent snipes, max snipes/hour,
-max daily spend. Everything is editable in the UI (**Sniper** card) and stored in
-`data/sniper.json`. It only buys when the LIVE switch is on — otherwise it logs
-"would snipe".
-
-### Not handled yet
-- **Post‑graduation tokens.** Selling in a Uniswap v4 pool isn't wired up. If a position
-  graduates before its target hits, the monitor flags it `failed` and you sell manually
-  on pons.family. (GMGN's `order quote` *can* route these — a possible future integration.)
-- **ERC‑20‑quoted launches.** Only native‑ETH launches are supported; the sniper skips the rest.
+A local app for Robinhood Chain that watches your positions and sells them for
+you — take-profit, stop-loss, trailing stop, and an exit before the token
+graduates and the curve stops accepting sells. It runs on your machine, holds
+its own wallet, and nothing is custodial to anyone else.
 
 ---
 
-## Setup (3 steps)
+## Read this before you use it
+
+**This has never executed a live trade.** Every price path, quote and contract
+read is verified against the live chain, and the money-critical maths is
+covered by 100 tests — but no transaction has ever been signed. Your first
+live trade is also this code's first live trade. Start with an amount you
+would shrug at losing.
+
+**The sniper loses money.** Not a hedge — a measurement. Across 114,544 real
+launches replayed through nine exit rules, automatic sniping was negative on
+every single one, on both ETH-quoted and stock-quoted tokens. It ships disabled
+and should stay that way unless you have a reason of your own. The numbers are
+in [`docs/FINDINGS.md`](docs/FINDINGS.md).
+
+**Most tokens here go to zero.** Around 2% of launches ever graduate. The
+median token that *does* graduate is down 32% an hour later and 59% after
+twelve. This tool cannot change that; it can only make sure you exit on a rule
+rather than on a feeling.
+
+**Your keys live on this machine**, encrypted with a passphrase you set. Anyone
+with the keystore file and the passphrase has the funds. Do not put more in the
+bot wallet than you are actively trading.
+
+---
+
+## What it does
+
+- **Auto-sell** — take-profit, stop-loss, trailing stop, and a graduation exit.
+  Once a token graduates its bonding curve stops accepting sells, so a winner
+  that runs to the threshold would otherwise strand; the engine sells at 92% of
+  the way there by default.
+- **Sub-second exits** — re-prices on every new block and instantly on any trade
+  against a curve you hold, applying the reserve change from the event itself
+  with no extra round trip.
+- **Launch composer** — drafts a ticker, name and description from a tweet, and
+  checks them against 114,544 past launches so you know if a ticker has already
+  been used and died.
+- **Sniper** — auto-buys new launches through a filter chain. Off by default.
+  See the warning above.
+
+## Setup
 
 ```bash
 npm install
-npm run setup      # generates secrets into .env — you never edit .env by hand
-npm run dev        # http://localhost:3000
+npm run setup     # writes .env with a generated passphrase and API token
+npm run dev       # http://127.0.0.1:3000
 ```
 
-Then in the browser:
+Then in the browser: **Create wallet** → fund it → **Buy**.
 
-1. **Create wallet** – one click. Key is encrypted into `data/bot.keystore.json` with the
-   passphrase `npm run setup` generated. Back up that file **and** your `.env` separately.
-2. **Add funds** – copy the address shown, send it ~0.02 ETH on **Robinhood Chain**.
-3. **Buy** – paste a token address, pick a preset (Safe / Balanced / Moonshot) or set your
-   own %, hit Buy. While the switch says **DRY‑RUN** nothing is sent — you just get a preview.
+The app starts in **DRY-RUN**: it does everything except sign transactions, and
+logs what it would have done. Leave it there until you have watched it decide
+for a while. The toggle in the header switches to live.
 
-Optional sanity check of chain + contract wiring:
+### Optional
+
+| variable | what it gives you |
+|---|---|
+| `RPC_URL` | A private endpoint (e.g. Alchemy). The public one is 1–3s behind, which is the difference between a 0.5s exit and a 3s one. |
+| `WSS_URL` | WebSocket pushes rather than polling — measured 96ms between blocks against 570–1456ms polling. |
+| `ANTHROPIC_API_KEY` | Lets the launch composer draft with Claude instead of a built-in heuristic. Costs a fraction of a penny per draft. |
+
+## Research tools
+
+The repo also contains the scanners used to test whether any of this is
+tradeable. They are read-only and sign nothing.
 
 ```bash
-npm run smoke
-npm run smoke -- 0xTOKEN   # resolve a token: curve, price, graduation %
+npm run scan        # replay every launch through nine exit rules
+npm run analyse     # dip patterns, deployer records, early-buyer signal
+npm run bundles     # cluster wallets that are really one operator
+npm run poolscan    # what happens after a token graduates
+npm run clusters    # narrative waves: the same ticker minted repeatedly
 ```
 
----
+Findings are written up in [`docs/FINDINGS.md`](docs/FINDINGS.md), including
+the strategies that did not work and why — which is most of them.
 
-## Going live
+## Tests
 
-Flip the **DRY‑RUN → LIVE** switch in the top‑right of the UI (it asks for confirmation).
-No `.env` edit, no restart. Flip it back any time. The setting is stored in
-`data/engine.json` and overrides `ENGINE_LIVE` in `.env`.
+```bash
+npm test
+```
 
-Recommended first live trade: **0.003 ETH** with a tight take‑profit, or buy then hit
-**Sell now** to prove the round trip. Scale up only after you've watched an auto‑sell fire
-and settle.
+100 tests over the parts where a bug costs money: bonding-curve maths, exit
+rules, the event fast path, the keystore, the double-sell guard, and CSRF on
+the routes that move funds.
 
-The monitor runs **inside the Next.js server process** (`src/instrumentation.ts`) — fine
-for a local machine or an always‑on VPS, but **not** serverless (Vercel). A public
-deployment needs the monitor on a persistent worker host, a per‑user keystore, and real
-auth (local requests are trusted automatically; remote requests need `ENGINE_API_TOKEN`).
+## Licence
 
----
-
-## Layout
-
-| Path | Purpose |
-| --- | --- |
-| `src/lib/chain.ts` | viem client for Robinhood Chain |
-| `src/lib/pons/addresses.ts` | verified contract addresses + event topics |
-| `src/lib/pons/abis.ts` | hand‑written minimal ABIs (curve, factory, ERC‑20) |
-| `src/lib/pons/pricing.ts` | bonding‑curve math (port of `PonsV2BondingCurveMath`) |
-| `src/lib/pons/tokens.ts` | resolve a token → curve, price, graduation state |
-| `src/lib/pons/swap.ts` | `buyOnCurve` / `sellOnCurve` from the bot wallet |
-| `src/lib/wallet/` | encrypted keystore + viem wallet client |
-| `src/lib/db/` | `node:sqlite` positions store + engine log |
-| `src/lib/engine/rules.ts` | pure TP / SL / trailing exit evaluation |
-| `src/lib/engine/executor.ts` | perform the sell, record outcome |
-| `src/lib/engine/monitor.ts` | the polling loop (globalThis‑backed singleton) |
-| `src/lib/engine/liveState.ts` | the DRY‑RUN / LIVE switch (`data/engine.json`) |
-| `src/lib/api.ts` | JSON helpers + auth (local trusted, remote needs token) |
-| `src/instrumentation.ts` | boots the monitor on server start |
-| `src/app/api/*` | REST: wallet + create, token lookup, positions CRUD, engine status + live toggle |
-| `src/app/Dashboard.tsx` | the whole UI |
-| `scripts/setup.ts` | generate `.env` secrets |
-| `scripts/wallet-init.ts` | create/import the bot wallet from the CLI (the UI button does the same) |
-| `scripts/smoke.ts` | connectivity + contract check |
-
-## Key contracts (Robinhood Chain 4663)
-
-- pons v2 factory `0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e`
-- `TokenLaunched` topic0 `0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607`
-- WETH `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73`
-- Source of truth: [github.com/ponsdotdev/ponsfamily](https://github.com/ponsdotdev/ponsfamily) `contractsV2/src/v2`
+Use at your own risk. Nothing here is financial advice, and the author of this
+code has no idea whether any given token will go up.
