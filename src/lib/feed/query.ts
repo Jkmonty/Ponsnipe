@@ -25,7 +25,7 @@ const SUPPLY = 1e9;
  */
 const SNIPE_BLOCKS = 3;
 
-/** Minutes of volume history drawn on each row. */
+/** Minutes of price history drawn on each row. */
 const SPARK_MINUTES = 20;
 
 export interface FeedFilters {
@@ -84,11 +84,11 @@ export interface FeedRow {
   /** Wallets that bought in the launch block itself. */
   sameBlock: number;
   /**
-   * Volume per minute over the recent window, oldest first.
+   * Price per minute over the recent window, oldest first, in the quote asset.
    *
-   * Volume and not price: feed_volume buckets every trade by the minute, but
-   * only the CURRENT price is stored per token, so there is no price history
-   * to draw. Calling this a price chart would be a lie about our own data.
+   * Gaps are carried forward rather than left as zero: a minute with no trade
+   * is a minute at the same price, and drawing it as nothing would put a
+   * cliff to the floor in every quiet stretch.
    */
   spark: number[];
 }
@@ -203,7 +203,7 @@ export async function readFeed(
   if (!raw.length) return { rows: [], total: 0, ethUsd: null, unpriced: [] };
 
   /*
-   * Every row's recent volume in one query, then grouped here.
+   * Every row's recent price history in one query, then shaped here.
    *
    * One query for the lot rather than one per row: at 250 rows the per-row
    * version would be 250 round trips into SQLite on every two-second poll.
@@ -213,16 +213,39 @@ export async function readFeed(
   try {
     const hist = db()
       .prepare(
-        `SELECT curve, bucket, quote FROM feed_volume
+        `SELECT curve, bucket, price FROM feed_prices
           WHERE bucket > ? ORDER BY curve, bucket`,
       )
-      .all(nowBucket - SPARK_MINUTES) as { curve: string; bucket: number; quote: number }[];
+      .all(nowBucket - SPARK_MINUTES) as { curve: string; bucket: number; price: number }[];
+
+    /** Sparse minute -> price, per curve, before the gaps are filled. */
+    const sparse = new Map<string, Map<number, number>>();
     for (const h of hist) {
-      let a = sparks.get(h.curve);
-      if (!a) sparks.set(h.curve, (a = new Array(SPARK_MINUTES).fill(0)));
-      // Bucket 0 is the oldest minute in the window, SPARK_MINUTES-1 the newest.
       const i = SPARK_MINUTES - 1 - (nowBucket - h.bucket);
-      if (i >= 0 && i < SPARK_MINUTES) a[i] += h.quote;
+      if (i < 0 || i >= SPARK_MINUTES) continue;
+      let m = sparse.get(h.curve);
+      if (!m) sparse.set(h.curve, (m = new Map()));
+      m.set(i, h.price);
+    }
+
+    for (const [curve, m] of sparse) {
+      /*
+       * Carry the last known price across quiet minutes.
+       *
+       * A minute with no trade is not a price of zero, it is the same price as
+       * before — leaving the gap at zero drew a cliff to the floor and back on
+       * every coin that paused, which is most of them. Leading minutes before
+       * the first known price stay absent rather than being back-filled with a
+       * price that did not exist yet.
+       */
+      const out: number[] = [];
+      let last = 0;
+      for (let i = 0; i < SPARK_MINUTES; i++) {
+        const v = m.get(i);
+        if (v != null && v > 0) last = v;
+        if (last > 0) out.push(last);
+      }
+      if (out.length > 1) sparks.set(curve, out);
     }
   } catch {
     /* history is decoration; a row without it still renders */

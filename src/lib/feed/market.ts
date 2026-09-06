@@ -199,6 +199,29 @@ function migrate(): void {
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_vol_bucket ON feed_volume(bucket DESC);`);
 
   /*
+   * Last price seen in each minute, per curve.
+   *
+   * feed_tokens holds only the CURRENT price, which is all the trading engine
+   * needs and all a row needs to show — but it means there was no history to
+   * draw, so the feed's sparkline had to fall back to volume. One row per
+   * curve per minute is enough to draw a line and cheap to keep: the feed
+   * window is pruned to KEEP_MINUTES, so this stays proportional to it.
+   *
+   * The write is an upsert, so the last trade in a minute wins. Deliberate —
+   * a close is what a chart of minute bars is made of, and keeping every tick
+   * would multiply the table by the trade rate for a line 54px wide.
+   */
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS feed_prices (
+      curve  TEXT NOT NULL,
+      bucket INTEGER NOT NULL,
+      price  REAL NOT NULL,
+      PRIMARY KEY (curve, bucket)
+    );
+  `);
+  conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_price_bucket ON feed_prices(bucket DESC);`);
+
+  /*
    * Net token position per wallet, per curve.
    *
    * Every CurveBuy carries tokensOut and every CurveSell tokensIn, both already
@@ -363,6 +386,8 @@ export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   );
   const at = new Date().toISOString();
+  /** Opening price of each launch, for the first point on its chart. */
+  const born: [string, number][] = [];
   for (let i = 0; i < add.length; i++) {
     const x = add[i];
     const cell = (k: number) => meta[i * PER + k];
@@ -414,7 +439,11 @@ export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<
       str(8),
     );
     s.seen += 1;
+    if (price > 0) born.push([x.curve.toLowerCase(), price]);
   }
+  // A coin one second old has no trades yet, so without this its chart would
+  // be empty for the whole first minute — the minute anyone is looking.
+  recordPrices(born);
 
   // Start fetching the artwork now rather than when a browser first asks. These
   // rows will be at the top of the feed within seconds and an ipfs gateway
@@ -608,6 +637,8 @@ async function sweepTrades(head: bigint): Promise<void> {
         WHERE curve=?`,
     );
     const at = new Date().toISOString();
+    /** Every price this pass produced, written to history in one go after. */
+    const marks: [string, number][] = [];
     for (const [curve, v] of moved) {
       const m = meta.get(curve);
       if (!m) continue;
@@ -629,7 +660,9 @@ async function sweepTrades(head: bigint): Promise<void> {
         at,
         curve,
       );
+      marks.push([curve, price]);
     }
+    recordPrices(marks);
   }
 }
 
@@ -676,6 +709,8 @@ async function sweepPrices(head: bigint): Promise<void> {
     blockNumber: at,
   });
 
+  /** Prices this pass read straight from the chain. */
+  const seeded: [string, number][] = [];
   const upd = db().prepare(
     `UPDATE feed_tokens
         SET price=?, mcap=?, liquidity=?, progress_pct=?, graduated=?, priced_at=?,
@@ -718,7 +753,9 @@ async function sweepPrices(head: bigint): Promise<void> {
       Number(at),
       r.token,
     );
+    seeded.push([String(r.curve).toLowerCase(), price]);
   }
+  recordPrices(seeded);
 }
 
 /**
@@ -790,11 +827,36 @@ async function repairMetadata(): Promise<void> {
   warmImages(logos);
 }
 
+/**
+ * Record where a curve's price ended this minute.
+ *
+ * Called from every place a price is computed — the trade sweep, which is
+ * where prices actually move, the pricing pass, and the launch itself so a
+ * brand-new coin has a first point rather than an empty chart.
+ */
+function recordPrices(points: [curve: string, price: number][]): void {
+  const rows = points.filter(([, p]) => Number.isFinite(p) && p > 0);
+  if (!rows.length) return;
+  try {
+    const up = db().prepare(
+      `INSERT INTO feed_prices (curve, bucket, price) VALUES (?,?,?)
+         ON CONFLICT(curve, bucket) DO UPDATE SET price = excluded.price`,
+    );
+    // Plain loop, like every other write in this file: node:sqlite's
+    // DatabaseSync has no transaction() helper.
+    const b = nowBucket();
+    for (const [curve, price] of rows) up.run(curve, b, price);
+  } catch {
+    /* history is decoration; never let it break a sweep */
+  }
+}
+
 /** Drop what has scrolled out of the window so the tables stay small. */
 function prune(): void {
   const cutoff = new Date(Date.now() - KEEP_MINUTES * 60_000).toISOString();
   db().prepare(`DELETE FROM feed_tokens WHERE created_at < ?`).run(cutoff);
   db().prepare(`DELETE FROM feed_volume WHERE bucket < ?`).run(nowBucket() - KEEP_MINUTES);
+  db().prepare(`DELETE FROM feed_prices WHERE bucket < ?`).run(nowBucket() - KEEP_MINUTES);
   db()
     .prepare(`DELETE FROM feed_positions WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
     .run();

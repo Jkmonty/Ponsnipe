@@ -104,38 +104,75 @@ function socialOf(raw: string): { label: string; href: string } | null {
 }
 
 /**
- * Twenty minutes of volume, as an area.
+ * Twenty minutes of price, as an area.
  *
- * Deliberately not a price chart — feed_volume buckets trades by the minute
- * but only the current price is kept per token, so there is no price series to
- * draw and pretending otherwise would be inventing data. Scaled to its own
- * peak, so the shape reads as "when did this trade", not "how much".
+ * Green when it ends above where it started, red below — the colour IS the
+ * reading, so the shape does not have to be studied to be useful.
+ *
+ * Scaled to its own range rather than to zero. A memecoin that moves 4% in
+ * twenty minutes and one that does 10x both need to be legible on a 54px
+ * line, and a zero-based axis would flatten the first into a straight line.
+ * The floor is padded so a perfectly flat price still draws through the
+ * middle instead of along the bottom edge.
  */
-const SparkLine = memo(function SparkLine({ points, live }: { points: number[]; live: boolean }) {
-  if (!points.length) return <span className="spark spark-empty" />;
-  const peak = Math.max(...points);
-  if (peak <= 0) return <span className="spark spark-empty" />;
+const SparkLine = memo(function SparkLine({ points }: { points: number[] }) {
+  if (points.length < 2) return <span className="spark spark-empty" />;
+
+  const lo = Math.min(...points);
+  const hi = Math.max(...points);
+  const first = points[0];
+  const last = points[points.length - 1];
+  /*
+   * Flat is its own state, not a gain.
+   *
+   * `last >= first` painted every untraded coin green, and most of them are
+   * untraded — 92 of 99 charts came back "up" on the first live sample, of
+   * which nearly all had not moved at all. A price that has not changed is
+   * grey.
+   */
+  const dir = last > first ? 1 : last < first ? -1 : 0;
 
   const w = 54;
   const h = 16;
-  const step = w / Math.max(1, points.length - 1);
-  const y = (v: number) => h - 1.5 - (v / peak) * (h - 3);
+  const pad = 2;
+  // A flat series has no range to divide by; give it one so it sits centred.
+  const span = hi - lo || Math.abs(hi) || 1;
+  const step = w / (points.length - 1);
+  const y = (v: number) => h - pad - ((v - lo) / span) * (h - pad * 2);
   const line = points.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const stroke = dir > 0 ? "var(--green)" : dir < 0 ? "var(--red)" : "var(--muted-2)";
+  const fill =
+    dir > 0 ? "rgba(47,212,143,.15)" : dir < 0 ? "rgba(255,107,107,.13)" : "rgba(153,161,181,.10)";
+
+  const pct = first > 0 ? ((last - first) / first) * 100 : 0;
   return (
-    <svg className="spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+    <svg
+      className="spark"
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      role="img"
+      aria-label={
+        dir === 0
+          ? `price unchanged over ${points.length} minutes`
+          : `${dir > 0 ? "up" : "down"} ${Math.abs(pct).toFixed(1)}% over ${points.length} minutes`
+      }
+    >
       <polyline
         points={`0,${h} ${line} ${w},${h}`}
-        fill={live ? "rgba(62,203,141,.16)" : "rgba(153,161,181,.12)"}
+        fill={fill}
         stroke="none"
       />
       <polyline
         points={line}
         fill="none"
-        stroke={live ? "var(--green)" : "var(--muted-2)"}
+        stroke={stroke}
         strokeWidth="1.3"
         strokeLinejoin="round"
         strokeLinecap="round"
       />
+      {/* The live end of the line, so the eye lands on now. */}
+      <circle cx={w} cy={y(last)} r="1.7" fill={stroke} />
     </svg>
   );
 });
@@ -321,7 +358,7 @@ const FeedRow = memo(function FeedRow({
         </div>
       </div>
 
-      <SparkLine points={r.spark} live={(r.spark[r.spark.length - 1] ?? 0) > 0} />
+      <SparkLine points={r.spark} />
 
       <span className={`fnum num${mcFlash}`} title="market cap">
         {money(r.mcapUsd)}
@@ -490,7 +527,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
 
       <div className="fhead">
         <span>Coin</span>
-        <span className="ta-c">20m vol</span>
+        <span className="ta-c">20m</span>
         <span className="ta-r">MC</span>
         <span className="ta-r">Vol</span>
         <span className="ta-r">Liq</span>
