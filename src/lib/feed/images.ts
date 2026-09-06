@@ -9,11 +9,35 @@
  * Fetching them the moment a launch is indexed means the picture is already in
  * hand by the time anyone looks at it.
  */
+/*
+ * Gateways, measured on a cold CID rather than chosen by reputation:
+ *
+ *   ipfs.io            200 in 6.7s cold, and 12s on another CID
+ *   dweb.link          200 in 15.3s cold, 2.6s warm
+ *   nftstorage.link    200 in 15.4s cold, 3.1s warm
+ *   4everland.io       200 in 15.0s cold
+ *   gateway.pinata     429 — rate-limiting us
+ *   cloudflare-ipfs    connection refused; the service was retired
+ *
+ * The old list was ipfs.io, then pinata, then cloudflare-ipfs: slow, then
+ * rate-limited, then dead. Tried in series against an 8s budget, an ipfs://
+ * logo usually ran out of time before any of them answered, which is why the
+ * feed showed initials where a picture should be.
+ */
 const GATEWAYS = [
   "https://ipfs.io/ipfs/",
-  "https://gateway.pinata.cloud/ipfs/",
-  "https://cloudflare-ipfs.com/ipfs/",
+  "https://dweb.link/ipfs/",
+  "https://nftstorage.link/ipfs/",
+  "https://4everland.io/ipfs/",
 ];
+
+/*
+ * Cold fetches measured at 6-15s, warm ones at 2.6-3.1s, and which gateway is
+ * quick varies by CID. Racing them costs the fastest one's latency instead of
+ * the sum of every slow one ahead of it, so the budget below is per attempt
+ * rather than per logo.
+ */
+const FETCH_TIMEOUT_MS = 15_000;
 
 const MAX_BYTES = 3 * 1024 * 1024;
 const TTL_MS = 30 * 60_000;
@@ -27,15 +51,30 @@ export interface CachedImage {
 
 const gc = globalThis as typeof globalThis & {
   __ponsImgCache?: Map<string, CachedImage>;
-  __ponsImgInFlight?: Set<string>;
+  __ponsImgPending?: Map<string, Promise<CachedImage | null>>;
 };
 function cache(): Map<string, CachedImage> {
   gc.__ponsImgCache ??= new Map();
   return gc.__ponsImgCache;
 }
-function inFlight(): Set<string> {
-  gc.__ponsImgInFlight ??= new Set();
-  return gc.__ponsImgInFlight;
+/**
+ * The fetch itself, keyed by logo, so callers share one rather than racing.
+ *
+ * The key is __ponsImgPending, not the __ponsImgInFlight this replaced. These
+ * singletons hang off globalThis so route modules share them, which means they
+ * outlive a module reload: `??=` sees the old Set still sitting there, keeps
+ * it, and every `.get` on it throws. Changing the shape needs a new name.
+ *
+ * This used to be a Set of keys, and a second caller was told "in flight" and
+ * given nothing. That is precisely the newest rows: the sweep warms a logo the
+ * moment it indexes the launch, the browser asks for it a second later, and
+ * the route returned 404 while a fetch that would have succeeded was still in
+ * the air. The row fell back to initials for a picture we were already
+ * holding. Sharing the promise means the second caller waits for the first.
+ */
+function inFlight(): Map<string, Promise<CachedImage | null>> {
+  gc.__ponsImgPending ??= new Map();
+  return gc.__ponsImgPending;
 }
 
 /**
@@ -63,16 +102,29 @@ function safeHost(u: URL): boolean {
   return true;
 }
 
-/** ipfs:// and bare CIDs become gateway URLs; http(s) passes through. */
+/** A CID, wherever it is hiding: ipfs://, a bare CID, or a gateway URL path. */
+function cidOf(t: string): string {
+  if (t.startsWith("ipfs://")) return t.slice("ipfs://".length).replace(/^ipfs\//, "");
+  if (/^(baf[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})/.test(t)) return t;
+  // A gateway URL is still a CID. Tokens often store the pinata one, and
+  // pinata rate-limits us (429), so without this those logos had no second
+  // chance at all — three of six unserved logos in a 40-row sample.
+  const m = /\/ipfs\/(baf[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})/.exec(t);
+  return m ? m[1] : "";
+}
+
+/**
+ * Every URL worth trying for one logo, best first.
+ *
+ * An http(s) URL is tried as written, since that is what the token asked for,
+ * but when a CID can be recovered from it the gateways follow as fallbacks.
+ */
 export function candidates(raw: string): string[] {
   const t = raw.trim();
-  if (/^https?:\/\//i.test(t)) return [t];
-  const cid = t.startsWith("ipfs://")
-    ? t.slice("ipfs://".length).replace(/^ipfs\//, "")
-    : /^(baf[0-9a-z]{20,}|Qm[1-9A-HJ-NP-Za-km-z]{44})/.test(t)
-      ? t
-      : "";
-  return cid ? GATEWAYS.map((g) => g + cid) : [];
+  const cid = cidOf(t);
+  const urls = /^https?:\/\//i.test(t) ? [t] : [];
+  if (cid) for (const g of GATEWAYS) if (!urls.includes(g + cid)) urls.push(g + cid);
+  return urls;
 }
 
 export function cached(raw: string): CachedImage | null {
@@ -84,43 +136,59 @@ export function cached(raw: string): CachedImage | null {
 export async function resolveImage(raw: string): Promise<CachedImage | null> {
   const hit = cached(raw);
   if (hit) return hit;
-  if (inFlight().has(raw)) return null;
-  inFlight().add(raw);
+  const running = inFlight().get(raw);
+  if (running) return running;
+  const p = fetchImage(raw);
+  inFlight().set(raw, p);
+  return p;
+}
 
+async function fetchImage(raw: string): Promise<CachedImage | null> {
   try {
-    for (const url of candidates(raw)) {
-      let target: URL;
+    const urls = candidates(raw).filter((u) => {
       try {
-        target = new URL(url);
+        return safeHost(new URL(u));
       } catch {
-        continue;
+        return false;
       }
-      if (!safeHost(target)) continue;
-      try {
-        const r = await fetch(target, {
-          signal: AbortSignal.timeout(8000),
-          headers: { accept: "image/*" },
-          redirect: "follow",
-        });
-        if (!r.ok) continue;
-        const type = r.headers.get("content-type") ?? "";
-        // A gateway answering with an HTML error page is a failure, not an
-        // image, and would render as a broken tile if passed through.
-        if (!type.startsWith("image/")) continue;
-        if (Number(r.headers.get("content-length") ?? 0) > MAX_BYTES) continue;
-        const body = await r.arrayBuffer();
-        if (body.byteLength > MAX_BYTES) continue;
+    });
+    if (!urls.length) return null;
 
-        const c = cache();
-        if (c.size >= MAX_ENTRIES) c.delete(c.keys().next().value as string);
-        const entry: CachedImage = { at: Date.now(), type, body };
-        c.set(raw, entry);
-        return entry;
-      } catch {
-        /* try the next gateway */
-      }
+    // Race, do not queue. Which gateway is quick varies by CID, so the first
+    // one to hand back an actual image wins and the rest are abandoned.
+    const ctrl = new AbortController();
+    const attempt = async (url: string): Promise<CachedImage> => {
+      const r = await fetch(url, {
+        signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]),
+        headers: { accept: "image/*" },
+        redirect: "follow",
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      const type = r.headers.get("content-type") ?? "";
+      // A gateway answering with an HTML error page is a failure, not an
+      // image, and would render as a broken tile if passed through.
+      if (!type.startsWith("image/")) throw new Error("not an image");
+      if (Number(r.headers.get("content-length") ?? 0) > MAX_BYTES) throw new Error("too big");
+      const body = await r.arrayBuffer();
+      if (body.byteLength > MAX_BYTES) throw new Error("too big");
+      return { at: Date.now(), type, body };
+    };
+
+    let entry: CachedImage;
+    try {
+      entry = await Promise.any(urls.map(attempt));
+    } catch {
+      // Every gateway failed: AggregateError, nothing served this logo.
+      return null;
+    } finally {
+      // Stop the losers downloading bytes nobody will look at.
+      ctrl.abort();
     }
-    return null;
+
+    const c = cache();
+    if (c.size >= MAX_ENTRIES) c.delete(c.keys().next().value as string);
+    c.set(raw, entry);
+    return entry;
   } finally {
     inFlight().delete(raw);
   }
