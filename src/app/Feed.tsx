@@ -13,6 +13,10 @@ interface Row {
   trades: number;
   holders: number;
   progressPct: number;
+  devLaunches: number;
+  devHoldRate: number;
+  devSold: boolean;
+  top10Rate: number;
   mcapUsd: number | null;
   volumeUsd: number | null;
   liquidityUsd: number | null;
@@ -108,14 +112,23 @@ const FeedRow = memo(function FeedRow({
         <div className="row" style={{ gap: 6 }}>
           <strong className="ellip">{r.symbol}</strong>
           <span className="muted small">/{r.quoteSymbol}</span>
-          {r.holders >= 8 && <span className="pill pill-hot">{r.holders} buyers</span>}
+          {r.holders >= 8 && <span className="pill pill-hot">{r.holders} holders</span>}
+          {/* The two the paid feeds lead with, and the two worth acting on:
+              a deployer holding a big slice of their own launch, and one that
+              has already started selling it. */}
+          {r.devHoldRate > 0.05 && (
+            <span className="pill pill-cold">dev {Math.round(r.devHoldRate * 100)}%</span>
+          )}
+          {r.devSold && <span className="pill pill-cold">dev sold</span>}
         </div>
         {/* Abbreviated hard: the column is ~200px and full words were being
             ellipsed away, which lost the numbers rather than the labels. */}
         <div className="muted small ellip">
           {age(r.ageMinutes)}
-          {r.holders ? ` · ${r.holders} buy` : ""}
+          {r.holders ? ` · ${r.holders} hold` : ""}
           {r.trades ? ` · ${r.trades} tx` : ""}
+          {r.top10Rate > 0 ? ` · top10 ${Math.round(r.top10Rate * 100)}%` : ""}
+          {r.devLaunches > 1 ? ` · dev made ${r.devLaunches}` : ""}
         </div>
       </div>
       <span className="num small ta-r">{money(r.mcapUsd)}</span>
@@ -133,6 +146,9 @@ const FeedRow = memo(function FeedRow({
   a.r.volumeUsd === b.r.volumeUsd &&
   a.r.trades === b.r.trades &&
   a.r.holders === b.r.holders &&
+  a.r.devHoldRate === b.r.devHoldRate &&
+  a.r.devSold === b.r.devSold &&
+  a.r.top10Rate === b.r.top10Rate &&
   a.r.progressPct === b.r.progressPct &&
   // Age is rendered coarsely, so only a change in the rendered string matters.
   Math.round(a.r.ageMinutes) === Math.round(b.r.ageMinutes));

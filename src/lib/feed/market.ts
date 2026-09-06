@@ -197,20 +197,27 @@ function migrate(): void {
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_vol_bucket ON feed_volume(bucket DESC);`);
 
   /*
-   * Distinct buyers per curve.
+   * Net token position per wallet, per curve.
    *
-   * The buyer address is already in every CurveBuy we sweep and was being
-   * discarded. Counting them is the difference between a feed where every new
-   * row reads "$3k, 0 holders" and one where you can see which launch actually
-   * attracted people -- which is the whole job of the list.
+   * Every CurveBuy carries tokensOut and every CurveSell tokensIn, both already
+   * swept, so running them into a balance gives the numbers the paid feeds sell:
+   * a real holder count rather than "people who ever bought", how much of the
+   * supply the deployer took of their own launch, and how concentrated the top
+   * of the book is.
+   *
+   * It counts curve trading only. A wallet-to-wallet transfer would move tokens
+   * without either event, which is rare before graduation but means these are
+   * lower bounds rather than a chain-wide balance scan.
    */
   conn.exec(`
-    CREATE TABLE IF NOT EXISTS feed_buyers (
-      curve TEXT NOT NULL,
-      buyer TEXT NOT NULL,
-      PRIMARY KEY (curve, buyer)
+    CREATE TABLE IF NOT EXISTS feed_positions (
+      curve  TEXT NOT NULL,
+      wallet TEXT NOT NULL,
+      net    REAL NOT NULL DEFAULT 0,
+      PRIMARY KEY (curve, wallet)
     );
   `);
+  conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_pos_curve ON feed_positions(curve, net DESC);`);
 
   // Where the sweeps got to. Held on disk, not just in memory, so a restart
   // resumes rather than skipping whatever happened while the app was down.
@@ -439,8 +446,8 @@ async function sweepTrades(head: bigint): Promise<void> {
   const agg = new Map<string, { quote: number; buys: number; sells: number }>();
   /** Curves whose reserves this pass advanced, and to which block. */
   const moved = new Map<string, { q: bigint; t: bigint; block: number }>();
-  /** (curve, buyer) pairs seen this pass; the table de-duplicates them. */
-  const buyers: [string, string][] = [];
+  /** Token deltas per (curve, wallet) this pass, summed before writing. */
+  const deltas = new Map<string, number>();
 
   const add = (curve: string, raw: bigint, isBuy: boolean) => {
     const m = meta.get(curve);
@@ -508,9 +515,17 @@ async function sweepTrades(head: bigint): Promise<void> {
       };
       add(curve, (isBuy ? a.quoteIn : a.quoteOut) ?? 0n, isBuy);
       applyTrade(curve, Number(l.blockNumber ?? 0n), a, isBuy);
-      if (isBuy && meta.has(curve)) {
-        const who = String((l.args as { buyer?: string }).buyer ?? "").toLowerCase();
-        if (who) buyers.push([curve, who]);
+      if (meta.has(curve)) {
+        // Buys credit the buyer, sells debit the seller. Tokens are always 18
+        // decimals here, unlike the quote side.
+        const who = String(
+          (isBuy ? (l.args as { buyer?: string }).buyer : (l.args as { seller?: string }).seller) ?? "",
+        ).toLowerCase();
+        if (who) {
+          const amt = Number((isBuy ? a.tokensOut : a.tokensIn) ?? 0n) / 1e18;
+          const k = `${curve}|${who}`;
+          deltas.set(k, (deltas.get(k) ?? 0) + (isBuy ? amt : -amt));
+        }
       }
     }
     cursor = to;
@@ -545,9 +560,15 @@ async function sweepTrades(head: bigint): Promise<void> {
     for (const [curve, v] of agg) up.run(curve, bucket, v.quote, v.buys, v.sells);
   }
 
-  if (buyers.length) {
-    const b = db().prepare(`INSERT OR IGNORE INTO feed_buyers (curve, buyer) VALUES (?,?)`);
-    for (const [curve, who] of buyers) b.run(curve, who);
+  if (deltas.size) {
+    const up = db().prepare(
+      `INSERT INTO feed_positions (curve, wallet, net) VALUES (?,?,?)
+         ON CONFLICT(curve, wallet) DO UPDATE SET net = net + excluded.net`,
+    );
+    for (const [k, amt] of deltas) {
+      const [curve, wallet] = k.split("|");
+      up.run(curve, wallet, amt);
+    }
   }
 
   // Write the advanced reserves back, with the price and market cap they imply.
@@ -737,7 +758,7 @@ function prune(): void {
   db().prepare(`DELETE FROM feed_tokens WHERE created_at < ?`).run(cutoff);
   db().prepare(`DELETE FROM feed_volume WHERE bucket < ?`).run(nowBucket() - KEEP_MINUTES);
   db()
-    .prepare(`DELETE FROM feed_buyers WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
+    .prepare(`DELETE FROM feed_positions WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
     .run();
 }
 

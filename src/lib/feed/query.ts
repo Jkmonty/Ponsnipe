@@ -13,6 +13,9 @@
 import { db } from "../db/index";
 import { buildRates } from "./usd";
 
+/** Every pons launch mints the same fixed supply, in whole tokens. */
+const SUPPLY = 1e9;
+
 export interface FeedFilters {
   /** How far back to read. Rows are returned newest first. */
   maxAgeMin: number;
@@ -44,10 +47,21 @@ export interface FeedRow {
   buys: number;
   sells: number;
   trades: number;
-  /** Distinct wallets that have bought, from the trade stream. */
+  /** Wallets still holding a positive balance, from the trade stream. */
   holders: number;
   progressPct: number;
   priceQuote: number;
+
+  /** Who deployed it. */
+  deployer: string;
+  /** Other launches by this deployer inside the feed window. */
+  devLaunches: number;
+  /** Share of supply the deployer bought of their own launch, 0-1. */
+  devHoldRate: number;
+  /** True when the deployer has sold any of what they bought. */
+  devSold: boolean;
+  /** Share of supply held by the ten largest wallets, 0-1. */
+  top10Rate: number;
 }
 
 interface Raw {
@@ -67,6 +81,11 @@ interface Raw {
   buys: number | null;
   sells: number | null;
   holders: number | null;
+  deployer: string | null;
+  dev_net: number | null;
+  dev_bought: number | null;
+  top10: number | null;
+  dev_launches: number | null;
 }
 
 export async function readFeed(
@@ -90,15 +109,36 @@ export async function readFeed(
       .prepare(
         `SELECT t.token, t.curve, t.symbol, t.name, t.logo, t.quote_symbol,
                 t.quote_is_native, t.created_at, t.price, t.mcap, t.liquidity,
-                t.progress_pct, v.vol, v.buys, v.sells, h.holders
+                t.progress_pct, t.deployer,
+                v.vol, v.buys, v.sells,
+                h.holders, h.top10,
+                d.net AS dev_net, d.bought AS dev_bought,
+                dl.n AS dev_launches
            FROM feed_tokens t
            LEFT JOIN (
              SELECT curve, SUM(quote) AS vol, SUM(buys) AS buys, SUM(sells) AS sells
                FROM feed_volume WHERE bucket >= ? GROUP BY curve
            ) v ON v.curve = t.curve
+           -- Holders are wallets still in profit-or-loss on the token, not
+           -- everyone who ever touched it, and top10 is what the largest ten
+           -- of them hold between them.
            LEFT JOIN (
-             SELECT curve, COUNT(*) AS holders FROM feed_buyers GROUP BY curve
+             SELECT curve,
+                    COUNT(*) AS holders,
+                    SUM(net) AS held,
+                    (SELECT SUM(net) FROM (
+                       SELECT net FROM feed_positions p2
+                        WHERE p2.curve = p.curve AND p2.net > 0
+                        ORDER BY net DESC LIMIT 10)) AS top10
+               FROM feed_positions p WHERE net > 0 GROUP BY curve
            ) h ON h.curve = t.curve
+           -- The deployer's own position on their own launch.
+           LEFT JOIN (
+             SELECT curve, wallet, net, net AS bought FROM feed_positions
+           ) d ON d.curve = t.curve AND d.wallet = t.deployer
+           LEFT JOIN (
+             SELECT deployer, COUNT(*) AS n FROM feed_tokens GROUP BY deployer
+           ) dl ON dl.deployer = t.deployer
           WHERE t.created_at >= ? AND t.graduated = 0
           -- Chain order, not insert order.
           --
@@ -151,6 +191,14 @@ export async function readFeed(
       holders: r.holders ?? 0,
       progressPct: r.progress_pct ?? 0,
       priceQuote: r.price ?? 0,
+      deployer: r.deployer ?? "",
+      devLaunches: r.dev_launches ?? 0,
+      // Supply is a fixed 1e9 tokens on every pons launch.
+      devHoldRate: Math.max(0, Math.min(1, (r.dev_net ?? 0) / SUPPLY)),
+      // A negative net means they have sold more than the stream saw them buy,
+      // which in practice means they sold what they were holding.
+      devSold: (r.dev_net ?? 0) < 0,
+      top10Rate: Math.max(0, Math.min(1, (r.top10 ?? 0) / SUPPLY)),
     };
   });
 
