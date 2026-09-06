@@ -10,7 +10,10 @@ import WalletSetup from "./WalletSetup";
 interface WalletInfo {
   configured: boolean;
   address?: string;
-  eth?: string;
+  /** null when the balance could not be read; that is not the same as zero. */
+  eth?: string | null;
+  /** Set when the keystore is present but the chain read failed. */
+  balanceError?: string;
 }
 interface TokenSnap {
   address: string;
@@ -248,10 +251,17 @@ export default function Dashboard() {
       ) : !funded ? (
         <div className="card">
           <h2>Add funds</h2>
-          <p className="muted small" style={{ marginTop: 0 }}>
-            Send ETH on <strong>Robinhood Chain</strong> to your bot wallet. A little goes a
-            long way — 0.02 ETH is plenty to test.
-          </p>
+          {wallet.balanceError ? (
+            <p className="neg small" style={{ marginTop: 0 }}>
+              Could not read your balance ({wallet.balanceError}). The wallet is fine — this
+              is the RPC, not your funds.
+            </p>
+          ) : (
+            <p className="muted small" style={{ marginTop: 0 }}>
+              Send ETH on <strong>Robinhood Chain</strong> to your bot wallet. A little goes a
+              long way — 0.02 ETH is plenty to test.
+            </p>
+          )}
           <AddressBox address={wallet.address!} flash={flash} />
         </div>
       ) : (

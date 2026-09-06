@@ -1,43 +1,27 @@
 /**
- * Reading the feed: join tokens to their rolling volume, convert to dollars
- * where possible, then filter.
+ * Reading the pons new-pairs feed.
  *
- * Filtering happens after conversion rather than in SQL, because the thresholds
- * are in dollars and the stored numbers are in each token's own quote asset.
+ * One source: our own on-chain index. GMGN was wired in for a while to cover
+ * the other launchpads on this chain, and it is gone — its new-token stream
+ * does not carry pons launches at all (they surface there only once graduated,
+ * by which point they are hours to weeks old), so for pons specifically it was
+ * never the better source. Everything here comes from TokenLaunched on the pons
+ * factory, priced from curve reserves the trade stream keeps exact.
+ *
+ * Every row is therefore a token this app can actually buy.
  */
 import { db } from "../db/index";
-import { buildRates, ethUsd } from "./usd";
+import { buildRates } from "./usd";
 
 export interface FeedFilters {
-  /** Dollar floors. null = off. */
-  minMcapUsd: number | null;
-  minVolumeUsd: number | null;
-  minLiquidityUsd: number | null;
-  /** Trades in the volume window. */
-  minTrades: number | null;
-  /** Minutes of volume to total up, and the age window for the list. */
-  volumeWindowMin: number;
+  /** How far back to read. Rows are returned newest first. */
   maxAgeMin: number;
-  /**
-   * Tokens quoted in something we have no dollar rate for — the tokenised
-   * stocks. Off by default: with a dollar filter set, including things the
-   * filter cannot actually test would quietly defeat it.
-   */
-  includeUnpriced: boolean;
-  quote: "all" | "eth" | "stable";
   limit: number;
 }
 
 export const DEFAULT_FILTERS: FeedFilters = {
-  minMcapUsd: 3000,
-  minVolumeUsd: 3000,
-  minLiquidityUsd: 3000,
-  minTrades: null,
-  volumeWindowMin: 60,
   maxAgeMin: 180,
-  includeUnpriced: false,
-  quote: "all",
-  limit: 60,
+  limit: 250,
 };
 
 export interface FeedRow {
@@ -46,6 +30,7 @@ export interface FeedRow {
   symbol: string;
   name: string;
   logo: string;
+  /** The asset the curve trades against — ETH, USDG, NVDA and so on. */
   quoteSymbol: string;
   ageMinutes: number;
   /** In the quote asset. */
@@ -59,6 +44,8 @@ export interface FeedRow {
   buys: number;
   sells: number;
   trades: number;
+  /** Distinct wallets that have bought, from the trade stream. */
+  holders: number;
   progressPct: number;
   priceQuote: number;
 }
@@ -79,46 +66,59 @@ interface Raw {
   vol: number | null;
   buys: number | null;
   sells: number | null;
+  holders: number | null;
 }
 
 export async function readFeed(
   f: FeedFilters,
-): Promise<{ rows: FeedRow[]; ethUsd: number | null; total: number; unpriced: string[] }> {
-  const eth = await ethUsd();
-  const sinceBucket = Math.floor(Date.now() / 60_000) - Math.max(1, f.volumeWindowMin);
-  const sinceTs = new Date(Date.now() - f.maxAgeMin * 60_000).toISOString();
+): Promise<{ rows: FeedRow[]; total: number; ethUsd: number | null; unpriced: string[] }> {
+  const since = new Date(Date.now() - f.maxAgeMin * 60_000).toISOString();
+  /*
+   * Read wider than we return, then slice.
+   *
+   * This was once a flat LIMIT 300, which at ~29 launches a minute meant the
+   * feed only ever considered the last ten minutes: 519 rows offered from an
+   * index holding 5,293, so a coin seen a quarter of an hour earlier could not
+   * be found at any display limit. Only `limit` rows go over the wire either
+   * way, so reading deep costs a wider query and nothing else.
+   */
+  const depth = Math.min(2000, Math.max(600, f.limit * 4));
 
   let raw: Raw[] = [];
   try {
     raw = db()
       .prepare(
-        `SELECT t.token, t.curve, t.symbol, t.name, t.logo, t.quote_symbol, t.quote_is_native,
-                t.created_at, t.price, t.mcap, t.liquidity, t.progress_pct,
-                v.vol, v.buys, v.sells
+        `SELECT t.token, t.curve, t.symbol, t.name, t.logo, t.quote_symbol,
+                t.quote_is_native, t.created_at, t.price, t.mcap, t.liquidity,
+                t.progress_pct, v.vol, v.buys, v.sells, h.holders
            FROM feed_tokens t
            LEFT JOIN (
              SELECT curve, SUM(quote) AS vol, SUM(buys) AS buys, SUM(sells) AS sells
                FROM feed_volume WHERE bucket >= ? GROUP BY curve
            ) v ON v.curve = t.curve
+           LEFT JOIN (
+             SELECT curve, COUNT(*) AS holders FROM feed_buyers GROUP BY curve
+           ) h ON h.curve = t.curve
           WHERE t.created_at >= ? AND t.graduated = 0
           ORDER BY t.created_at DESC
-          LIMIT 600`,
+          LIMIT ?`,
       )
-      .all(sinceBucket, sinceTs) as unknown as Raw[];
+      .all(Math.floor(Date.now() / 60_000) - 1440, since, depth) as unknown as Raw[];
   } catch {
-    return { rows: [], ethUsd: eth, total: 0, unpriced: [] };
+    return { rows: [], total: 0, ethUsd: null, unpriced: [] };
   }
+  if (!raw.length) return { rows: [], total: 0, ethUsd: null, unpriced: [] };
 
-  // One rate lookup per distinct quote asset in the window, not per row.
-  const rates = await buildRates(
-    raw.map((r) => (r.quote_is_native === 1 ? "ETH" : (r.quote_symbol ?? "?"))),
-  );
+  const quoteOf = (r: Raw) => (r.quote_is_native === 1 ? "ETH" : (r.quote_symbol ?? "?"));
+  // One rate lookup per distinct quote asset, not per row.
+  const rates = await buildRates(raw.map(quoteOf));
   const unpriced = new Set<string>();
 
-  const all: FeedRow[] = raw.map((r) => {
-    const quoteSymbol = r.quote_is_native === 1 ? "ETH" : (r.quote_symbol ?? "?");
+  const rows: FeedRow[] = raw.map((r) => {
+    const quoteSymbol = quoteOf(r);
     const rate = rates.get(quoteSymbol.toUpperCase()) ?? null;
     if (rate == null) unpriced.add(quoteSymbol);
+
     const mcap = r.mcap ?? 0;
     const volume = r.vol ?? 0;
     const liquidity = r.liquidity ?? 0;
@@ -141,35 +141,16 @@ export async function readFeed(
       buys,
       sells,
       trades: buys + sells,
+      holders: r.holders ?? 0,
       progressPct: r.progress_pct ?? 0,
       priceQuote: r.price ?? 0,
     };
   });
 
-  const rows = all.filter((row) => {
-    if (f.quote === "eth" && row.quoteSymbol !== "ETH") return false;
-    if (f.quote === "stable" && row.quoteSymbol === "ETH") return false;
-
-    const unpriced = row.mcapUsd == null;
-    const hasDollarFilter =
-      f.minMcapUsd != null || f.minVolumeUsd != null || f.minLiquidityUsd != null;
-    if (unpriced) {
-      // Nothing to test a dollar threshold against, so this is a policy choice
-      // rather than a comparison.
-      if (hasDollarFilter && !f.includeUnpriced) return false;
-    } else {
-      if (f.minMcapUsd != null && (row.mcapUsd ?? 0) < f.minMcapUsd) return false;
-      if (f.minVolumeUsd != null && (row.volumeUsd ?? 0) < f.minVolumeUsd) return false;
-      if (f.minLiquidityUsd != null && (row.liquidityUsd ?? 0) < f.minLiquidityUsd) return false;
-    }
-    if (f.minTrades != null && row.trades < f.minTrades) return false;
-    return true;
-  });
-
   return {
     rows: rows.slice(0, f.limit),
-    ethUsd: eth,
-    total: all.length,
+    total: rows.length,
+    ethUsd: rates.get("ETH") ?? null,
     unpriced: [...unpriced].sort(),
   };
 }

@@ -8,29 +8,22 @@ interface Row {
   symbol: string;
   name: string;
   logo: string;
+  quoteSymbol: string;
   ageMinutes: number;
   trades: number;
+  holders: number;
   progressPct: number;
   mcapUsd: number | null;
   volumeUsd: number | null;
   liquidityUsd: number | null;
-  /** Chain-source rows carry a quote asset; GMGN rows are already in dollars. */
-  quoteSymbol?: string;
-  launchpad?: string;
-  holders?: number;
-  devHoldRate?: number;
-  isHoneypot?: string;
-  renowned?: number;
-  /** False when the token is not a pons launch, so this app cannot buy it. */
-  tradeable?: boolean;
 }
 
 interface Payload {
-  source: "gmgn" | "chain";
   rows: Row[];
-  ethUsd?: number | null;
   total: number;
-  status: { running: boolean; lastError: string | null; ageSeconds?: number | null };
+  ethUsd: number | null;
+  unpriced: string[];
+  status: { running: boolean; lastError: string | null };
 }
 
 /** Compact money: $12.3k, $1.2M — the feed has no room for full numbers. */
@@ -114,21 +107,15 @@ const FeedRow = memo(function FeedRow({
       <div className="fmain">
         <div className="row" style={{ gap: 6 }}>
           <strong className="ellip">{r.symbol}</strong>
-          {r.isHoneypot === "yes" && <span className="pill pill-cold">honeypot</span>}
-          {(r.devHoldRate ?? 0) > 0.15 && (
-            <span className="pill pill-cold">dev {Math.round((r.devHoldRate ?? 0) * 100)}%</span>
-          )}
-          {(r.renowned ?? 0) > 0 && <span className="pill pill-hot">{r.renowned} smart</span>}
+          <span className="muted small">/{r.quoteSymbol}</span>
+          {r.holders >= 8 && <span className="pill pill-hot">{r.holders} buyers</span>}
         </div>
+        {/* Abbreviated hard: the column is ~200px and full words were being
+            ellipsed away, which lost the numbers rather than the labels. */}
         <div className="muted small ellip">
-          {/* Abbreviated hard: the column is ~200px and the full words were
-              being ellipsed away, which lost the numbers rather than the
-              labels. */}
-          {r.launchpad ? `${r.launchpad} · ` : ""}
           {age(r.ageMinutes)}
           {r.holders ? ` · ${r.holders} buy` : ""}
           {r.trades ? ` · ${r.trades} tx` : ""}
-          {r.tradeable === false ? " · view" : ""}
         </div>
       </div>
       <span className="num small ta-r">{money(r.mcapUsd)}</span>
@@ -232,22 +219,8 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       />
 
       <p className="muted small" style={{ margin: "4px 0 10px" }}>
-        {data?.source === "gmgn" ? (
-          <>
-            {/* Naming both sources, because they are not interchangeable: GMGN's
-                new-token stream for this chain does not carry pons launches at
-                all — pons appears there only once graduated — so the pons rows,
-                which are the ones this app can buy, come from our own index. */}
-            pons launches indexed here, every other launchpad via GMGN
-            {data.status.ageSeconds != null ? ` (updated ${data.status.ageSeconds}s ago)` : ""}.
-            Rows marked <em>view only</em> are not pons launches, so this app cannot buy them.
-          </>
-        ) : (
-          <>
-            Live from the chain, newest first.{" "}
-            {data?.ethUsd ? `ETH $${Math.round(data.ethUsd).toLocaleString()}.` : ""}
-          </>
-        )}
+        Every pons launch, newest first, straight from the chain.{" "}
+        {data?.ethUsd ? `ETH $${Math.round(data.ethUsd).toLocaleString()}.` : ""}
       </p>
 
       {err && <p className="neg small">{err}</p>}
