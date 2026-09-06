@@ -203,26 +203,11 @@ const FeedRow = memo(function FeedRow({
 
         <div className="fline2 muted small">
           <span className="faddr" title={r.token}>{shortAddr(r.token)}</span>
-          <span className="fstat" title="age">{age(r.ageMinutes)}</span>
-          <span className="fstat" title="holders still holding">
+          <span className="fstat" title="how long ago it launched">{age(r.ageMinutes)}</span>
+          <span className="fstat" title="wallets still holding">
             <i className="fi">H</i>
             {r.holders}
           </span>
-          <span className="fstat" title="trades">
-            <i className="fi">T</i>
-            {r.trades}
-          </span>
-          {r.snipers > 0 && (
-            <span
-              className={`fstat ${r.snipers >= 5 ? "warn" : ""}`}
-              title={`${r.snipers} wallets other than the deployer bought within 3 blocks of launch${
-                r.sameBlock ? `, ${r.sameBlock} in the launch block itself` : ""
-              }`}
-            >
-              <i className="fi">S</i>
-              {r.snipers}
-            </span>
-          )}
           {r.trades > 0 && (
             <span className="fstat" title={`${r.buys} buys, ${r.sells} sells`}>
               <i className="fi">B/S</i>
@@ -231,28 +216,37 @@ const FeedRow = memo(function FeedRow({
               <span className="neg">{r.sells}</span>
             </span>
           )}
-          <span className="fquote muted" title="what this curve trades against">
-            {r.quoteSymbol}
-          </span>
-        </div>
+          {r.snipers > 0 && (
+            <span
+              className={`fstat ${r.snipers >= 5 ? "warn" : ""}`}
+              title={`${r.snipers} wallets other than the deployer bought within 3 blocks of launch${
+                r.sameBlock ? `, ${r.sameBlock} in the launch block itself` : ""
+              }`}
+            >
+              <i className="fi">SNIPE</i>
+              {r.snipers}
+            </span>
+          )}
+          <span className="fquote" title="what this curve trades against">{r.quoteSymbol}</span>
 
-        <div className="fline3">
-          {r.devHoldRate > 0.05 && (
-            <span className="pill pill-cold" title="deployer's share of their own launch">
-              dev {Math.round(r.devHoldRate * 100)}%
+          <span className="fbond-wrap">
+            {r.devHoldRate > 0.05 && (
+              <span className="pill pill-cold" title="how much of their own coin the maker holds">
+                maker {Math.round(r.devHoldRate * 100)}%
+              </span>
+            )}
+            {r.devSold && <span className="pill pill-cold">maker sold</span>}
+            {r.top10Rate > 0.2 && (
+              <span className="pill" title="how much the ten biggest wallets hold between them">
+                top 10 {Math.round(r.top10Rate * 100)}%
+              </span>
+            )}
+            {/* Progress to graduation, as a bar: it is the one field on the
+                row that is a fraction of a known whole. */}
+            <span className="fbond" title={`${r.progressPct.toFixed(1)}% of the way to graduating`}>
+              <span className="fbond-fill" style={{ width: `${Math.min(100, r.progressPct)}%` }} />
+              <span className="fbond-txt">{r.progressPct > 0 ? `${r.progressPct.toFixed(0)}%` : "0%"}</span>
             </span>
-          )}
-          {r.devSold && <span className="pill pill-cold">dev sold</span>}
-          {r.top10Rate > 0.2 && (
-            <span className="pill" title="share held by the ten largest wallets">
-              top10 {Math.round(r.top10Rate * 100)}%
-            </span>
-          )}
-          {/* Progress to graduation, as a bar rather than a number: it is the
-              one field on the row that is a fraction of a known whole. */}
-          <span className="fbond" title={`${r.progressPct.toFixed(1)}% of the way to graduation`}>
-            <span className="fbond-fill" style={{ width: `${Math.min(100, r.progressPct)}%` }} />
-            <span className="fbond-txt">{r.progressPct > 0 ? `${r.progressPct.toFixed(0)}%` : "0%"}</span>
           </span>
         </div>
       </div>
@@ -262,6 +256,9 @@ const FeedRow = memo(function FeedRow({
       </span>
       <span className="fnum num" title="volume">
         {money(r.volumeUsd)}
+      </span>
+      <span className="fnum num" title="liquidity in the curve">
+        {money(r.liquidityUsd)}
       </span>
       <span className="fnum num" title="trades">
         {r.trades || "—"}
@@ -275,6 +272,7 @@ const FeedRow = memo(function FeedRow({
   a.r.token === b.r.token &&
   a.r.mcapUsd === b.r.mcapUsd &&
   a.r.volumeUsd === b.r.volumeUsd &&
+  a.r.liquidityUsd === b.r.liquidityUsd &&
   a.r.trades === b.r.trades &&
   a.r.buys === b.r.buys &&
   a.r.sells === b.r.sells &&
@@ -383,6 +381,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
         <span>Coin</span>
         <span className="ta-r">MC</span>
         <span className="ta-r">Vol</span>
+        <span className="ta-r">Liq</span>
         <span className="ta-r">Tx</span>
       </div>
 

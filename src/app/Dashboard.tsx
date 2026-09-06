@@ -191,7 +191,7 @@ export default function Dashboard() {
             <Logo size={30} />
             <h1>Ponsnipe</h1>
           </div>
-          <p className="sub">Pick your shot. Loose it. Walk away.</p>
+          <p className="sub">Pick your target. Take the shot. Walk away.</p>
         </div>
         <div className="row" style={{ gap: 10 }}>
           <span className={live ? "chip chip-live" : "chip chip-dry"}>
@@ -919,18 +919,28 @@ function SniperCard({
       </div>
 
       {status && (
+        /*
+         * Sentences, not a telemetry dump.
+         *
+         * This line used to read "watching · seen 1563 · sniped 0 · skipped
+         * 1563 · today 0.0000 / 0.1 ETH · open 0/3 · DRY-RUN (no real buys)".
+         * Every number in it was true and almost none of it was legible: the
+         * reader has to know that "sniped" means bought and that "0/3" is
+         * positions rather than a score. Same facts, said out loud.
+         */
         <p className="muted small" style={{ marginTop: 6 }}>
-          {status.running ? "watching" : "stopped"} · seen {status.launchesSeen} · sniped{" "}
-          {status.sniped} · skipped {status.skipped}
-          {status.pending ? ` · ${status.pending} pending` : ""} · today{" "}
-          {status.spentTodayEth.toFixed(4)} / {cfg.maxDailySpendEth} ETH · open{" "}
-          {status.openSnipes}/{cfg.maxConcurrentSnipes}
-          {!status.live ? " · DRY‑RUN (no real buys)" : ""}
+          {status.running ? "Watching for new coins." : "Not running."} Seen{" "}
+          {status.launchesSeen.toLocaleString()}, bought {status.sniped.toLocaleString()}, skipped{" "}
+          {status.skipped.toLocaleString()}.
+          {status.pending ? ` ${status.pending} being bought now.` : ""} Spent{" "}
+          {status.spentTodayEth.toFixed(4)} of {cfg.maxDailySpendEth} ETH today.{" "}
+          {status.openSnipes} of {cfg.maxConcurrentSnipes} slots in use.
+          {!status.live ? " Practice mode — it is not spending real money." : ""}
           {/* A raw viem error truncated mid-word tells the reader nothing. The
               cases that matter have their own wording; the rest points at the log. */}
-          {status.wsDemoted ? " · polling (websocket dropped)" : ""}
-          {status.missed ? ` · ${status.missed} recovered by sweep` : ""}
-          {status.lastError ? " · last error in the log" : ""}
+          {status.wsDemoted ? " The live connection dropped, so it is checking on a timer." : ""}
+          {status.missed ? ` ${status.missed} coins were caught by the backup check.` : ""}
+          {status.lastError ? " Something errored — see the log below." : ""}
         </p>
       )}
 
