@@ -26,6 +26,7 @@ interface Row {
   description: string;
   snipers: number;
   sameBlock: number;
+  spark: number[];
 }
 
 interface Payload {
@@ -102,6 +103,43 @@ function socialOf(raw: string): { label: string; href: string } | null {
   return { label: handle ?? known[h] ?? h, href: t };
 }
 
+/**
+ * Twenty minutes of volume, as an area.
+ *
+ * Deliberately not a price chart — feed_volume buckets trades by the minute
+ * but only the current price is kept per token, so there is no price series to
+ * draw and pretending otherwise would be inventing data. Scaled to its own
+ * peak, so the shape reads as "when did this trade", not "how much".
+ */
+const SparkLine = memo(function SparkLine({ points, live }: { points: number[]; live: boolean }) {
+  if (!points.length) return <span className="spark spark-empty" />;
+  const peak = Math.max(...points);
+  if (peak <= 0) return <span className="spark spark-empty" />;
+
+  const w = 54;
+  const h = 16;
+  const step = w / Math.max(1, points.length - 1);
+  const y = (v: number) => h - 1.5 - (v / peak) * (h - 3);
+  const line = points.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  return (
+    <svg className="spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+      <polyline
+        points={`0,${h} ${line} ${w},${h}`}
+        fill={live ? "rgba(62,203,141,.16)" : "rgba(153,161,181,.12)"}
+        stroke="none"
+      />
+      <polyline
+        points={line}
+        fill="none"
+        stroke={live ? "var(--green)" : "var(--muted-2)"}
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+});
+
 /** Rows that get artwork. Beyond this the initials tile stands in. */
 const IMAGE_ROWS = 70;
 
@@ -151,15 +189,42 @@ function Avatar({ row, eager }: { row: Row; eager: boolean }) {
  * launches whose numbers never move, so comparing the handful of displayed
  * fields skips nearly all of that work.
  */
+/**
+ * Rows flash when the number behind them moves.
+ *
+ * The feed repaints every two seconds and, until now, a market cap doubling
+ * looked exactly like a market cap sitting still — the figure was simply
+ * different the next time you happened to look at it. This marks the change
+ * for long enough to catch the eye and no longer.
+ */
+function useFlash(value: number | null): string {
+  const prev = useRef(value);
+  const [cls, setCls] = useState("");
+  useEffect(() => {
+    const before = prev.current;
+    prev.current = value;
+    if (before == null || value == null || before === value) return;
+    setCls(value > before ? " flash-up" : " flash-down");
+    const t = setTimeout(() => setCls(""), 780);
+    return () => clearTimeout(t);
+  }, [value]);
+  return cls;
+}
+
 const FeedRow = memo(function FeedRow({
   r,
   onPick,
   eager,
+  fresh,
 }: {
   r: Row;
   onPick: (a: string) => void;
   eager: boolean;
+  /** First time this row has been rendered, so it can animate in. */
+  fresh: boolean;
 }) {
+  const mcFlash = useFlash(r.mcapUsd);
+  const volFlash = useFlash(r.volumeUsd);
   const soc = socialOf(r.socials);
   const pick = () => onPick(r.token);
   return (
@@ -170,7 +235,7 @@ const FeedRow = memo(function FeedRow({
      * activation is wired up by hand to keep what the button gave for free.
      */
     <div
-      className="frow-item"
+      className={`frow-item${fresh ? " frow-new" : ""}`}
       role="button"
       tabIndex={0}
       onClick={pick}
@@ -203,8 +268,13 @@ const FeedRow = memo(function FeedRow({
 
         <div className="fline2 muted small">
           <span className="faddr" title={r.token}>{shortAddr(r.token)}</span>
-          <span className="fstat" title="how long ago it launched">{age(r.ageMinutes)}</span>
-          <span className="fstat" title="wallets still holding">
+          {/* Colour here is a reading, not decoration: a coin under a minute
+              old is the thing this feed exists for, and a crowd already
+              holding is the strongest signal we ever measured. */}
+          <span className={`fstat${r.ageMinutes < 1 ? " hot" : ""}`} title="how long ago it launched">
+            {age(r.ageMinutes)}
+          </span>
+          <span className={`fstat${r.holders >= 10 ? " good" : ""}`} title="wallets still holding">
             <i className="fi">H</i>
             {r.holders}
           </span>
@@ -251,10 +321,12 @@ const FeedRow = memo(function FeedRow({
         </div>
       </div>
 
-      <span className="fnum num" title="market cap">
+      <SparkLine points={r.spark} live={(r.spark[r.spark.length - 1] ?? 0) > 0} />
+
+      <span className={`fnum num${mcFlash}`} title="market cap">
         {money(r.mcapUsd)}
       </span>
-      <span className="fnum num" title="volume">
+      <span className={`fnum num${volFlash}`} title="volume">
         {money(r.volumeUsd)}
       </span>
       <span className="fnum num" title="liquidity in the curve">
@@ -282,6 +354,9 @@ const FeedRow = memo(function FeedRow({
   a.r.top10Rate === b.r.top10Rate &&
   a.r.progressPct === b.r.progressPct &&
   a.r.snipers === b.r.snipers &&
+  // Cheap enough: 20 numbers, and it changes at most once a minute.
+  a.r.spark.join() === b.r.spark.join() &&
+  a.fresh === b.fresh &&
   a.r.socials === b.r.socials &&
   // Age is rendered coarsely, so only a change in the rendered string matters.
   Math.round(a.r.ageMinutes) === Math.round(b.r.ageMinutes));
@@ -334,7 +409,37 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
     return () => clearInterval(iv);
   }, [load]);
 
+  /*
+   * Which tokens have already been on screen.
+   *
+   * A row is only "new" the first time it is rendered, so this is a ref rather
+   * than state — writing it must not itself cause a render, and the very first
+   * load must not animate all 250 rows in at once, which reads as a glitch
+   * rather than as arrivals.
+   */
+  const seen = useRef<Set<string>>(new Set());
+  const primed = useRef(false);
   const all = useMemo(() => data?.rows ?? [], [data]);
+
+  useEffect(() => {
+    if (!all.length) return;
+    if (!primed.current) {
+      // First payload: everything counts as already seen.
+      for (const r of all) seen.current.add(r.token);
+      primed.current = true;
+      return;
+    }
+    // Mark after paint, so this render still sees them as new.
+    const t = setTimeout(() => {
+      for (const r of all) seen.current.add(r.token);
+      // The feed window is capped, so this cannot grow without bound, but a
+      // long session still churns thousands of tokens through it.
+      if (seen.current.size > 6000) {
+        seen.current = new Set(all.map((r) => r.token));
+      }
+    }, 900);
+    return () => clearTimeout(t);
+  }, [all]);
   const rows = useMemo(() => {
     const q = find.trim().toLowerCase();
     if (!q) return all;
@@ -385,6 +490,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
 
       <div className="fhead">
         <span>Coin</span>
+        <span className="ta-c">20m vol</span>
         <span className="ta-r">MC</span>
         <span className="ta-r">Vol</span>
         <span className="ta-r">Liq</span>
@@ -402,7 +508,13 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
           </p>
         ) : (
           rows.map((r, i) => (
-            <FeedRow key={r.token} r={r} onPick={onPick} eager={i < IMAGE_ROWS} />
+            <FeedRow
+              key={r.token}
+              r={r}
+              onPick={onPick}
+              eager={i < IMAGE_ROWS}
+              fresh={!seen.current.has(r.token)}
+            />
           ))
         )}
       </div>

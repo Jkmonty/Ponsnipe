@@ -910,6 +910,7 @@ h2 {
 .card-arrived {
   animation: arrive 1.1s ease-out;
 }
+.card { transition: border-color .18s ease, box-shadow .18s ease; }
 @keyframes arrive {
   0%   { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
   70%  { box-shadow: 0 0 0 2px var(--accent-glow), var(--shadow); }
@@ -1024,14 +1025,14 @@ h2 {
 .frow-item,
 .fhead {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 82px 82px 82px 58px;
+  grid-template-columns: 40px minmax(0, 1fr) 54px 82px 82px 82px 58px;
   gap: 10px;
   align-items: center;
 }
 /* Header skips the avatar column, so it is indented by that column plus the
    gap to sit over the numbers it labels. */
 .fhead {
-  grid-template-columns: minmax(0, 1fr) 82px 82px 82px 58px;
+  grid-template-columns: minmax(0, 1fr) 54px 82px 82px 82px 58px;
   align-items: baseline;
   padding: 0 9px 7px 59px;
   font-size: 10px;
@@ -1042,6 +1043,15 @@ h2 {
   border-bottom: 1px solid var(--line);
 }
 .ta-r { text-align: right; }
+.ta-c { text-align: center; }
+
+.spark { display: block; overflow: visible; }
+.spark-empty {
+  width: 54px;
+  height: 16px;
+  border-bottom: 1px solid var(--line);
+  opacity: .55;
+}
 
 /*
  * Scrollbars. The default Windows bar is a wide light-grey slab that sits
@@ -1142,7 +1152,55 @@ h2 {
   letter-spacing: .04em;
   opacity: .65;
 }
-.fstat.warn { color: #e8a33d; }
+/*
+ * Colour on a row is a reading, never decoration.
+ *
+ * This screen is a wall of small numbers, and tinting things because they look
+ * nice would make every genuine signal harder to find. So there are exactly
+ * three: a coin under a minute old, a crowd already holding it, and a sniper
+ * count high enough to mean bots were waiting.
+ */
+.fstat.warn { color: var(--amber); }
+.fstat.good { color: var(--green); }
+.fstat.hot {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+/* ── motion ──────────────────────────────────────────────────────────────
+   The feed repaints every two seconds. Without any of this a coin launching
+   and a coin sitting still look identical: the list is simply different the
+   next time you glance at it. */
+
+@keyframes rowIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-9px);
+    background: rgba(240, 180, 41, .10);
+  }
+  60% { opacity: 1; transform: none; }
+  100% { background: transparent; }
+}
+.frow-new { animation: rowIn .62s cubic-bezier(.22, 1, .36, 1); }
+
+@keyframes flashUp {
+  0% { color: var(--green); transform: translateY(2px); }
+  100% { transform: none; }
+}
+@keyframes flashDown {
+  0% { color: var(--red); transform: translateY(-2px); }
+  100% { transform: none; }
+}
+.flash-up { animation: flashUp .78s ease-out; }
+.flash-down { animation: flashDown .78s ease-out; }
+
+/* Someone who gets motion sickness from a list that never stops moving still
+   needs to be able to use this. */
+@media (prefers-reduced-motion: reduce) {
+  .frow-new,
+  .flash-up,
+  .flash-down { animation: none; }
+}
 
 
 
@@ -1163,8 +1221,11 @@ h2 {
 .fbond-fill {
   position: absolute;
   inset: 0 auto 0 0;
-  background: linear-gradient(90deg, #1d6d47, #3ecb8d);
-  transition: width .2s ease;
+  /* Green while it is climbing, gold as it nears graduation — the point at
+     which the curve stops accepting sells and the exit matters. */
+  background: linear-gradient(90deg, #1d6d47 0%, #3ecb8d 62%, var(--accent) 100%);
+  background-size: 132px 100%;
+  transition: width .35s cubic-bezier(.22, 1, .36, 1);
 }
 .fbond-txt {
   position: relative;

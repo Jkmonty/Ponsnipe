@@ -25,6 +25,9 @@ const SUPPLY = 1e9;
  */
 const SNIPE_BLOCKS = 3;
 
+/** Minutes of volume history drawn on each row. */
+const SPARK_MINUTES = 20;
+
 export interface FeedFilters {
   /** How far back to read. Rows are returned newest first. */
   maxAgeMin: number;
@@ -80,6 +83,14 @@ export interface FeedRow {
   snipers: number;
   /** Wallets that bought in the launch block itself. */
   sameBlock: number;
+  /**
+   * Volume per minute over the recent window, oldest first.
+   *
+   * Volume and not price: feed_volume buckets every trade by the minute, but
+   * only the CURRENT price is stored per token, so there is no price history
+   * to draw. Calling this a price chart would be a lie about our own data.
+   */
+  spark: number[];
 }
 
 interface Raw {
@@ -191,6 +202,32 @@ export async function readFeed(
   }
   if (!raw.length) return { rows: [], total: 0, ethUsd: null, unpriced: [] };
 
+  /*
+   * Every row's recent volume in one query, then grouped here.
+   *
+   * One query for the lot rather than one per row: at 250 rows the per-row
+   * version would be 250 round trips into SQLite on every two-second poll.
+   */
+  const nowBucket = Math.floor(Date.now() / 60_000);
+  const sparks = new Map<string, number[]>();
+  try {
+    const hist = db()
+      .prepare(
+        `SELECT curve, bucket, quote FROM feed_volume
+          WHERE bucket > ? ORDER BY curve, bucket`,
+      )
+      .all(nowBucket - SPARK_MINUTES) as { curve: string; bucket: number; quote: number }[];
+    for (const h of hist) {
+      let a = sparks.get(h.curve);
+      if (!a) sparks.set(h.curve, (a = new Array(SPARK_MINUTES).fill(0)));
+      // Bucket 0 is the oldest minute in the window, SPARK_MINUTES-1 the newest.
+      const i = SPARK_MINUTES - 1 - (nowBucket - h.bucket);
+      if (i >= 0 && i < SPARK_MINUTES) a[i] += h.quote;
+    }
+  } catch {
+    /* history is decoration; a row without it still renders */
+  }
+
   const quoteOf = (r: Raw) => (r.quote_is_native === 1 ? "ETH" : (r.quote_symbol ?? "?"));
   // One rate lookup per distinct quote asset, not per row.
   const rates = await buildRates(raw.map(quoteOf));
@@ -238,6 +275,7 @@ export async function readFeed(
       description: r.description ?? "",
       snipers: r.snipers ?? 0,
       sameBlock: r.same_block ?? 0,
+      spark: sparks.get(r.curve) ?? [],
     };
   });
 
