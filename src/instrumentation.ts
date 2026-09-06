@@ -34,4 +34,15 @@ export async function register(): Promise<void> {
     // eslint-disable-next-line no-console
     console.error("Failed to start feed:", err);
   }
+
+  // Pushed launches, on top of the sweep rather than instead of it. Free, no
+  // key: publicnode runs a WebSocket for this chain that takes eth_subscribe,
+  // which the endpoint we sweep does not.
+  const { startLaunchStream } = await import("./lib/feed/livestream");
+  try {
+    startLaunchStream();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Failed to start launch stream:", err);
+  }
 }

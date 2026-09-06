@@ -1,6 +1,7 @@
 import { json } from "@/lib/api";
 import { readFeed, DEFAULT_FILTERS, type FeedFilters } from "@/lib/feed/query";
 import { feedStatus } from "@/lib/feed/market";
+import { launchStreamStatus } from "@/lib/feed/livestream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,5 +20,5 @@ export async function GET(req: Request) {
     limit: Math.min(400, Math.max(1, num(q.get("limit"), DEFAULT_FILTERS.limit))),
   };
   const { rows, total, ethUsd, unpriced } = await readFeed(filters);
-  return json({ rows, total, ethUsd, unpriced, status: feedStatus() });
+  return json({ rows, total, ethUsd, unpriced, status: { ...feedStatus(), stream: launchStreamStatus() } });
 }

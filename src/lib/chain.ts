@@ -6,7 +6,7 @@ import {
   webSocket,
   type PublicClient,
 } from "viem";
-import { env } from "./env";
+import { env, PUBLIC_RPC_POOL } from "./env";
 
 /** Robinhood Chain — Arbitrum Orbit L2, gas token ETH. */
 export const robinhoodChain = defineChain({
@@ -106,7 +106,10 @@ export function publicClient(): PublicClient {
  */
 export function readClient(): PublicClient {
   if (gc.__ponsReadClient) return gc.__ponsReadClient;
-  const urls = [env.rpcUrl, env.fallbackRpcUrl].filter(
+  // The configured endpoints first, then every other public one. Ranking below
+  // sorts them by what is actually answering, so a slow or refusing node drops
+  // down on its own rather than costing every call a retry.
+  const urls = [env.rpcUrl, env.fallbackRpcUrl, ...PUBLIC_RPC_POOL].filter(
     (u, i, a) => u && a.indexOf(u) === i,
   );
   gc.__ponsReadClient = createPublicClient({

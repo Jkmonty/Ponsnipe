@@ -26,6 +26,20 @@ function num(name: string, fallback: number): number {
 /** Robinhood's own endpoint. Slower than a private provider, but never bills. */
 export const PUBLIC_RPC_URL = "https://rpc.mainnet.chain.robinhood.com";
 
+/**
+ * Every public endpoint serving this chain, per chainid.network.
+ *
+ * Spreading reads over several matters more than any one of them being fast:
+ * a single endpoint's rate limit was the whole budget, and hitting it is what
+ * made sweeps fail 13% of the time when the poll interval was shortened.
+ */
+export const PUBLIC_RPC_POOL = [
+  "https://rpc.mainnet.chain.robinhood.com",
+  "https://robinhood-rpc.publicnode.com",
+  "https://rpc.arrowrpc.com",
+  "https://rpc.ordofi.network",
+];
+
 export const env = {
   rpcUrl: opt("RPC_URL", PUBLIC_RPC_URL),
   /**

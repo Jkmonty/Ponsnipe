@@ -19,8 +19,9 @@
  * a presentation concern and lives in usd.ts, because roughly a quarter of
  * launches pair against tokenised stocks we have no dollar rate for.
  */
-import { createPublicClient, http, parseAbiItem, getAddress, type Address, type PublicClient } from "viem";
+import { createPublicClient, fallback, http, parseAbiItem, getAddress, type Address, type PublicClient } from "viem";
 import { robinhoodChain, redactRpc } from "../chain";
+import { PUBLIC_RPC_POOL } from "../env";
 import { db, logEngine } from "../db/index";
 import { PONS } from "../pons/addresses";
 import { ponsFactoryAbi, erc20Abi, bondingCurveAbi } from "../pons/abis";
@@ -45,13 +46,26 @@ const SELL_EVENT = parseAbiItem(
  * codebase: a provider WebSocket rejects eth_getLogs outright, and Alchemy's
  * free tier caps the range at 10 blocks where the public node allows 2000.
  */
-const LOGS_RPC = process.env.LOGS_RPC_URL?.trim() || "https://rpc.mainnet.chain.robinhood.com";
+const LOGS_POOL = process.env.LOGS_RPC_URL?.trim()
+  ? [process.env.LOGS_RPC_URL.trim()]
+  : PUBLIC_RPC_POOL;
 let logs: PublicClient | undefined;
 function logClient(): PublicClient {
   if (logs) return logs;
   logs = createPublicClient({
     chain: robinhoodChain,
-    transport: http(LOGS_RPC, { retryCount: 2, timeout: 25_000, batch: true }),
+    /*
+     * A fallback across every public endpoint, ranked by which is answering.
+     *
+     * One endpoint used to carry the whole sweep, and its rate limit was the
+     * ceiling: shortening the poll interval pushed failures to 13% purely
+     * because the calls landed on the same node. Spreading them is what makes
+     * a faster sweep affordable.
+     */
+    transport: fallback(
+      LOGS_POOL.map((u) => http(u, { retryCount: 1, timeout: 25_000, batch: true })),
+      { retryCount: 0, rank: LOGS_POOL.length > 1 ? { interval: 30_000, sampleCount: 3 } : false },
+    ),
   }) as PublicClient;
   return logs;
 }
