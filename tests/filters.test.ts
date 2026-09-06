@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { evaluateLaunch, type FilterInput } from "../src/lib/sniper/filters";
-import { DEFAULT_CONFIG, type SniperConfig } from "../src/lib/sniper/config";
+import { DEFAULT_CONFIG, sniperConfigSchema, type SniperConfig } from "../src/lib/sniper/config";
 import type { TokenSnapshot } from "../src/lib/pons/tokens";
 
 const DEPLOYER = "0x1111111111111111111111111111111111111111";
@@ -128,4 +128,90 @@ test("name allow/deny regexes match case-insensitively on symbol and name", () =
   assert.equal(evaluateLaunch(input(), cfg({ nameAllowRegex: "^good" })).buy, true);
   assert.equal(evaluateLaunch(input(), cfg({ nameAllowRegex: "nomatch" })).buy, false);
   assert.equal(evaluateLaunch(input(), cfg({ nameDenyRegex: "GOOD" })).buy, false);
+});
+
+/* ── ticker watch ──────────────────────────────────────────────────────────
+   A named ticker skips the filters that form an OPINION about a launch, and
+   none of the ones that protect the wallet. These pin that line down, because
+   getting it wrong in either direction is expensive: too loose and a watch
+   buys a honeypot, too tight and the feature does not work at all. */
+
+const HIT = { ticker: "GOOD", pinnedDeployer: true, ethAmount: null };
+
+test("a named ticker buys without the other-buyer minimum", () => {
+  const c = cfg({ minOtherBuys: 8 });
+  // Same launch, no crowd behind it: rejected normally, taken when named.
+  assert.equal(evaluateLaunch(input({ otherBuys: 0 }), c).buy, false);
+  assert.equal(evaluateLaunch(input({ otherBuys: 0, tickerHit: HIT }), c).buy, true);
+});
+
+test("a named ticker skips the liquidity floor and the velocity gate", () => {
+  const c = cfg({ minLiquidityEth: 5, minBuyVelocity: 10 });
+  assert.equal(evaluateLaunch(input({ liquidityEth: 0.01, buyVelocity: 0 }), c).buy, false);
+  assert.equal(
+    evaluateLaunch(input({ liquidityEth: 0.01, buyVelocity: 0, tickerHit: HIT }), c).buy,
+    true,
+  );
+});
+
+test("a named ticker skips the name filters that would contradict it", () => {
+  // Asking for GOOD by name while an old allow-regex says only /MOON/ should
+  // buy GOOD, not sit there rejecting the thing you explicitly asked for.
+  const c = cfg({ nameAllowRegex: "MOON", nameDenyRegex: "GOOD" });
+  assert.equal(evaluateLaunch(input(), c).buy, false);
+  assert.equal(evaluateLaunch(input({ tickerHit: HIT }), c).buy, true);
+});
+
+test("a named ticker is STILL blocked by the creator tax cap", () => {
+  // The trap case: a 90% creator tax takes the position whatever it is called.
+  const c = cfg({ maxCreatorTaxBps: 300 });
+  const v = evaluateLaunch(
+    input({ snapshot: snap({ creatorTaxBps: 9000 }), tickerHit: HIT }),
+    c,
+  );
+  assert.equal(v.buy, false);
+  assert.match(v.reason, /creator tax/);
+});
+
+test("a named ticker is STILL blocked by the deployer denylist", () => {
+  const c = cfg({ deployerDeny: [DEPLOYER] });
+  const v = evaluateLaunch(input({ tickerHit: HIT }), c);
+  assert.equal(v.buy, false);
+  assert.match(v.reason, /denylist/);
+});
+
+test("a named ticker is STILL blocked when the token cannot be traded", () => {
+  const c = cfg();
+  assert.equal(
+    evaluateLaunch(
+      input({ snapshot: snap({ tradeable: false, reason: "already graduated" }), tickerHit: HIT }),
+      c,
+    ).buy,
+    false,
+  );
+  // And a non-ETH quote is still a hard stop: we cannot pay in it.
+  assert.equal(
+    evaluateLaunch(
+      input({ snapshot: snap({ quoteIsNative: false, quoteSymbol: "USDG" }), tickerHit: HIT }),
+      c,
+    ).buy,
+    false,
+  );
+});
+
+test("an older saved config still loads instead of resetting to defaults", () => {
+  // loadSniperConfig falls back to DEFAULT_CONFIG on a parse failure, so a new
+  // REQUIRED field would silently wipe a tuned sniper.json. Everything added
+  // must default. This parses a config written before the ticker watch existed.
+  const old = { ...DEFAULT_CONFIG, minOtherBuys: 9, maxDailySpendEth: 0.5 } as Record<string, unknown>;
+  delete old.tickerWatch;
+  delete old.tickerDelaySeconds;
+  const parsed = sniperConfigSchema.safeParse(old);
+  assert.equal(parsed.success, true, "a pre-ticker-watch config must still parse");
+  if (parsed.success) {
+    assert.equal(parsed.data.minOtherBuys, 9, "existing settings must survive");
+    assert.equal(parsed.data.maxDailySpendEth, 0.5);
+    assert.deepEqual(parsed.data.tickerWatch, []);
+    assert.equal(parsed.data.tickerDelaySeconds, 4);
+  }
 });

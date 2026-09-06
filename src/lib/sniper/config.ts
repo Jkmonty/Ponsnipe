@@ -107,6 +107,63 @@ export const sniperConfigSchema = z.object({
   /** Never snipe launches from these deployer addresses. */
   deployerDeny: z.array(z.string()).max(500),
 
+  /**
+   * Tickers to buy on sight.
+   *
+   * For the case where you already know a coin is coming and what it will be
+   * called. A match bypasses the crowd-quality filters — the observation
+   * window, the other-buyer minimum, buy velocity, proven buyers and the
+   * deployer dud-record check — because those exist to judge a launch you know
+   * nothing about, and here you claim to know something. What it does NOT
+   * bypass: tradeability, the creator-tax cap, the deployer denylist, and
+   * every spend cap. Those are traps and budgets, not opinions.
+   *
+   * `deployer` is the part that makes this safe, and it is worth being blunt
+   * about why. Anyone can deploy a token with any ticker, and they do: in a
+   * single three-hour window of indexed launches, 27% of tickers had already
+   * been used more than once, VLAD appeared 65 times from 51 different makers
+   * and TRUMP 19 times from 18. A ticker-only watch will therefore almost
+   * certainly fire on a squatter minutes before the launch you meant. Pinning
+   * the deployer address turns "any coin called X" into "the coin called X
+   * from the person I am waiting for".
+   */
+  tickerWatch: z
+    .array(
+      z.object({
+        /** Matched against the token symbol, case-insensitively, exactly. */
+        ticker: z.string().trim().min(1).max(32),
+        /** Only this deployer counts. null means any, which is the risky mode. */
+        deployer: z.string().nullable(),
+        /** Overrides ethAmount for this watch. null uses the global amount. */
+        ethAmount: z.string().nullable(),
+        /** Stop after this many matching buys. */
+        maxBuys: z.number().int().min(1).max(10),
+        /** How many it has bought. Persisted so a restart cannot re-arm it. */
+        bought: z.number().int().min(0),
+        /** ISO timestamp after which this watch is ignored. null never expires. */
+        expiresAt: z.string().nullable(),
+      }),
+    )
+    .max(20)
+    /*
+     * Defaulted, not required.
+     *
+     * loadSniperConfig falls back to DEFAULT_CONFIG when the saved file fails
+     * to parse, so adding a REQUIRED field here would make every existing
+     * sniper.json invalid and silently reset somebody's tuned filters to
+     * stock. Any new field added below must default for the same reason.
+     */
+    .default([]),
+
+  /**
+   * Delay before buying a ticker match, in seconds.
+   *
+   * Separate from delaySeconds, which is 20s because waiting is how the sniper
+   * observes whether anyone else bought. A ticker watch is not observing — you
+   * already decided — so waiting only costs price.
+   */
+  tickerDelaySeconds: z.number().int().min(0).max(120).default(4),
+
   /** Safety caps. */
   maxConcurrentSnipes: z.number().int().min(1).max(50),
   maxSnipesPerHour: z.number().int().min(1).max(200),
@@ -140,6 +197,10 @@ export const DEFAULT_CONFIG: SniperConfig = {
   nameDenyRegex: null,
   deployerAllow: [],
   deployerDeny: [],
+  tickerWatch: [],
+  // Fast, but not zero: pons taxes the first ~3 seconds after a launch at up
+  // to 99%, so buying instantly hands most of the position to the tax.
+  tickerDelaySeconds: 4,
   maxConcurrentSnipes: 3,
   maxSnipesPerHour: 12,
   maxDailySpendEth: 0.1,

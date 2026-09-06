@@ -2,6 +2,16 @@ import type { SniperConfig } from "./config";
 import type { TokenSnapshot } from "../pons/tokens";
 import { reputationAvailable, deployerRecord, countProvenBuyers } from "./reputation";
 
+/**
+ * A tickerWatch entry that matched this launch, decided before the delay.
+ * Present means "you asked for this one by name"; absent is the normal path.
+ */
+export interface TickerHit {
+  ticker: string;
+  pinnedDeployer: boolean;
+  ethAmount: string | null;
+}
+
 export interface LaunchInfo {
   token: string;
   curve: string;
@@ -12,6 +22,8 @@ export interface LaunchInfo {
 
 export interface FilterInput {
   launch: LaunchInfo;
+  /** Set when a tickerWatch entry named this launch. */
+  tickerHit?: TickerHit | null;
   snapshot: TokenSnapshot;
   /** Real ETH in the curve right now. */
   liquidityEth: number;
@@ -83,10 +95,22 @@ export function evaluateLaunch(
     return { buy: false, reason: "deployer not on allowlist" };
   }
 
+  /*
+   * A named ticker skips the judgement filters, not the safety ones.
+   *
+   * Everything above this point stays: tradeable, ETH-quoted, denylist. So do
+   * the creator-tax cap below and every spend cap in the engine. What it skips
+   * is the block of filters that exist to form an opinion about a launch
+   * nobody asked for — the deployer's record, the other-buyer minimum, buy
+   * velocity, proven buyers, and the name regexes. You named it; that is the
+   * opinion.
+   */
+  const named = !!input.tickerHit;
+
   // Serial deployers who have never produced a graduate. The strongest negative
   // signal in the data: 0.17% vs a 1.91% baseline for a first-ever launch.
   // Silently skipped when no reputation database is present.
-  if (cfg.maxDeployerDudLaunches != null && reputationAvailable()) {
+  if (!named && cfg.maxDeployerDudLaunches != null && reputationAvailable()) {
     const rec = deployerRecord(dep);
     if (rec.graduated === 0 && rec.launches >= cfg.maxDeployerDudLaunches) {
       return {
@@ -103,19 +127,19 @@ export function evaluateLaunch(
     };
   }
 
-  if (cfg.minLiquidityEth != null && liquidityEth < cfg.minLiquidityEth) {
+  if (!named && cfg.minLiquidityEth != null && liquidityEth < cfg.minLiquidityEth) {
     return { buy: false, reason: `liquidity ${liquidityEth.toFixed(3)} ETH < ${cfg.minLiquidityEth}` };
   }
-  if (cfg.maxLiquidityEth != null && liquidityEth > cfg.maxLiquidityEth) {
+  if (!named && cfg.maxLiquidityEth != null && liquidityEth > cfg.maxLiquidityEth) {
     return { buy: false, reason: `liquidity ${liquidityEth.toFixed(3)} ETH > ${cfg.maxLiquidityEth}` };
   }
 
-  if (otherBuys < cfg.minOtherBuys) {
+  if (!named && otherBuys < cfg.minOtherBuys) {
     return { buy: false, reason: `only ${otherBuys} other buys (need ${cfg.minOtherBuys})` };
   }
 
   // The one filter that turned a losing book positive in testing.
-  if (cfg.minProvenBuyers > 0) {
+  if (!named && cfg.minProvenBuyers > 0) {
     if (!reputationAvailable()) {
       return { buy: false, reason: "minProvenBuyers set but no reputation database — run `npm run reputation`" };
     }
@@ -128,7 +152,7 @@ export function evaluateLaunch(
     }
   }
 
-  if (cfg.minBuyVelocity != null) {
+  if (!named && cfg.minBuyVelocity != null) {
     const v = input.buyVelocity ?? 0;
     if (v < cfg.minBuyVelocity) {
       return {
@@ -139,11 +163,11 @@ export function evaluateLaunch(
   }
 
   const hay = `${snapshot.symbol} ${snapshot.name}`;
-  if (cfg.nameAllowRegex) {
+  if (!named && cfg.nameAllowRegex) {
     const re = safeRegex(cfg.nameAllowRegex);
     if (re && !re.test(hay)) return { buy: false, reason: `name doesn't match /${cfg.nameAllowRegex}/i` };
   }
-  if (cfg.nameDenyRegex) {
+  if (!named && cfg.nameDenyRegex) {
     const re = safeRegex(cfg.nameDenyRegex);
     if (re && re.test(hay)) return { buy: false, reason: `name matches denylist /${cfg.nameDenyRegex}/i` };
   }

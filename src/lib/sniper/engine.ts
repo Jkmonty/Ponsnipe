@@ -17,8 +17,9 @@ import { createPosition, countOpenBySource } from "../db/positions";
 import { getBotBalance, hasBotWallet } from "../wallet/botWallet";
 import { isLive } from "../engine/liveState";
 import { kickMonitor } from "../engine/monitor";
-import { loadSniperConfig } from "./config";
-import { evaluateLaunch, type LaunchInfo } from "./filters";
+import { loadSniperConfig, saveSniperConfig, type SniperConfig } from "./config";
+import { evaluateLaunch, type LaunchInfo, type TickerHit } from "./filters";
+import { erc20Abi } from "../pons/abis";
 
 interface SniperState {
   running: boolean;
@@ -174,7 +175,11 @@ async function otherBuyers(curve: Address, deployer: Address, fromBlock: bigint)
   }
 }
 
-async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> {
+async function evaluate(
+  launch: LaunchInfo,
+  launchBlock: bigint,
+  hit: TickerHit | null = null,
+): Promise<void> {
   s.pending.delete(launch.token.toLowerCase());
   s.evaluated += 1;
   const cfg = loadSniperConfig();
@@ -197,7 +202,9 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
       });
       return;
     }
-    const ethAmount = cfg.ethAmount;
+    // A watch may set its own size; otherwise the global amount applies. The
+    // spend caps below are checked against whichever it is.
+    const ethAmount = hit?.ethAmount?.trim() || cfg.ethAmount;
     if (spentTodayEth() + s.inFlightEth + Number(ethAmount) > cfg.maxDailySpendEth) {
       record("skipped", `daily spend cap (${cfg.maxDailySpendEth} ETH)`, {
         token: launch.token,
@@ -222,7 +229,10 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
       logo: snapshot.logo,
     };
 
-    const verdict = evaluateLaunch({ launch, snapshot, liquidityEth, otherBuys, buyers }, cfg);
+    const verdict = evaluateLaunch(
+      { launch, snapshot, liquidityEth, otherBuys, buyers, tickerHit: hit },
+      cfg,
+    );
     if (!verdict.buy) {
       record("skipped", verdict.reason, { ...seen, blockedByQuote: verdict.blockedByQuote });
       return;
@@ -288,6 +298,14 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
       });
       return;
     }
+
+    /*
+     * Spend it, count it. Credited here rather than after the position row is
+     * written, because the money has already left: the recovery path below
+     * handles a buy that could not be recorded, and re-arming the watch there
+     * would let one ticker be bought twice off a single maxBuys of 1.
+     */
+    if (hit) creditWatch(hit.ticker);
 
     // The buy is already on-chain. If we fail to record the position the tokens
     // become an invisible, unmanaged bag with no stop-loss — so this gets its
@@ -358,9 +376,54 @@ async function evaluate(launch: LaunchInfo, launchBlock: bigint): Promise<void> 
  * maxConcurrentSnipes / maxSnipesPerHour / maxDailySpendEth were all evaluated
  * against a stale zero and every launch in the burst bought.
  */
-function enqueue(launch: LaunchInfo, blockNumber: bigint): void {
+/** Watches that are still armed: under their buy limit and not expired. */
+function activeWatches(cfg: SniperConfig): SniperConfig["tickerWatch"] {
+  const now = Date.now();
+  return cfg.tickerWatch.filter(
+    (w) => w.bought < w.maxBuys && (!w.expiresAt || Date.parse(w.expiresAt) > now),
+  );
+}
+
+/**
+ * The symbol, read straight from the token.
+ *
+ * TokenLaunched does not carry it, and the whole point of a ticker watch is to
+ * decide BEFORE the observation window elapses, so this cannot wait for the
+ * feed indexer to catch up. One eth_call, and only when a watch is armed —
+ * with none configured this costs nothing at ~24k launches a day.
+ */
+async function symbolOf(token: string): Promise<string | null> {
+  try {
+    return String(
+      await readClient().readContract({
+        address: getAddress(token),
+        abi: erc20Abi,
+        functionName: "symbol",
+      }),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Record a completed ticker buy so the watch disarms itself. */
+function creditWatch(ticker: string): void {
+  const cfg = loadSniperConfig();
+  const key = ticker.trim().toLowerCase();
+  let touched = false;
+  for (const w of cfg.tickerWatch) {
+    if (w.ticker.trim().toLowerCase() === key && w.bought < w.maxBuys) {
+      w.bought += 1;
+      touched = true;
+      break;
+    }
+  }
+  if (touched) saveSniperConfig(cfg);
+}
+
+function enqueue(launch: LaunchInfo, blockNumber: bigint, hit: TickerHit | null = null): void {
   s.queue = s.queue
-    .then(() => evaluate(launch, blockNumber))
+    .then(() => evaluate(launch, blockNumber, hit))
     .catch((err) => {
       // A queue link must never reject, or every later launch is dropped.
       s.lastError = err instanceof Error ? err.message : String(err);
@@ -408,10 +471,48 @@ function handleLaunchLogs(logs: Log[]): void {
     if (!cfg.enabled && !cfg.watchWhenDisabled) {
       continue;
     }
-    const delayMs = Math.max(0, cfg.delaySeconds) * 1000;
-    const timer = setTimeout(() => enqueue(launch, l.blockNumber), delayMs);
-    if (timer && typeof timer === "object" && "unref" in timer) timer.unref();
-    s.pending.set(key, timer);
+
+    const watches = activeWatches(cfg);
+    if (!watches.length) {
+      const delayMs = Math.max(0, cfg.delaySeconds) * 1000;
+      const timer = setTimeout(() => enqueue(launch, l.blockNumber), delayMs);
+      if (timer && typeof timer === "object" && "unref" in timer) timer.unref();
+      s.pending.set(key, timer);
+      continue;
+    }
+
+    /*
+     * With a watch armed, the symbol has to be read before the delay is
+     * chosen — a ticker match uses the fast one, and by the time the normal
+     * 20-second window has elapsed the decision has already been made for us.
+     *
+     * The read is async and the rest of this loop is not, so the timer is
+     * scheduled from inside the promise. A launch whose symbol read fails
+     * still goes down the normal path rather than being dropped.
+     */
+    void symbolOf(launch.token).then((sym) => {
+      const dep = launch.deployer.toLowerCase();
+      const match = sym
+        ? watches.find(
+            (w) =>
+              w.ticker.trim().toLowerCase() === sym.trim().toLowerCase() &&
+              (!w.deployer || w.deployer.toLowerCase() === dep),
+          )
+        : undefined;
+      const hit: TickerHit | null = match
+        ? { ticker: match.ticker, pinnedDeployer: !!match.deployer, ethAmount: match.ethAmount }
+        : null;
+      if (hit) {
+        logEngine(
+          "info",
+          `ticker watch matched ${sym} (${launch.token})${hit.pinnedDeployer ? "" : " — no deployer pinned"}`,
+        );
+      }
+      const secs = hit ? cfg.tickerDelaySeconds : cfg.delaySeconds;
+      const timer = setTimeout(() => enqueue(launch, l.blockNumber, hit), Math.max(0, secs) * 1000);
+      if (timer && typeof timer === "object" && "unref" in timer) timer.unref();
+      s.pending.set(key, timer);
+    });
   }
 }
 

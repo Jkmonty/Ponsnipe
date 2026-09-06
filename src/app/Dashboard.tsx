@@ -815,6 +815,15 @@ function PositionCard({
 }
 
 // ───────────────────────────────────────────────────────────────────
+interface TickerWatchEntry {
+  ticker: string;
+  /** null means any maker, which is the risky mode — see TickerWatch below. */
+  deployer: string | null;
+  ethAmount: string | null;
+  maxBuys: number;
+  bought: number;
+  expiresAt: string | null;
+}
 interface SniperCfg {
   enabled: boolean;
   ethAmount: string;
@@ -832,6 +841,8 @@ interface SniperCfg {
   nameDenyRegex: string | null;
   deployerAllow: string[];
   deployerDeny: string[];
+  tickerWatch: TickerWatchEntry[];
+  tickerDelaySeconds: number;
   maxConcurrentSnipes: number;
   maxSnipesPerHour: number;
   maxDailySpendEth: number;
@@ -1015,6 +1026,8 @@ function SniperCard({
         </label>
       </div>
 
+      <TickerWatch cfg={cfg} patch={patch} />
+
       <button
         className="btn btn-sm btn-outline"
         style={{ marginTop: 12 }}
@@ -1174,5 +1187,133 @@ function Steps({ done }: { done: number }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+
+/**
+ * Tickers to buy on sight.
+ *
+ * The warning is not decoration. Anyone can deploy a token with any ticker,
+ * and the numbers quoted are from this app's own index over a single
+ * three-hour window, so a ticker-only watch really will fire on a squatter
+ * before it fires on the launch you are waiting for. Pinning the maker's
+ * address is what turns this from a lottery into a tool, and the UI says so at
+ * the point where the decision is made rather than in a doc nobody opens.
+ */
+function TickerWatch({
+  cfg,
+  patch,
+}: {
+  cfg: SniperCfg;
+  patch: (p: Partial<SniperCfg>) => void;
+}) {
+  const [ticker, setTicker] = useState("");
+  const [dev, setDev] = useState("");
+  const list = cfg.tickerWatch ?? [];
+
+  const add = () => {
+    const t = ticker.trim();
+    if (!t) return;
+    const d = dev.trim();
+    patch({
+      tickerWatch: [
+        ...list,
+        {
+          ticker: t,
+          deployer: /^0x[a-fA-F0-9]{40}$/.test(d) ? d : null,
+          ethAmount: null,
+          maxBuys: 1,
+          bought: 0,
+          // A watch you set up and forget should not fire next week.
+          expiresAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+        },
+      ],
+    });
+    setTicker("");
+    setDev("");
+  };
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <strong style={{ fontSize: 14 }}>Buy a ticker on sight</strong>
+      <p className="muted small" style={{ margin: "2px 0 8px" }}>
+        For when you already know a coin is coming and what it will be called. A match
+        skips the waiting and the quality checks — but never the tax check or your
+        spend limits.
+      </p>
+
+      <div className="row" style={{ gap: 8 }}>
+        <input
+          className="input"
+          placeholder="Ticker, e.g. PONS"
+          value={ticker}
+          onChange={(e) => setTicker(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          style={{ flex: "0 1 150px", textTransform: "uppercase" }}
+        />
+        <input
+          className="input"
+          placeholder="Maker address (strongly advised)"
+          value={dev}
+          onChange={(e) => setDev(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          style={{ flex: 1, minWidth: 0 }}
+        />
+        <button className="btn btn-sm" onClick={add} disabled={!ticker.trim()}>
+          Add
+        </button>
+      </div>
+
+      <p className="small" style={{ color: "var(--amber)", margin: "8px 0 0" }}>
+        Without a maker address this buys <em>any</em> coin with that ticker. Anyone can
+        use any ticker, and they do — in three hours of launches, 27% of tickers were
+        already taken, VLAD appeared 65 times from 51 different makers and TRUMP 19
+        times from 18. Expect to be beaten to it by a copy.
+      </p>
+
+      {list.length > 0 && (
+        <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+          {list.map((w, i) => {
+            const spent = w.bought >= w.maxBuys;
+            const expired = !!w.expiresAt && Date.parse(w.expiresAt) <= Date.now();
+            return (
+              <div
+                key={`${w.ticker}-${i}`}
+                className="row"
+                style={{ gap: 8, alignItems: "center", opacity: spent || expired ? 0.5 : 1 }}
+              >
+                <strong style={{ fontSize: 13 }}>{w.ticker.toUpperCase()}</strong>
+                {w.deployer ? (
+                  <span className="mono small muted" title={w.deployer}>
+                    from {w.deployer.slice(0, 6)}…{w.deployer.slice(-4)}
+                  </span>
+                ) : (
+                  <span className="pill pill-cold">any maker</span>
+                )}
+                <span className="muted small">
+                  {spent
+                    ? "done"
+                    : expired
+                      ? "expired"
+                      : `${w.bought}/${w.maxBuys} bought · ${
+                          w.expiresAt
+                            ? `${Math.max(0, Math.round((Date.parse(w.expiresAt) - Date.now()) / 3600_000))}h left`
+                            : "no expiry"
+                        }`}
+                </span>
+                <button
+                  className="btn btn-sm btn-outline"
+                  style={{ marginLeft: "auto" }}
+                  onClick={() => patch({ tickerWatch: list.filter((_, j) => j !== i) })}
+                >
+                  Remove
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
