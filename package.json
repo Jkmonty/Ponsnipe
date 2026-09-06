@@ -22,7 +22,8 @@
     "waves": "tsx scripts/waves.ts",
     "narrative": "tsx scripts/narrative.ts",
     "bundles": "tsx scripts/bundles.ts",
-    "poolscan": "tsx scripts/poolscan.ts"
+    "poolscan": "tsx scripts/poolscan.ts",
+    "bitquery": "tsx scripts/bitquery.ts"
   },
   "dependencies": {
     "next": "^16.3.4",

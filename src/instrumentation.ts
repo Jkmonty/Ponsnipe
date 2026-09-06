@@ -35,4 +35,14 @@ export async function register(): Promise<void> {
     console.error("Failed to start feed:", err);
   }
 
+  // Optional push source for launches, on top of the sweep rather than instead
+  // of it: whichever spots a launch first indexes it. Silent when no token is
+  // set, which is the normal case.
+  const { bitqueryConfigured, startBitquery } = await import("./lib/feed/bitquery");
+  try {
+    if (bitqueryConfigured()) startBitquery();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Failed to start Bitquery stream:", err);
+  }
 }

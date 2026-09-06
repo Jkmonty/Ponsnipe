@@ -245,23 +245,47 @@ async function sweepLaunches(head: bigint): Promise<void> {
   saveCursor("launches", head);
   if (!found.length) return;
 
-  const fresh = found
-    .map((l) => ({
-      token: getAddress(String(l.args.token)),
-      curve: getAddress(String(l.args.curve)),
-      deployer: getAddress(String(l.args.deployer)),
-      pairToken: getAddress(String(l.args.pairToken)),
-      threshold: l.args.graduationThreshold as bigint,
-      block: l.blockNumber ?? 0n,
-    }))
-    .filter((x) => x.token && x.curve);
-  if (!fresh.length) return;
+  await ingestLaunches(
+    found
+      .map((l) => ({
+        token: getAddress(String(l.args.token)),
+        curve: getAddress(String(l.args.curve)),
+        deployer: getAddress(String(l.args.deployer)),
+        pairToken: getAddress(String(l.args.pairToken)),
+        threshold: l.args.graduationThreshold as bigint,
+        block: l.blockNumber ?? 0n,
+      }))
+      .filter((x) => x.token && x.curve),
+    head,
+  );
+}
+
+export interface RawLaunch {
+  token: Address;
+  curve: Address;
+  deployer: Address;
+  pairToken: Address;
+  threshold: bigint;
+  block: bigint;
+}
+
+/**
+ * Enrich and store launches, wherever they were spotted.
+ *
+ * Split out so a push source can share it with the polling sweep: both need the
+ * same metadata multicall, the same opening reserves, and the same de-dupe
+ * against what is already indexed. Whichever sees a launch first wins, and the
+ * other finds it already known and does nothing.
+ */
+export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<number> {
+  if (!fresh.length) return 0;
+  const c = logClient();
 
   const known = new Set(
     (db().prepare(`SELECT token FROM feed_tokens`).all() as { token: string }[]).map((r) => r.token),
   );
   const add = fresh.filter((x) => !known.has(x.token.toLowerCase()));
-  if (!add.length) return;
+  if (!add.length) return 0;
 
   /*
    * Metadata AND opening reserves in one call, pinned to one block.
@@ -351,6 +375,7 @@ async function sweepLaunches(head: bigint): Promise<void> {
   // takes longer than that, so without this the newest coins -- the ones anyone
   // is actually looking at -- would always show initials.
   warmImages(add.map((_, i) => (meta[i * PER + 2]?.status === "success" ? String(meta[i * PER + 2].result) : null)));
+  return add.length;
 }
 
 /**

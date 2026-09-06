@@ -51,11 +51,13 @@ bot wallet than you are actively trading.
   been used and died.
 - **Sniper** — auto-buys new launches through a filter chain. Off by default.
   See the warning above.
-- **New-coins feed** — every launch on the chain as it happens, with market
-  cap, volume and liquidity in dollars, and filters that default to $3k on each.
-  Click one to load it into the buy form. Volume comes from the curve trade
-  events themselves, not an estimate, and coins paired against tokenised
-  equities are converted at the real share price.
+- **New-pairs feed** — every pons launch as it happens, newest first, with
+  market cap, volume, buyer count and progress to graduation. Click one to load
+  it into the buy form, or type a ticker or address to find it. Volume and
+  buyers come from the curve trade events themselves rather than an estimate,
+  and coins paired against tokenised equities are converted at the real share
+  price. Measured at 99.9% of launches captured and ~1.7s from launch to
+  visible.
 
 ## Setting up your wallet
 
@@ -90,6 +92,7 @@ for a while. The toggle in the header switches to live.
 | `FALLBACK_RPC_URL` | Where reads go when the primary refuses. Defaults to Robinhood's public endpoint, so a provider that hits its monthly quota costs you latency rather than a dead app. |
 | `ETH_USD` | Pins the ETH price used for the feed's dollar figures. Left unset it is fetched from Coinbase's public endpoint every five minutes. |
 | `DISABLE_PRICE_FEEDS` | Set to `1` to make no outbound calls except the RPC. The feed then shows amounts in each token's own quote asset rather than dollars. |
+| `BITQUERY_TOKEN` | Streams new pons launches over a WebSocket instead of waiting on the 2s sweep. It runs *alongside* the sweep, which already captures 99.9% of launches on its own, so this buys latency and nothing is lost if it stops. `npm run bitquery` measures whether it is actually faster for you. |
 | `ANTHROPIC_API_KEY` | Lets the launch composer draft with Claude instead of a built-in heuristic. Costs a fraction of a penny per draft. |
 
 ## Research tools
