@@ -95,6 +95,19 @@ const TRADE_CHUNK = 400n;
 const TRADE_MAX_CHUNKS = 6;
 /** Tokens leave the feed after this long without being refreshed. */
 const KEEP_MINUTES = 180;
+
+/**
+ * How long price history is kept, separately from the feed window.
+ *
+ * The rows themselves are pruned at three hours, and pruning prices on the
+ * same clock meant a chart could only ever be as old as the app's last
+ * restart — the table is on disk and survives one, but anything older than the
+ * feed window was deleted on the next sweep regardless. Twelve hours costs
+ * roughly one row per curve per minute, which against the same three-hour
+ * population is a few hundred thousand rows at most, and means a coin still in
+ * the feed always has its full life drawn rather than a stump.
+ */
+const PRICE_KEEP_MINUTES = 720;
 /** Curves re-priced per pass. Each costs two calls inside one multicall. */
 const PRICE_BATCH = 90;
 
@@ -204,8 +217,9 @@ function migrate(): void {
    * feed_tokens holds only the CURRENT price, which is all the trading engine
    * needs and all a row needs to show — but it means there was no history to
    * draw, so the feed's sparkline had to fall back to volume. One row per
-   * curve per minute is enough to draw a line and cheap to keep: the feed
-   * window is pruned to KEEP_MINUTES, so this stays proportional to it.
+   * curve per minute is enough to draw a line and cheap to keep: retained for
+   * PRICE_KEEP_MINUTES, longer than the feed window so a chart survives a
+   * restart, and bounded by dropping curves that have left the feed.
    *
    * The write is an upsert, so the last trade in a minute wins. Deliberate —
    * a close is what a chart of minute bars is made of, and keeping every tick
@@ -856,7 +870,16 @@ function prune(): void {
   const cutoff = new Date(Date.now() - KEEP_MINUTES * 60_000).toISOString();
   db().prepare(`DELETE FROM feed_tokens WHERE created_at < ?`).run(cutoff);
   db().prepare(`DELETE FROM feed_volume WHERE bucket < ?`).run(nowBucket() - KEEP_MINUTES);
-  db().prepare(`DELETE FROM feed_prices WHERE bucket < ?`).run(nowBucket() - KEEP_MINUTES);
+  db().prepare(`DELETE FROM feed_prices WHERE bucket < ?`).run(nowBucket() - PRICE_KEEP_MINUTES);
+  /*
+   * Orphans go too. Price rows outlive the feed window on purpose, but a curve
+   * that has dropped out of feed_tokens entirely is never drawn again, so its
+   * history is dead weight — without this the longer retention would keep
+   * every curve seen in the last twelve hours instead of the ones still shown.
+   */
+  db()
+    .prepare(`DELETE FROM feed_prices WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
+    .run();
   db()
     .prepare(`DELETE FROM feed_positions WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
     .run();

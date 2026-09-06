@@ -936,12 +936,7 @@ function SniperCard({
   return (
     <div className="card" style={{ opacity: funded ? 1 : 0.55 }}>
       <div className="spread">
-        <h2 style={{ margin: 0 }}>
-          Sniper{" "}
-          <span className="muted small" style={{ fontWeight: 400 }}>
-            auto‑buy new launches
-          </span>
-        </h2>
+        <h2 className="shead">Sniper</h2>
         <div className="row" style={{ gap: 10 }}>
           <span className={cfg.enabled ? "chip chip-live" : "chip chip-off"}>
             <span className="dot" />
@@ -966,6 +961,7 @@ function SniperCard({
           />
         </div>
       </div>
+      <p className="ssub">Buys brand-new launches for you, by rule, without asking.</p>
 
       {status && (
         /*
@@ -1236,8 +1232,8 @@ function TickerWatch({
 
   return (
     <div style={{ marginTop: 14 }}>
-      <strong style={{ fontSize: 14 }}>Buy a ticker on sight</strong>
-      <p className="muted small" style={{ margin: "2px 0 8px" }}>
+      <h3 className="shead">Buy a ticker on sight</h3>
+      <p className="ssub">
         For when you already know a coin is coming and what it will be called. A match
         skips the waiting and the quality checks — but never the tax check or your
         spend limits.

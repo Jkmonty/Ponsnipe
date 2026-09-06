@@ -116,9 +116,12 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  background: rgba(8, 10, 16, 0.82);
-  backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--line);
+  /* Frosted, so the feed scrolling underneath is visible but never legible
+     enough to compete with the bar's own contents. */
+  background: linear-gradient(180deg, rgba(18, 22, 33, 0.78), rgba(10, 12, 19, 0.62));
+  backdrop-filter: blur(18px) saturate(1.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 8px 28px -20px #000;
 }
 .topbar .lockup { gap: 11px; }
 .topbar h1 { font-size: 19px; letter-spacing: -0.015em; }
@@ -161,6 +164,43 @@ h1 {
   font-weight: 700;
   letter-spacing: -0.01em;
   margin: 0 0 14px;
+}
+
+/*
+ * Section headings, made to actually head something.
+ *
+ * "Sniper" and "Buy a ticker on sight" were the same weight and colour as the
+ * body around them with a grey clause trailing off the end, so the eye read
+ * straight past the thing that tells you what the controls below it do. The
+ * accent rule gives each block a visible start; the subtitle drops to its own
+ * line so the title is a title rather than the front of a sentence.
+ */
+.card h2.shead,
+.card h3.shead,
+.shead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+.shead::before {
+  content: "";
+  flex: none;
+  width: 3px;
+  align-self: stretch;
+  min-height: 17px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+}
+.ssub {
+  margin: 3px 0 13px 13px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
 }
 
 .row {
@@ -618,13 +658,44 @@ h2 {
   font-size: 15px;
 }
 
+/*
+ * Glass surfaces.
+ *
+ * The page carries three coloured washes; letting the cards sit slightly
+ * translucent over them means each one picks up whatever it is in front of
+ * instead of being the same flat rectangle everywhere. The blur is what keeps
+ * that from turning into noise — without it the washes read through as muddy
+ * banding behind the text.
+ *
+ * Applied to the CARDS and the bars, never to a feed row: backdrop-filter is
+ * composited per element, and 250 of them would hand the GPU a blur pass per
+ * row on every two-second repaint.
+ */
 .card {
   border-radius: var(--radius);
-  border: 1px solid var(--line);
+  border: 1px solid rgba(255, 255, 255, 0.075);
   box-shadow: var(--shadow);
+  background-color: rgba(20, 24, 35, 0.72);
+  backdrop-filter: blur(20px) saturate(1.4);
   /* A hairline of light along the top edge — the cheapest way to make a flat
      surface look lit rather than pasted on. */
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 46%);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 46%);
+}
+
+/*
+ * Backdrop blur needs something behind it to be worth anything, and it is the
+ * one property here that silently does nothing when unsupported. Where it is
+ * missing the cards fall back to an opaque surface rather than a washed-out
+ * translucent one that would leave text sitting on the page gradients.
+ *
+ * Note there is no hand-written -webkit- prefix anywhere above. The build adds
+ * prefixes itself, and writing both made it emit ONLY the prefixed property —
+ * so the blur was silently absent while the translucency stayed, which is the
+ * exact muddy result this was meant to avoid.
+ */
+@supports not (backdrop-filter: blur(1px)) {
+  .card { background-color: var(--card); }
+  .topbar { background: rgba(10, 12, 19, 0.97); }
 }
 
 .btn {
@@ -957,6 +1028,13 @@ h2 {
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
+}
+.fhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: linear-gradient(180deg, rgba(20, 24, 35, 0.94), rgba(20, 24, 35, 0.72));
+  backdrop-filter: blur(10px);
 }
 .feedfind {
   flex: 1 1 auto;
