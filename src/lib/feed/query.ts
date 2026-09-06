@@ -100,7 +100,14 @@ export async function readFeed(
              SELECT curve, COUNT(*) AS holders FROM feed_buyers GROUP BY curve
            ) h ON h.curve = t.curve
           WHERE t.created_at >= ? AND t.graduated = 0
-          ORDER BY t.created_at DESC
+          -- Chain order, not insert order.
+          --
+          -- Sorting on created_at looked right and was not: every token found
+          -- in one sweep is written with the same timestamp, so 1,675 of 3,282
+          -- rows tied with at least one other and SQLite returned those ties
+          -- in whatever order it liked. Some spanned 134 blocks, so coins
+          -- thirteen seconds apart on chain were shuffled together.
+          ORDER BY t.launch_block DESC, t.log_index DESC
           LIMIT ?`,
       )
       .all(Math.floor(Date.now() / 60_000) - 1440, since, depth) as unknown as Raw[];

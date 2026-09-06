@@ -143,7 +143,10 @@ function migrate(): void {
       phantom         TEXT,
       -- Block the reserves are true as of. Events at or before it are already
       -- baked in and must not be applied twice.
-      reserves_block  INTEGER DEFAULT 0
+      reserves_block  INTEGER DEFAULT 0,
+      -- Position within its block, so two launches in the same block keep the
+      -- order the chain put them in.
+      log_index       INTEGER DEFAULT 0
     );
   `);
   for (const [col, decl] of [
@@ -151,6 +154,7 @@ function migrate(): void {
     ["token_reserve", "TEXT"],
     ["phantom", "TEXT"],
     ["reserves_block", "INTEGER DEFAULT 0"],
+    ["log_index", "INTEGER DEFAULT 0"],
   ] as const) {
     try {
       conn.exec(`ALTER TABLE feed_tokens ADD COLUMN ${col} ${decl};`);
@@ -158,6 +162,8 @@ function migrate(): void {
       /* already present */
     }
   }
+  // Chain order, which is what the feed sorts on.
+  conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_block ON feed_tokens(launch_block DESC, log_index DESC);`);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_created ON feed_tokens(created_at DESC);`);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_curve ON feed_tokens(curve);`);
 
@@ -254,6 +260,7 @@ async function sweepLaunches(head: bigint): Promise<void> {
         pairToken: getAddress(String(l.args.pairToken)),
         threshold: l.args.graduationThreshold as bigint,
         block: l.blockNumber ?? 0n,
+        logIndex: l.logIndex ?? 0,
       }))
       .filter((x) => x.token && x.curve),
     head,
@@ -267,6 +274,8 @@ export interface RawLaunch {
   pairToken: Address;
   threshold: bigint;
   block: bigint;
+  /** Position within the block. Two launches in one block are ordered by it. */
+  logIndex: number;
 }
 
 /**
@@ -310,10 +319,10 @@ export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<
   const ins = db().prepare(
     `INSERT OR IGNORE INTO feed_tokens
        (token, curve, deployer, symbol, name, logo, quote_token, quote_symbol,
-        quote_decimals, quote_is_native, threshold, launch_block, created_at,
+        quote_decimals, quote_is_native, threshold, launch_block, log_index, created_at,
         quote_reserve, token_reserve, phantom, reserves_block,
         price, mcap, liquidity, progress_pct, priced_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   );
   const at = new Date().toISOString();
   for (let i = 0; i < add.length; i++) {
@@ -352,6 +361,7 @@ export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<
       isNative ? 1 : 0,
       threshold,
       Number(x.block),
+      x.logIndex,
       at,
       rv?.status === "success" ? q.toString() : null,
       rv?.status === "success" ? t.toString() : null,
