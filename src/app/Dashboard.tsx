@@ -92,19 +92,23 @@ export default function Dashboard() {
     setTimeout(() => setToast(null), 7000);
   }, []);
 
+  /*
+   * Three independent reads, settled independently.
+   *
+   * Promise.all meant one failing endpoint rejected the lot and the catch
+   * swallowed it, so a positions read that errored would leave `wallet` null
+   * — and a null wallet renders "set up your trading wallet" at somebody who
+   * has funds in one. Nothing here depends on anything else here.
+   */
   const refresh = useCallback(async () => {
-    try {
-      const [w, e, p] = await Promise.all([
-        fetch("/api/wallet").then((r) => r.json()),
-        fetch("/api/engine").then((r) => r.json()),
-        fetch("/api/positions").then((r) => r.json()),
-      ]);
-      setWallet(w);
-      setEngine(e);
-      setPositions(p.positions ?? []);
-    } catch {
-      /* transient */
-    }
+    const [w, e, p] = await Promise.allSettled([
+      fetch("/api/wallet").then((r) => r.json()),
+      fetch("/api/engine").then((r) => r.json()),
+      fetch("/api/positions").then((r) => r.json()),
+    ]);
+    if (w.status === "fulfilled") setWallet(w.value);
+    if (e.status === "fulfilled") setEngine(e.value);
+    if (p.status === "fulfilled") setPositions(p.value?.positions ?? []);
   }, []);
 
   useEffect(() => {
@@ -233,8 +237,14 @@ export default function Dashboard() {
         "Step 2" with no Step 1 anywhere on the page reads as something failing
         to render rather than as something already done.
       */}
-      {!funded && <Steps done={wallet?.configured ? 1 : 0} />}
-      {!wallet?.configured ? (
+      {wallet !== null && !funded && <Steps done={wallet.configured ? 1 : 0} />}
+      {/*
+        null means "not read yet", which is not the same as "you have no
+        wallet". Rendering the setup card while the first fetch is in flight
+        told everyone with a funded wallet, on every page load, that it was
+        gone. Show nothing until we know.
+      */}
+      {wallet === null ? null : !wallet.configured ? (
         <div className="card">
           <h2>Set up your trading wallet</h2>
           <p className="muted small" style={{ marginTop: 0 }}>

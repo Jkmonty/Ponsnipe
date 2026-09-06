@@ -11,6 +11,8 @@ interface Row {
   quoteSymbol: string;
   ageMinutes: number;
   trades: number;
+  buys: number;
+  sells: number;
   holders: number;
   progressPct: number;
   devLaunches: number;
@@ -37,12 +39,20 @@ interface Payload {
 /** Compact money: $12.3k, $1.2M — the feed has no room for full numbers. */
 function money(n: number | null): string {
   if (n == null) return "—";
+  // A brand-new coin has no volume by definition, and a column of "$0.00"
+  // reads as a broken number rather than an empty one.
+  if (n === 0) return "—";
   const a = Math.abs(n);
   if (a >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
   if (a >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
   if (a >= 1e3) return `$${(n / 1e3).toFixed(1)}k`;
   if (a >= 1) return `$${n.toFixed(0)}`;
   return `$${n.toFixed(2)}`;
+}
+
+/** 0x31a4…1d07 — enough to recognise a token you already know. */
+function shortAddr(a: string): string {
+  return a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
 }
 
 function age(m: number): string {
@@ -177,10 +187,22 @@ const FeedRow = memo(function FeedRow({
         <div className="fline1">
           <strong className="ellip">{r.symbol}</strong>
           <span className="muted small ellip fname">{r.name}</span>
-          <span className="num small fmc">{money(r.mcapUsd)}</span>
+          {soc && (
+            <a
+              className="fsoc ellip"
+              href={soc.href}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              title={soc.href}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {soc.label}
+            </a>
+          )}
         </div>
 
         <div className="fline2 muted small">
+          <span className="faddr" title={r.token}>{shortAddr(r.token)}</span>
           <span className="fstat" title="age">{age(r.ageMinutes)}</span>
           <span className="fstat" title="holders still holding">
             <i className="fi">H</i>
@@ -201,20 +223,16 @@ const FeedRow = memo(function FeedRow({
               {r.snipers}
             </span>
           )}
-          {soc && (
-            <a
-              className="fsoc ellip"
-              href={soc.href}
-              target="_blank"
-              rel="noopener noreferrer nofollow"
-              title={soc.href}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {soc.label}
-            </a>
+          {r.trades > 0 && (
+            <span className="fstat" title={`${r.buys} buys, ${r.sells} sells`}>
+              <i className="fi">B/S</i>
+              <span className="pos">{r.buys}</span>
+              <span className="muted">/</span>
+              <span className="neg">{r.sells}</span>
+            </span>
           )}
-          <span className="num fvol" title="volume">
-            {money(r.volumeUsd)}
+          <span className="fquote muted" title="what this curve trades against">
+            {r.quoteSymbol}
           </span>
         </div>
 
@@ -238,6 +256,17 @@ const FeedRow = memo(function FeedRow({
           </span>
         </div>
       </div>
+
+      <span className="fnum num" title="market cap">
+        {money(r.mcapUsd)}
+      </span>
+      <span className="fnum num" title="volume">
+        {money(r.volumeUsd)}
+      </span>
+      <span className="fnum num" title="trades">
+        {r.trades || "—"}
+        <small>{r.holders ? `${r.holders} hold` : ""}</small>
+      </span>
     </div>
   );
 },
@@ -247,6 +276,8 @@ const FeedRow = memo(function FeedRow({
   a.r.mcapUsd === b.r.mcapUsd &&
   a.r.volumeUsd === b.r.volumeUsd &&
   a.r.trades === b.r.trades &&
+  a.r.buys === b.r.buys &&
+  a.r.sells === b.r.sells &&
   a.r.holders === b.r.holders &&
   a.r.devHoldRate === b.r.devHoldRate &&
   a.r.devSold === b.r.devSold &&
@@ -349,8 +380,10 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       )}
 
       <div className="fhead">
-        <span>Coin · age · holders · trades · snipers</span>
-        <span>MC / Vol</span>
+        <span>Coin</span>
+        <span className="ta-r">MC</span>
+        <span className="ta-r">Vol</span>
+        <span className="ta-r">Tx</span>
       </div>
 
       <div

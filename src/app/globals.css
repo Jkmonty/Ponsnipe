@@ -370,7 +370,7 @@ a:hover {
  */
 .cols3 {
   display: grid;
-  grid-template-columns: minmax(0, 430px) minmax(0, 700px) minmax(0, 290px);
+  grid-template-columns: minmax(0, 320px) minmax(0, 780px) minmax(0, 300px);
   justify-content: center;
   gap: 14px;
   align-items: start;
@@ -812,11 +812,14 @@ h2 {
 }
 
 /* ── two-column shell ────────────────────────────────────────────────
-   Feed left, everything you act on right. Below 1100px the feed moves
-   above the workflow rather than shrinking into an unreadable column. */
+   The feed IS the page: it takes the flexible column and the panel you act
+   on is the fixed sidebar. It was the other way round, and at 436px the row
+   could not hold an address, a buy/sell split and its numbers at once — the
+   density this is modelled on comes from width more than from styling.
+   Below 1100px the feed moves above the workflow rather than shrinking. */
 .cols {
   display: grid;
-  grid-template-columns: 436px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 392px;
   gap: 16px;
   align-items: start;
 }
@@ -875,16 +878,19 @@ h2 {
  * fit a third line, so the money moved onto the lines it belongs to and the
  * panel got wider. There is no column header to line up with any more.
  */
-.frow-item {
+.frow-item,
+.fhead {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: 44px minmax(0, 1fr) 82px 82px 64px;
+  gap: 10px;
   align-items: start;
 }
+/* Header skips the avatar column, so it is indented by that column plus the
+   gap to sit over the numbers it labels. */
 .fhead {
-  display: flex;
-  justify-content: space-between;
-  padding: 0 8px 6px;
+  grid-template-columns: minmax(0, 1fr) 82px 82px 64px;
+  align-items: baseline;
+  padding: 0 9px 6px 63px;
   font-size: 11px;
   letter-spacing: .06em;
   text-transform: uppercase;
@@ -924,9 +930,12 @@ h2 {
 .fline1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .fname { flex: 1 1 auto; min-width: 0; }
 .fmc { flex: none; font-size: 12px; font-weight: 600; }
+.fline2 { flex-wrap: wrap; row-gap: 2px; }
 
 .fline2 { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .fvol { flex: 1 0 auto; margin-left: auto; text-align: right; font-size: 11.5px; }
+.fline3 { margin-top: 1px; }
+.fquote { margin-left: auto; font-size: 10.5px; }
 .fstat { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 /* A one-letter glyph rather than an icon font: it needs no network request and
    stays legible at 9px, which a scaled-down SVG does not. */
@@ -944,7 +953,9 @@ h2 {
 /* Progress to graduation. The bar is the field, the text sits on top of it. */
 .fbond {
   position: relative;
-  flex: 1 1 auto;
+  /* Capped. Left to grow it spanned the whole of the main column, which made
+     a 3% bar look like the most important thing on the row. */
+  flex: 0 1 220px;
   min-width: 70px;
   height: 14px;
   border-radius: 7px;
@@ -982,6 +993,22 @@ h2 {
 }
 .fsoc:hover { color: var(--text); text-decoration: underline; }
 .frow-item .small { font-size: 11.5px; }
+/* Bigger than the 32px the sniper list uses — this is the main column now. */
+.frow-item .savatar { width: 44px; height: 44px; font-size: 13px; }
+
+/* The numeric columns. Aligned to the first line, not centred on the row. */
+.fnum {
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  padding-top: 1px;
+}
+.fnum small { display: block; font-weight: 400; font-size: 10.5px; color: var(--muted); }
+.faddr {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  opacity: .8;
+}
 
 /* Group heading inside the feed list. Sticky so the label stays readable while
    scrolling a section that is longer than the pane. */
