@@ -11,14 +11,25 @@
  */
 :root {
   color-scheme: dark;
-  --bg: #07080c;
-  --bg-2: #0b0d13;
-  --card: #101219;
-  --card-2: #171a24;
-  --line: #21252f;
-  --line-2: #2d3341;
-  --text: #f2f4f8;
-  --muted: #8b93a6;
+  /*
+   * Four steps of depth, spaced far enough apart to be seen.
+   *
+   * The old set ran #07080c / #0b0d13 / #101219 / #171a24 — the page, a card
+   * and a row inside it were within nine values of each other, so nothing sat
+   * on top of anything and the interface read as one flat grey field. Each
+   * step is now a clear lift, and the lines are light enough to actually draw.
+   */
+  --bg: #05060a;
+  --bg-2: #0a0c13;
+  --card: #12151f;
+  --card-2: #1b2030;
+  --line: #262c3a;
+  --line-2: #374054;
+  --text: #f4f6fa;
+  /* Lifted from #8b93a6: at 11px on these surfaces the old value sat under
+     4.5:1 and the row metadata was genuinely hard to read. */
+  --muted: #99a1b5;
+  --muted-2: #6e7689;
   /* Robin Hood: Lincoln green and the gold he took. Gold leads because green
      and red are already spoken for by profit and loss, and a brand colour that
      doubles as a P&L signal makes both harder to read. */
@@ -41,6 +52,19 @@
 
 * {
   box-sizing: border-box;
+}
+
+/*
+ * Every figure in this app sits in a column under another figure, and the
+ * default proportional digits made those columns ragged — a 1 is half the
+ * width of a 0, so $1.1k and $8.8k did not align at the decimal.
+ */
+.num,
+.mono,
+.fnum,
+input.input {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
 body {
@@ -74,7 +98,41 @@ body {
 .wrap {
   max-width: 1460px;
   margin: 0 auto;
-  padding: 28px 18px 80px;
+  padding: 0 18px 80px;
+}
+
+/*
+ * The top bar. This was a heading and a paragraph sitting loose on the page
+ * with the live/dry switch drifting off to the right, which gave the app no
+ * edge to start at. A full-width bar with a rule under it anchors both.
+ */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0 -18px 18px;
+  padding: 14px 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: rgba(8, 10, 16, 0.82);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+.topbar .lockup { gap: 11px; }
+.topbar h1 { font-size: 19px; letter-spacing: -0.015em; }
+.topbar .sub {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted-2);
+  border-left: 1px solid var(--line-2);
+  padding-left: 13px;
+  margin-left: 2px;
+}
+@media (max-width: 780px) {
+  .topbar { padding: 12px 16px; }
+  .topbar .sub { display: none; }
 }
 
 h1 {
@@ -99,8 +157,9 @@ h1 {
 }
 
 .card h2 {
-  font-size: 16px;
-  font-weight: 650;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   margin: 0 0 14px;
 }
 
@@ -181,6 +240,8 @@ label.field > span {
 .btn-primary {
   background: var(--accent);
   color: var(--on-accent);
+  border-color: transparent;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .18) inset, 0 6px 18px -8px var(--accent-glow);
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-press);
@@ -712,6 +773,23 @@ h2 {
   background: var(--card);
   border: 1px solid var(--line-2);
 }
+/*
+ * A warning you can actually read. A block of amber body copy is a wall the
+ * eye slides off; a rule down the left and a calmer body colour keeps the
+ * emphasis on the fact that this is a caution without shouting the content.
+ */
+.note-warn {
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border-left: 2px solid var(--amber);
+  border-radius: 0 8px 8px 0;
+  background: var(--amber-bg);
+  color: #f0d3b6;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.note-warn strong { color: var(--amber); }
+
 .pill-hot {
   color: var(--green);
   background: var(--green-bg);
@@ -865,12 +943,47 @@ h2 {
 /* ── feed ───────────────────────────────────────────────────────────── */
 .feed {
   position: sticky;
-  top: 16px;
-  max-height: calc(100vh - 32px);
+  top: 74px;
+  max-height: calc(100vh - 90px);
   display: flex;
   flex-direction: column;
-  padding: 16px;
+  padding: 16px 16px 6px;
 }
+.feed h2 { margin-bottom: 0; flex: none; }
+
+.feedhead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.feedfind {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 11px;
+  font-size: 12.5px;
+}
+
+/* Live/paused, as a state light rather than a word that appears and vanishes
+   and shifts the row beside it. */
+.livedot {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--green);
+  letter-spacing: .04em;
+}
+.livedot i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 3px rgba(47, 212, 143, .16);
+}
+.livedot-held { color: var(--amber); }
+.livedot-held i { box-shadow: 0 0 0 3px rgba(255, 145, 66, .16); }
 @media (max-width: 1100px) {
   .feed { position: static; max-height: none; }
 }
@@ -920,14 +1033,36 @@ h2 {
 .fhead {
   grid-template-columns: minmax(0, 1fr) 82px 82px 82px 58px;
   align-items: baseline;
-  padding: 0 9px 6px 59px;
-  font-size: 11px;
-  letter-spacing: .06em;
+  padding: 0 9px 7px 59px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--muted-2);
   border-bottom: 1px solid var(--line);
 }
 .ta-r { text-align: right; }
+
+/*
+ * Scrollbars. The default Windows bar is a wide light-grey slab that sits
+ * inside a dark panel looking like something failed to load — and the feed has
+ * a permanent one, so it was the brightest object on the page.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 999px;
+  /* Inset by a transparent border so the thumb reads as a slim pill rather
+     than filling the gutter edge to edge. */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #47526b; background-clip: padding-box; }
 
 .flist {
   overflow-y: auto;
@@ -949,12 +1084,40 @@ h2 {
   cursor: pointer;
   transition: background .12s ease, border-color .12s ease;
 }
+/*
+ * Rows need a floor and a clearer hover.
+ *
+ * With no rule between them 250 near-identical rows ran together into one
+ * field, and the hover only lifted the background a few values so it was easy
+ * to lose which row the cursor was on — the thing you are about to click and
+ * spend money on.
+ */
+.frow-item {
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+.frow-item:last-child { border-bottom: 0; }
 .frow-item:hover {
   background: var(--card-2);
-  border-color: var(--line-2);
+  border-color: var(--line);
+  border-bottom-color: var(--line);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.frow-item:focus-visible {
+  outline: none;
+  background: var(--card-2);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .fmain { min-width: 0; display: grid; gap: 2px; }
-.fmain strong { font-size: 13px; }
+/* The ticker is the thing you are looking for; everything else on the row is
+   support. It was 13px against 11.5px metadata, which is not a step. */
+.fmain strong {
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.fname { color: var(--muted-2); font-size: 11.5px; }
 
 /* The row, in three lines: identity, activity, and what to make of it. */
 .fline1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
@@ -962,12 +1125,13 @@ h2 {
 .fmc { flex: none; font-size: 12px; font-weight: 600; }
 
 
-.fline2 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.fline2 { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted-2); }
 .fvol { flex: 1 0 auto; margin-left: auto; text-align: right; font-size: 11.5px; }
 .fquote { font-size: 10.5px; }
 /* Pills and the bar sit at the right of line two, which is what fills the gap
    the old three-line row left across the middle of a 700px column. */
-.fline2 .pill { flex: none; margin-left: 0; }
+.fline2 .pill {
+  border: 1px solid var(--line); flex: none; margin-left: 0; }
 .fbond-wrap { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
 .fstat { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 /* A one-letter glyph rather than an icon font: it needs no network request and
@@ -986,6 +1150,7 @@ h2 {
 /* Progress to graduation. The bar is the field, the text sits on top of it. */
 .fbond {
   position: relative;
+  border: 1px solid var(--line);
   /* Fixed, not flexible. Left to grow it spanned the whole of the main
      column, which made a 3% bar look like the most important thing there. */
   flex: none;
@@ -998,7 +1163,7 @@ h2 {
 .fbond-fill {
   position: absolute;
   inset: 0 auto 0 0;
-  background: linear-gradient(90deg, #1f6f4a, #35b37e);
+  background: linear-gradient(90deg, #1d6d47, #3ecb8d);
   transition: width .2s ease;
 }
 .fbond-txt {
@@ -1031,12 +1196,16 @@ h2 {
 .frow-item .savatar { width: 40px; height: 40px; font-size: 12px; }
 
 /* The numeric columns. Aligned to the first line, not centred on the row. */
+/* Market cap leads; volume and liquidity support it. All three were the same
+   weight and colour, so the eye had nowhere to land. */
 .fnum {
   text-align: right;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
+  color: var(--muted);
 }
-.fnum small { display: block; font-weight: 400; font-size: 10.5px; color: var(--muted); }
+.fnum:first-of-type { color: var(--text); font-weight: 700; }
+.fnum small { display: block; font-weight: 400; font-size: 10px; color: var(--muted-2); }
 .faddr {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10.5px;

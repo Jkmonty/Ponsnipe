@@ -348,7 +348,12 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
 
   return (
     <aside className="feed card">
-      <div className="spread" style={{ alignItems: "baseline" }}>
+      {/*
+        One line of chrome, not three. The title, the count, the live/paused
+        state, the finder and the ETH price were four stacked blocks eating
+        ~90px above the first row — on the column that IS the page.
+      */}
+      <div className="feedhead">
         <h2 style={{ margin: 0 }}>
           New coins{" "}
           <span className="muted" style={{ fontWeight: 400 }}>
@@ -356,21 +361,22 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
             {find.trim() && all.length !== rows.length ? ` of ${all.length}` : ""}
           </span>
         </h2>
-        {held && <span className="muted small">paused</span>}
+        <span className={`livedot${held ? " livedot-held" : ""}`} title={held ? "Paused while you hover" : "Live"}>
+          <i />
+          {held ? "paused" : "live"}
+        </span>
+        <input
+          className="input feedfind"
+          placeholder="Find a ticker, name or address"
+          value={find}
+          onChange={(e) => setFind(e.target.value)}
+        />
+        {data?.ethUsd ? (
+          <span className="muted small num" style={{ flex: "none" }}>
+            ETH ${Math.round(data.ethUsd).toLocaleString()}
+          </span>
+        ) : null}
       </div>
-
-      <input
-        className="input"
-        style={{ margin: "8px 0 4px", padding: "7px 10px", fontSize: 13 }}
-        placeholder="Find a ticker, name or address"
-        value={find}
-        onChange={(e) => setFind(e.target.value)}
-      />
-
-      <p className="muted small" style={{ margin: "4px 0 10px" }}>
-        Every pons launch, newest first, straight from the chain.{" "}
-        {data?.ethUsd ? `ETH $${Math.round(data.ethUsd).toLocaleString()}.` : ""}
-      </p>
 
       {err && <p className="neg small">{err}</p>}
       {!err && data && !data.status.running && (

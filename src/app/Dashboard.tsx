@@ -185,10 +185,10 @@ export default function Dashboard() {
 
   return (
     <div className="wrap">
-      <div className="spread" style={{ marginBottom: 20 }}>
-        <div>
+      <header className="topbar">
+        <div className="row" style={{ gap: 0, minWidth: 0 }}>
           <div className="lockup">
-            <Logo size={30} />
+            <Logo size={32} />
             <h1>Ponsnipe</h1>
           </div>
           <p className="sub">Pick your target. Take the shot. Walk away.</p>
@@ -206,7 +206,7 @@ export default function Dashboard() {
             title={live ? "Switch to dry-run" : "Enable live trading"}
           />
         </div>
-      </div>
+      </header>
 
       {engine?.status.rpcSlow && (
         <div
@@ -1265,11 +1265,11 @@ function TickerWatch({
         </button>
       </div>
 
-      <p className="small" style={{ color: "var(--amber)", margin: "8px 0 0" }}>
-        Without a maker address this buys <em>any</em> coin with that ticker. Anyone can
-        use any ticker, and they do — in three hours of launches, 27% of tickers were
-        already taken, VLAD appeared 65 times from 51 different makers and TRUMP 19
-        times from 18. Expect to be beaten to it by a copy.
+      <p className="note-warn">
+        <strong>Add the maker&rsquo;s address.</strong> Without it this buys any coin using
+        that ticker — and tickers get reused constantly. In three hours of launches, 27%
+        were already taken: VLAD 65 times from 51 different makers. Expect a copy to beat
+        the real one to it.
       </p>
 
       {list.length > 0 && (
