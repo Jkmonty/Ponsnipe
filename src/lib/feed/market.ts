@@ -270,12 +270,8 @@ export interface RawLaunch {
 }
 
 /**
- * Enrich and store launches, wherever they were spotted.
- *
- * Split out so a push source can share it with the polling sweep: both need the
- * same metadata multicall, the same opening reserves, and the same de-dupe
- * against what is already indexed. Whichever sees a launch first wins, and the
- * other finds it already known and does nothing.
+ * Enrich and store launches: metadata, opening reserves, and a de-dupe against
+ * what is already indexed.
  */
 export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<number> {
   if (!fresh.length) return 0;
