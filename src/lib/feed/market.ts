@@ -648,6 +648,65 @@ async function sweepPrices(head: bigint): Promise<void> {
   }
 }
 
+/**
+ * Re-read metadata for rows that never got it.
+ *
+ * Tokens are inserted once, with whatever the metadata multicall returned, and
+ * a call that failed was never retried — so a token whose symbol read missed
+ * stayed "???" for as long as it was in the feed. Measured at 7 rows in 250,
+ * three of them over ten minutes old and stuck.
+ *
+ * It matters past appearances: quote_decimals falls back to 18, and a quote
+ * asset that actually has 6 (USDG, and every stablecoin here) would put the
+ * market cap out by a factor of a million.
+ */
+async function repairMetadata(): Promise<void> {
+  const rows = db()
+    .prepare(
+      `SELECT token, quote_token, quote_is_native FROM feed_tokens
+        WHERE (symbol IS NULL OR symbol = '' OR symbol = '???'
+               OR (quote_is_native = 0 AND (quote_symbol IS NULL OR quote_symbol = '?')))
+        ORDER BY created_at DESC LIMIT 25`,
+    )
+    .all() as { token: string; quote_token: string | null; quote_is_native: number }[];
+  if (!rows.length) return;
+
+  const PER = 5;
+  const res = await logClient().multicall({
+    contracts: rows.flatMap((r) => {
+      const quote = getAddress((r.quote_token ?? NATIVE) as Address);
+      return [
+        { address: getAddress(r.token), abi: erc20Abi, functionName: "symbol" as const },
+        { address: getAddress(r.token), abi: erc20Abi, functionName: "name" as const },
+        { address: getAddress(r.token), abi: erc20Abi, functionName: "logo" as const },
+        { address: quote, abi: erc20Abi, functionName: "symbol" as const },
+        { address: quote, abi: erc20Abi, functionName: "decimals" as const },
+      ];
+    }),
+    allowFailure: true,
+  });
+
+  const upd = db().prepare(
+    `UPDATE feed_tokens
+        SET symbol = COALESCE(?, symbol), name = COALESCE(?, name),
+            logo = COALESCE(?, logo), quote_symbol = COALESCE(?, quote_symbol),
+            quote_decimals = COALESCE(?, quote_decimals)
+      WHERE token = ?`,
+  );
+  const logos: (string | null)[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const cell = (k: number) => res[i * PER + k];
+    const str = (k: number) => (cell(k)?.status === "success" ? String(cell(k).result) : null);
+    const isNative = rows[i].quote_is_native === 1;
+    const qSym = isNative ? "ETH" : str(3);
+    const qDec = isNative ? 18 : cell(4)?.status === "success" ? Number(cell(4).result) : null;
+    const logo = str(2);
+    logos.push(logo);
+    upd.run(str(0), str(1), logo, qSym, qDec, rows[i].token);
+  }
+  warmImages(logos);
+}
+
 /** Drop what has scrolled out of the window so the tables stay small. */
 function prune(): void {
   const cutoff = new Date(Date.now() - KEEP_MINUTES * 60_000).toISOString();
@@ -689,6 +748,7 @@ async function sweep(): Promise<void> {
     if (s.sweeps % HEAVY_EVERY === 0) {
       ok.push(await stage("trades", () => sweepTrades(head)));
       ok.push(await stage("prices", () => sweepPrices(head)));
+      ok.push(await stage("metadata", () => repairMetadata()));
     }
     if (s.sweeps % 300 === 0) prune();
     s.sweeps += 1;
