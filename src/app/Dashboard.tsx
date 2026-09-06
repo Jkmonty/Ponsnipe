@@ -439,6 +439,13 @@ function BuyCard({
   const [buying, setBuying] = useState(false);
   const last = useRef("");
   const lookupRef = useRef<() => void>(() => {});
+  /** The card itself, so picking a coin can bring it to you. */
+  const cardRef = useRef<HTMLDivElement>(null);
+  /** The amount field, so the only thing left to do is say how much. */
+  const ethRef = useRef<HTMLInputElement>(null);
+  const [arrived, setArrived] = useState(false);
+  /** Set when a pick is in flight, so the focus can wait for the lookup. */
+  const wantFocus = useRef(false);
 
   const targets = useMemo(() => {
     if (mode === "custom") {
@@ -473,15 +480,45 @@ function BuyCard({
   }, [addr, flash]);
   lookupRef.current = lookup;
 
-  // Picking from the feed fills the box and looks the coin up, so the list and
-  // the buy form are one flow rather than a copy-paste between two panels.
+  /*
+   * Picking from the feed fills the box, looks the coin up, brings this card
+   * to the top of the screen and puts the cursor in the amount field.
+   *
+   * Filling the box was already happening and was not enough: the panel is
+   * long, so on a scrolled page the thing that just changed was off-screen and
+   * the click looked like it had done nothing. What is left after this is type
+   * an amount and press Buy — which is the whole point of a sniper.
+   *
+   * The cursor deliberately lands on the amount and not on Buy. Focusing the
+   * button would make a stray Enter spend money.
+   */
   useEffect(() => {
     if (!picked) return;
     setAddr(picked.address);
     setSnap(null);
+    setArrived(true);
+    wantFocus.current = true;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     const t = setTimeout(() => lookupRef.current(), 0);
-    return () => clearTimeout(t);
+    const cool = setTimeout(() => setArrived(false), 1100);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(cool);
+    };
   }, [picked]);
+
+  /*
+   * Focus once the coin is actually on screen.
+   *
+   * The amount field does not exist until the lookup returns and the snapshot
+   * renders, so focusing on a timer after the click raced the network and lost
+   * — measured landing on nothing. Waiting for `snap` is the real signal.
+   */
+  useEffect(() => {
+    if (!snap || !wantFocus.current) return;
+    wantFocus.current = false;
+    ethRef.current?.select();
+  }, [snap]);
 
   const submit = async () => {
     if (!snap) return;
@@ -529,7 +566,7 @@ function BuyCard({
   const g = snap?.graduation;
 
   return (
-    <div className="card">
+    <div className={`card${arrived ? " card-arrived" : ""}`} ref={cardRef}>
       <h2>Buy a token</h2>
       {/*
         Looking up a token reads the chain and costs nothing, so it must work
@@ -591,6 +628,7 @@ function BuyCard({
             <div className="row" style={{ gap: 8 }}>
               <input
                 className="input"
+                ref={ethRef}
                 value={eth}
                 onChange={(e) => setEth(e.target.value)}
                 style={{ maxWidth: 140 }}
