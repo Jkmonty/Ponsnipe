@@ -426,6 +426,31 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
    * -- which is a findability problem rather than a data one.
    */
   const [find, setFind] = useState("");
+  const findRef = useRef<HTMLInputElement>(null);
+  /*
+   * Which modifier to name in the hint.
+   *
+   * Read once on mount rather than during render: the server has no navigator,
+   * so branching on it while rendering would make the first client paint
+   * disagree with the server's HTML.
+   */
+  const [isMac, setIsMac] = useState(false);
+  useEffect(() => {
+    setIsMac(/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent));
+  }, []);
+
+  /** Cmd/Ctrl-K jumps to the finder from anywhere on the page. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        findRef.current?.focus();
+        findRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const load = useCallback(async () => {
     if (heldRef.current) return;
@@ -489,7 +514,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
   }, [all, find]);
 
   return (
-    <aside className="feed card">
+    <aside className="feed card glow">
       {/*
         One line of chrome, not three. The title, the count, the live/paused
         state, the finder and the ETH price were four stacked blocks eating
@@ -507,12 +532,22 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
           <i />
           {held ? "paused" : "live"}
         </span>
-        <input
-          className="input feedfind"
-          placeholder="Find a ticker, name or address"
-          value={find}
-          onChange={(e) => setFind(e.target.value)}
-        />
+        <div className="findwrap">
+          <svg className="findicon" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" strokeWidth="1.6" />
+            <path d="M10.6 10.6 L14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+          <input
+            ref={findRef}
+            className="input feedfind"
+            placeholder="Search tokens"
+            value={find}
+            onChange={(e) => setFind(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setFind("")}
+          />
+          {/* The shortcut is shown because it exists, not as decoration. */}
+          <kbd className="findkbd">{isMac ? "⌘ K" : "Ctrl K"}</kbd>
+        </div>
         {data?.ethUsd ? (
           <span className="muted small num" style={{ flex: "none" }}>
             ETH ${Math.round(data.ethUsd).toLocaleString()}

@@ -249,8 +249,8 @@ label.field > span {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--line-2);
-  border-radius: 10px;
-  padding: 11px 12px;
+  border-radius: 999px;
+  padding: 11px 16px;
   color: var(--text);
   font-size: 15px;
   outline: none;
@@ -292,6 +292,11 @@ label.field > span {
   font-size: 16px;
   width: 100%;
 }
+/* Anything multi-line has to stay a rounded rectangle — a pill round a
+   textarea bows its own corners into the text. */
+textarea.input,
+.input[rows] { border-radius: 14px; }
+
 .btn-sm {
   padding: 7px 12px;
   font-size: 13px;
@@ -698,11 +703,30 @@ h2 {
   .topbar { background: rgba(10, 12, 19, 0.97); }
 }
 
+/*
+ * Pills, not rounded rectangles.
+ *
+ * A dark fill barely above the surface with a light hairline around it, so the
+ * edge does the work rather than the fill — the button reads as cut out of the
+ * page instead of pasted onto it.
+ */
 .btn {
-  border-radius: 9px;
+  border-radius: 999px;
   font-weight: 600;
   letter-spacing: -0.005em;
-  transition: transform 0.12s ease, box-shadow 0.16s ease, background 0.16s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: #14161d;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  transition: transform 0.12s ease, box-shadow 0.16s ease, background 0.16s ease,
+    border-color 0.16s ease;
+}
+.btn:hover:not(:disabled) {
+  background: #1b1e28;
+  border-color: rgba(255, 255, 255, 0.2);
 }
 .btn:hover:not(:disabled) { transform: translateY(-1px); }
 .btn:active:not(:disabled) { transform: translateY(0); }
@@ -719,15 +743,21 @@ h2 {
 }
 
 .input {
-  border-radius: 9px;
+  /* Pill, like the buttons. This block sits after the base .input rule and
+     was quietly putting 9px back on every field, the search bar included. */
+  border-radius: 999px;
   background: var(--bg-2);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(109, 139, 255, 0.15);
+  /* The ring was blue while the border it surrounds is gold — two different
+     accents on one focused field. */
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
+textarea.input,
+.input[rows] { border-radius: 14px; }
 
 /* Numbers line up when they change, which matters on a page that ticks. */
 .pnl-big, .mono, .growmc, .growmove { font-variant-numeric: tabular-nums; }
@@ -1012,6 +1042,46 @@ h2 {
   .cols { grid-template-columns: minmax(0, 1fr); }
 }
 
+/*
+ * A lit edge on the panel that matters.
+ *
+ * A ring drawn as a gradient rather than a flat border, so it is brightest at
+ * the top-left and fades round — a flat accent border of the same colour just
+ * reads as a coloured box. Painted into a pseudo-element and masked to the
+ * 1px band, because a real border cannot hold a gradient, and kept behind the
+ * content with a negative z-index so it never sits over a row.
+ *
+ * The outer glow is deliberately wide and weak. Enough to lift the panel off
+ * the page, not enough to compete with anything inside it.
+ */
+.glow {
+  position: relative;
+  box-shadow: 0 0 60px -22px rgba(94, 224, 42, 0.4), var(--shadow);
+}
+.glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    145deg,
+    rgba(122, 214, 74, 0.62),
+    rgba(47, 212, 143, 0.2) 28%,
+    rgba(255, 255, 255, 0.05) 55%,
+    rgba(94, 224, 42, 0.34)
+  );
+  /* Punch the middle out so only the 1px band survives. No -webkit- twin:
+     the build adds prefixes, and writing both made it emit only the prefixed
+     property when this was done for backdrop-filter. */
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+/* Content sits above the ring. */
+.glow > * { position: relative; z-index: 1; }
+
 /* ── feed ───────────────────────────────────────────────────────────── */
 .feed {
   position: sticky;
@@ -1036,11 +1106,41 @@ h2 {
   background: linear-gradient(180deg, rgba(20, 24, 35, 0.94), rgba(20, 24, 35, 0.72));
   backdrop-filter: blur(10px);
 }
+.findwrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
 .feedfind {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 6px 11px;
+  padding: 7px 52px 7px 34px;
   font-size: 12.5px;
+  background: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.09);
+}
+.feedfind:focus { border-color: rgba(94, 224, 42, 0.45); }
+.findicon {
+  position: absolute;
+  left: 12px;
+  width: 13px;
+  height: 13px;
+  color: var(--muted-2);
+  pointer-events: none;
+}
+.findkbd {
+  position: absolute;
+  right: 8px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted-2);
+  font-size: 10px;
+  font-family: inherit;
+  pointer-events: none;
 }
 
 /* Live/paused, as a state light rather than a word that appears and vanishes
