@@ -16,6 +16,15 @@ import { buildRates } from "./usd";
 /** Every pons launch mints the same fixed supply, in whole tokens. */
 const SUPPLY = 1e9;
 
+/**
+ * How close to the launch a buy has to be to count as a snipe.
+ *
+ * Three blocks is about 0.3 seconds. Nobody reads a feed, decides, signs and
+ * lands inside that, so these are bots that were waiting for the token to
+ * exist rather than people who saw it.
+ */
+const SNIPE_BLOCKS = 3;
+
 export interface FeedFilters {
   /** How far back to read. Rows are returned newest first. */
   maxAgeMin: number;
@@ -62,6 +71,15 @@ export interface FeedRow {
   devSold: boolean;
   /** Share of supply held by the ten largest wallets, 0-1. */
   top10Rate: number;
+
+  /** The one link the token carries on-chain, or "" — usually an X profile. */
+  socials: string;
+  /** The blurb the deployer wrote, or "". */
+  description: string;
+  /** Wallets whose first buy landed within SNIPE_BLOCKS of the launch. */
+  snipers: number;
+  /** Wallets that bought in the launch block itself. */
+  sameBlock: number;
 }
 
 interface Raw {
@@ -86,6 +104,10 @@ interface Raw {
   dev_bought: number | null;
   top10: number | null;
   dev_launches: number | null;
+  socials: string | null;
+  description: string | null;
+  snipers: number | null;
+  same_block: number | null;
 }
 
 export async function readFeed(
@@ -109,7 +131,20 @@ export async function readFeed(
       .prepare(
         `SELECT t.token, t.curve, t.symbol, t.name, t.logo, t.quote_symbol,
                 t.quote_is_native, t.created_at, t.price, t.mcap, t.liquidity,
-                t.progress_pct, t.deployer,
+                t.progress_pct, t.deployer, t.socials, t.description,
+                -- Correlated because the cut-off is per token: each curve is
+                -- compared against its own launch block.
+                -- The deployer is excluded from both. Nearly every launch has
+                -- the dev buying its first block, so counting them made "1
+                -- sniper" the reading on most rows and meant nothing.
+                (SELECT COUNT(*) FROM feed_positions ps
+                  WHERE ps.curve = t.curve AND ps.first_block IS NOT NULL
+                    AND ps.wallet <> t.deployer
+                    AND ps.first_block <= t.launch_block + ${SNIPE_BLOCKS}) AS snipers,
+                (SELECT COUNT(*) FROM feed_positions pz
+                  WHERE pz.curve = t.curve AND pz.first_block IS NOT NULL
+                    AND pz.wallet <> t.deployer
+                    AND pz.first_block <= t.launch_block) AS same_block,
                 v.vol, v.buys, v.sells,
                 h.holders, h.top10,
                 d.net AS dev_net, d.bought AS dev_bought,
@@ -199,6 +234,10 @@ export async function readFeed(
       // which in practice means they sold what they were holding.
       devSold: (r.dev_net ?? 0) < 0,
       top10Rate: Math.max(0, Math.min(1, (r.top10 ?? 0) / SUPPLY)),
+      socials: r.socials ?? "",
+      description: r.description ?? "",
+      snipers: r.snipers ?? 0,
+      sameBlock: r.same_block ?? 0,
     };
   });
 

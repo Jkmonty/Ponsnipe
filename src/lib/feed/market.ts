@@ -169,6 +169,8 @@ function migrate(): void {
     ["phantom", "TEXT"],
     ["reserves_block", "INTEGER DEFAULT 0"],
     ["log_index", "INTEGER DEFAULT 0"],
+    ["socials", "TEXT"],
+    ["description", "TEXT"],
   ] as const) {
     try {
       conn.exec(`ALTER TABLE feed_tokens ADD COLUMN ${col} ${decl};`);
@@ -214,10 +216,21 @@ function migrate(): void {
       curve  TEXT NOT NULL,
       wallet TEXT NOT NULL,
       net    REAL NOT NULL DEFAULT 0,
+      -- Block of this wallet's first buy on this curve. What makes a sniper
+      -- countable: a wallet in the launch block itself cannot have seen the
+      -- launch and reacted to it, it was waiting for the token to exist.
+      first_block INTEGER,
       PRIMARY KEY (curve, wallet)
     );
   `);
+  try {
+    conn.exec(`ALTER TABLE feed_positions ADD COLUMN first_block INTEGER;`);
+  } catch {
+    /* already present */
+  }
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_pos_curve ON feed_positions(curve, net DESC);`);
+  // Counting snipers is a range scan per curve, so give it its own index.
+  conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_pos_first ON feed_positions(curve, first_block);`);
 
   // Where the sweeps got to. Held on disk, not just in memory, so a restart
   // resumes rather than skipping whatever happened while the app was down.
@@ -322,7 +335,7 @@ export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<
    * a 90-per-pass rotation. Seeded at birth, it is carried forward exactly by
    * events from its first trade onward.
    */
-  const PER = 7;
+  const PER = 9;
   const meta = await c.multicall({
     contracts: add.flatMap((x) => [
       { address: x.token, abi: erc20Abi, functionName: "symbol" as const },
@@ -332,6 +345,10 @@ export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<
       { address: x.pairToken, abi: erc20Abi, functionName: "decimals" as const },
       { address: x.curve, abi: bondingCurveAbi, functionName: "getReserves" as const },
       { address: x.curve, abi: bondingCurveAbi, functionName: "realQuoteReserve" as const },
+      // Appended rather than inserted: the reserve reads above are addressed
+      // by index, and shifting them would silently mis-seed every curve.
+      { address: x.token, abi: erc20Abi, functionName: "socials" as const },
+      { address: x.token, abi: erc20Abi, functionName: "description" as const },
     ]),
     allowFailure: true,
     blockNumber: head,
@@ -342,8 +359,8 @@ export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<
        (token, curve, deployer, symbol, name, logo, quote_token, quote_symbol,
         quote_decimals, quote_is_native, threshold, launch_block, log_index, created_at,
         quote_reserve, token_reserve, phantom, reserves_block,
-        price, mcap, liquidity, progress_pct, priced_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        price, mcap, liquidity, progress_pct, priced_at, socials, description)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   );
   const at = new Date().toISOString();
   for (let i = 0; i < add.length; i++) {
@@ -393,6 +410,8 @@ export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<
       liquidity,
       threshold > 0 ? Math.min(100, (liquidity / threshold) * 100) : 0,
       at,
+      str(7),
+      str(8),
     );
     s.seen += 1;
   }
@@ -448,6 +467,8 @@ async function sweepTrades(head: bigint): Promise<void> {
   const moved = new Map<string, { q: bigint; t: bigint; block: number }>();
   /** Token deltas per (curve, wallet) this pass, summed before writing. */
   const deltas = new Map<string, number>();
+  /** (curve|wallet) -> block of that wallet's first buy seen this sweep. */
+  const firstBuy = new Map<string, number>();
 
   const add = (curve: string, raw: bigint, isBuy: boolean) => {
     const m = meta.get(curve);
@@ -525,6 +546,9 @@ async function sweepTrades(head: bigint): Promise<void> {
           const amt = Number((isBuy ? a.tokensOut : a.tokensIn) ?? 0n) / 1e18;
           const k = `${curve}|${who}`;
           deltas.set(k, (deltas.get(k) ?? 0) + (isBuy ? amt : -amt));
+          // Earliest buy only. Sweeps run in ascending block order, so the
+          // first one seen for a wallet is the first one there was.
+          if (isBuy && !firstBuy.has(k)) firstBuy.set(k, Number(l.blockNumber ?? 0n));
         }
       }
     }
@@ -562,12 +586,16 @@ async function sweepTrades(head: bigint): Promise<void> {
 
   if (deltas.size) {
     const up = db().prepare(
-      `INSERT INTO feed_positions (curve, wallet, net) VALUES (?,?,?)
-         ON CONFLICT(curve, wallet) DO UPDATE SET net = net + excluded.net`,
+      `INSERT INTO feed_positions (curve, wallet, net, first_block) VALUES (?,?,?,?)
+         ON CONFLICT(curve, wallet) DO UPDATE SET
+           net = net + excluded.net,
+           -- Never moves later. A wallet that buys again must not lose the
+           -- entry that made it a sniper.
+           first_block = MIN(COALESCE(first_block, excluded.first_block), COALESCE(excluded.first_block, first_block))`,
     );
     for (const [k, amt] of deltas) {
       const [curve, wallet] = k.split("|");
-      up.run(curve, wallet, amt);
+      up.run(curve, wallet, amt, firstBuy.get(k) ?? null);
     }
   }
 
@@ -708,15 +736,22 @@ async function sweepPrices(head: bigint): Promise<void> {
 async function repairMetadata(): Promise<void> {
   const rows = db()
     .prepare(
+      /*
+       * socials IS NULL means the read never happened, not that the token has
+       * no link: a successful read of an empty field stores '', which is why
+       * this can retry the failures forever without retrying the 30% of
+       * tokens that genuinely link nothing.
+       */
       `SELECT token, quote_token, quote_is_native FROM feed_tokens
         WHERE (symbol IS NULL OR symbol = '' OR symbol = '???'
+               OR socials IS NULL
                OR (quote_is_native = 0 AND (quote_symbol IS NULL OR quote_symbol = '?')))
-        ORDER BY created_at DESC LIMIT 25`,
+        ORDER BY created_at DESC LIMIT 40`,
     )
     .all() as { token: string; quote_token: string | null; quote_is_native: number }[];
   if (!rows.length) return;
 
-  const PER = 5;
+  const PER = 7;
   const res = await logClient().multicall({
     contracts: rows.flatMap((r) => {
       const quote = getAddress((r.quote_token ?? NATIVE) as Address);
@@ -726,6 +761,8 @@ async function repairMetadata(): Promise<void> {
         { address: getAddress(r.token), abi: erc20Abi, functionName: "logo" as const },
         { address: quote, abi: erc20Abi, functionName: "symbol" as const },
         { address: quote, abi: erc20Abi, functionName: "decimals" as const },
+        { address: getAddress(r.token), abi: erc20Abi, functionName: "socials" as const },
+        { address: getAddress(r.token), abi: erc20Abi, functionName: "description" as const },
       ];
     }),
     allowFailure: true,
@@ -735,7 +772,8 @@ async function repairMetadata(): Promise<void> {
     `UPDATE feed_tokens
         SET symbol = COALESCE(?, symbol), name = COALESCE(?, name),
             logo = COALESCE(?, logo), quote_symbol = COALESCE(?, quote_symbol),
-            quote_decimals = COALESCE(?, quote_decimals)
+            quote_decimals = COALESCE(?, quote_decimals),
+            socials = COALESCE(?, socials), description = COALESCE(?, description)
       WHERE token = ?`,
   );
   const logos: (string | null)[] = [];
@@ -747,7 +785,7 @@ async function repairMetadata(): Promise<void> {
     const qDec = isNative ? 18 : cell(4)?.status === "success" ? Number(cell(4).result) : null;
     const logo = str(2);
     logos.push(logo);
-    upd.run(str(0), str(1), logo, qSym, qDec, rows[i].token);
+    upd.run(str(0), str(1), logo, qSym, qDec, str(5), str(6), rows[i].token);
   }
   warmImages(logos);
 }

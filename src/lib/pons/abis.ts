@@ -9,6 +9,19 @@ export const erc20Abi = [
   { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
   /** pons tokens carry their artwork URL on-chain. Not part of ERC-20. */
   { type: "function", name: "logo", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  /**
+   * Also not ERC-20, and also stored on the token itself rather than in an
+   * off-chain metadata document, so both come back in the same multicall as
+   * the symbol. socials() holds a single URL, not a set — see feed/query.ts.
+   */
+  { type: "function", name: "socials", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  {
+    type: "function",
+    name: "description",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "string" }],
+  },
   { type: "function", name: "totalSupply", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   {
     type: "function",

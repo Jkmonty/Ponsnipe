@@ -370,7 +370,7 @@ a:hover {
  */
 .cols3 {
   display: grid;
-  grid-template-columns: minmax(0, 320px) minmax(0, 780px) minmax(0, 300px);
+  grid-template-columns: minmax(0, 430px) minmax(0, 700px) minmax(0, 290px);
   justify-content: center;
   gap: 14px;
   align-items: start;
@@ -868,19 +868,23 @@ h2 {
 .f.frow { display: flex; align-items: flex-start; gap: 8px; }
 .f.frow input { margin-top: 2px; flex: none; }
 
-/* Column widths are shared by the header and every row so they line up. */
-.fhead,
+/*
+ * The row carries its numbers inline rather than in shared columns.
+ *
+ * Fixed MC/VOL/GRAD columns cost ~160px of a 320px panel and still could not
+ * fit a third line, so the money moved onto the lines it belongs to and the
+ * panel got wider. There is no column header to line up with any more.
+ */
 .frow-item {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 56px 56px 46px;
-  gap: 7px;
-  align-items: center;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
 }
-/* Header omits the avatar column, so it is indented by that column's width
-   plus the grid gap to keep MC/VOL/LIQ over the numbers they label. */
 .fhead {
-  grid-template-columns: minmax(0, 1fr) 56px 56px 46px;
-  padding: 0 8px 6px 47px;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 8px 6px;
   font-size: 11px;
   letter-spacing: .06em;
   text-transform: uppercase;
@@ -913,8 +917,70 @@ h2 {
   background: var(--card-2);
   border-color: var(--line-2);
 }
-.fmain { min-width: 0; display: grid; gap: 1px; }
+.fmain { min-width: 0; display: grid; gap: 3px; }
 .fmain strong { font-size: 13px; }
+
+/* The row, in three lines: identity, activity, and what to make of it. */
+.fline1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.fname { flex: 1 1 auto; min-width: 0; }
+.fmc { flex: none; font-size: 12px; font-weight: 600; }
+
+.fline2 { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.fvol { flex: 1 0 auto; margin-left: auto; text-align: right; font-size: 11.5px; }
+.fstat { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+/* A one-letter glyph rather than an icon font: it needs no network request and
+   stays legible at 9px, which a scaled-down SVG does not. */
+.fi {
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: .04em;
+  opacity: .65;
+}
+.fstat.warn { color: #e8a33d; }
+
+.fline3 { display: flex; align-items: center; gap: 5px; flex-wrap: nowrap; min-width: 0; }
+.fline3 .pill { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+
+/* Progress to graduation. The bar is the field, the text sits on top of it. */
+.fbond {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 70px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--card-2);
+  overflow: hidden;
+}
+.fbond-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, #1f6f4a, #35b37e);
+  transition: width .2s ease;
+}
+.fbond-txt {
+  position: relative;
+  display: block;
+  text-align: center;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text);
+}
+
+/*
+ * The one link a pons token carries. Sits above the row button rather than
+ * inside it, since an anchor cannot be nested in a button.
+ */
+.fsoc {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--card-2);
+}
+.fsoc:hover { color: var(--text); text-decoration: underline; }
 .frow-item .small { font-size: 11.5px; }
 
 /* Group heading inside the feed list. Sticky so the label stays readable while

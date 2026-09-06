@@ -20,6 +20,10 @@ interface Row {
   mcapUsd: number | null;
   volumeUsd: number | null;
   liquidityUsd: number | null;
+  socials: string;
+  description: string;
+  snipers: number;
+  sameBlock: number;
 }
 
 interface Payload {
@@ -45,6 +49,47 @@ function age(m: number): string {
   if (m < 1) return "now";
   if (m < 60) return `${Math.round(m)}m`;
   return `${(m / 60).toFixed(1)}h`;
+}
+
+/**
+ * What the token linked, as a label and a host.
+ *
+ * pons stores a single socials() string on the token, not the set of accounts
+ * a launchpad form would collect, and across a 60-token sample every one that
+ * had anything had exactly one link: 39 x.com, 3 twitter.com, nothing else.
+ * So this labels whatever is there rather than rendering a row of icons that
+ * would be empty in every position but one.
+ */
+function socialOf(raw: string): { label: string; href: string } | null {
+  const t = (raw ?? "").trim();
+  if (!/^https?:\/\//i.test(t)) return null;
+  let u: URL;
+  try {
+    u = new URL(t);
+  } catch {
+    return null;
+  }
+  const h = u.hostname.replace(/^www\./, "").toLowerCase();
+  const known: Record<string, string> = {
+    "x.com": "X",
+    "twitter.com": "X",
+    "t.me": "Telegram",
+    "telegram.me": "Telegram",
+    "discord.gg": "Discord",
+    "discord.com": "Discord",
+    "instagram.com": "Instagram",
+    "reddit.com": "Reddit",
+    "youtube.com": "YouTube",
+    "tiktok.com": "TikTok",
+    "github.com": "GitHub",
+  };
+  // An X profile is worth more than the bare host: a link to someone's
+  // account reads differently from a link to a post about the coin.
+  const handle =
+    (h === "x.com" || h === "twitter.com") && /^\/[A-Za-z0-9_]{1,15}\/?$/.test(u.pathname)
+      ? `@${u.pathname.replace(/\//g, "")}`
+      : null;
+  return { label: handle ?? known[h] ?? h, href: t };
 }
 
 /** Rows that get artwork. Beyond this the initials tile stands in. */
@@ -105,38 +150,95 @@ const FeedRow = memo(function FeedRow({
   onPick: (a: string) => void;
   eager: boolean;
 }) {
+  const soc = socialOf(r.socials);
+  const pick = () => onPick(r.token);
   return (
-    <button className="frow-item" onClick={() => onPick(r.token)}>
+    /*
+     * A div rather than a button. The row holds a real anchor to whatever the
+     * token linked, an anchor cannot be nested inside a button, and floating
+     * one above the button instead put it on top of the market cap. Keyboard
+     * activation is wired up by hand to keep what the button gave for free.
+     */
+    <div
+      className="frow-item"
+      role="button"
+      tabIndex={0}
+      onClick={pick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          pick();
+        }
+      }}
+      title={r.description || undefined}
+    >
       <Avatar row={r} eager={eager} />
       <div className="fmain">
-        <div className="row" style={{ gap: 6 }}>
+        <div className="fline1">
           <strong className="ellip">{r.symbol}</strong>
-          <span className="muted small">/{r.quoteSymbol}</span>
-          {r.holders >= 8 && <span className="pill pill-hot">{r.holders} holders</span>}
-          {/* The two the paid feeds lead with, and the two worth acting on:
-              a deployer holding a big slice of their own launch, and one that
-              has already started selling it. */}
+          <span className="muted small ellip fname">{r.name}</span>
+          <span className="num small fmc">{money(r.mcapUsd)}</span>
+        </div>
+
+        <div className="fline2 muted small">
+          <span className="fstat" title="age">{age(r.ageMinutes)}</span>
+          <span className="fstat" title="holders still holding">
+            <i className="fi">H</i>
+            {r.holders}
+          </span>
+          <span className="fstat" title="trades">
+            <i className="fi">T</i>
+            {r.trades}
+          </span>
+          {r.snipers > 0 && (
+            <span
+              className={`fstat ${r.snipers >= 5 ? "warn" : ""}`}
+              title={`${r.snipers} wallets other than the deployer bought within 3 blocks of launch${
+                r.sameBlock ? `, ${r.sameBlock} in the launch block itself` : ""
+              }`}
+            >
+              <i className="fi">S</i>
+              {r.snipers}
+            </span>
+          )}
+          {soc && (
+            <a
+              className="fsoc ellip"
+              href={soc.href}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              title={soc.href}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {soc.label}
+            </a>
+          )}
+          <span className="num fvol" title="volume">
+            {money(r.volumeUsd)}
+          </span>
+        </div>
+
+        <div className="fline3">
           {r.devHoldRate > 0.05 && (
-            <span className="pill pill-cold">dev {Math.round(r.devHoldRate * 100)}%</span>
+            <span className="pill pill-cold" title="deployer's share of their own launch">
+              dev {Math.round(r.devHoldRate * 100)}%
+            </span>
           )}
           {r.devSold && <span className="pill pill-cold">dev sold</span>}
-        </div>
-        {/* Abbreviated hard: the column is ~200px and full words were being
-            ellipsed away, which lost the numbers rather than the labels. */}
-        <div className="muted small ellip">
-          {age(r.ageMinutes)}
-          {r.holders ? ` · ${r.holders} hold` : ""}
-          {r.trades ? ` · ${r.trades} tx` : ""}
-          {r.top10Rate > 0 ? ` · top10 ${Math.round(r.top10Rate * 100)}%` : ""}
-          {r.devLaunches > 1 ? ` · dev made ${r.devLaunches}` : ""}
+          {r.top10Rate > 0.2 && (
+            <span className="pill" title="share held by the ten largest wallets">
+              top10 {Math.round(r.top10Rate * 100)}%
+            </span>
+          )}
+          {/* Progress to graduation, as a bar rather than a number: it is the
+              one field on the row that is a fraction of a known whole. */}
+          <span className="fbond" title={`${r.progressPct.toFixed(1)}% of the way to graduation`}>
+            <span className="fbond-fill" style={{ width: `${Math.min(100, r.progressPct)}%` }} />
+            <span className="fbond-txt">{r.progressPct > 0 ? `${r.progressPct.toFixed(0)}%` : "0%"}</span>
+          </span>
         </div>
       </div>
-      <span className="num small ta-r">{money(r.mcapUsd)}</span>
-      <span className="num small ta-r">{money(r.volumeUsd)}</span>
-      <span className="num small ta-r">
-        {r.progressPct > 0 ? `${r.progressPct.toFixed(0)}%` : "—"}
-      </span>
-    </button>
+    </div>
   );
 },
 (a, b) =>
@@ -150,6 +252,8 @@ const FeedRow = memo(function FeedRow({
   a.r.devSold === b.r.devSold &&
   a.r.top10Rate === b.r.top10Rate &&
   a.r.progressPct === b.r.progressPct &&
+  a.r.snipers === b.r.snipers &&
+  a.r.socials === b.r.socials &&
   // Age is rendered coarsely, so only a change in the rendered string matters.
   Math.round(a.r.ageMinutes) === Math.round(b.r.ageMinutes));
 
@@ -245,10 +349,8 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       )}
 
       <div className="fhead">
-        <span>Coin</span>
-        <span className="ta-r">MC</span>
-        <span className="ta-r">Vol</span>
-        <span className="ta-r">Grad</span>
+        <span>Coin · age · holders · trades · snipers</span>
+        <span>MC / Vol</span>
       </div>
 
       <div
