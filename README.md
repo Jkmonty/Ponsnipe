@@ -156,6 +156,103 @@ npm test
 rules, the event fast path, the keystore, the double-sell guard, and CSRF on
 the routes that move funds.
 
+## Sharing this with other people
+
+### What a link actually gives them
+
+A GitHub URL hands someone the **source code**, not a running app. They will
+need Node installed and will have to run four commands before they see
+anything. That is a real barrier — expect most people who click it to stop
+there — and it is also the whole reason this is safe to hand out: they run it,
+they hold their own keys, and nothing of theirs passes through you.
+
+A link people can simply click and use would mean hosting it, and hosting it
+means one wallet shared by everyone or you holding theirs. That is custody,
+which is a regulated activity in most places and a different project from this
+one. There is no free tier that makes that problem smaller.
+
+### Publishing the repo
+
+Nothing secret is tracked — `.env`, `data/` (the keystore and every database)
+and any `*.sqlite` are all ignored, and none has ever been committed. Verify
+that for yourself before you push, because it cannot be undone afterwards:
+
+```bash
+# Both must print nothing. The pattern deliberately matches .env, any
+# *.keystore.json, any *.sqlite and everything under data/ — while ignoring
+# .env.example and src/lib/wallet/keystore.ts, which are source and belong here.
+PAT='(^|/)\.env($|\.)|\.keystore\.json$|\.sqlite$|^data/'
+git ls-files | grep -E "$PAT" | grep -v '^\.env\.example$'
+git log --all --diff-filter=A --name-only --pretty=format: | sort -u   | grep -E "$PAT" | grep -v '^\.env\.example$'
+```
+
+Then create an empty repository on GitHub and push to it. The URL of that
+repository is what you share.
+
+### What to tell them
+
+> Needs [Node](https://nodejs.org) 22.5 or newer. Then:
+>
+> ```bash
+> git clone <your repo url>
+> cd ponsnipe
+> npm install
+> npm run setup     # writes .env with a generated passphrase and API token
+> npm run dev       # http://127.0.0.1:3000
+> ```
+>
+> It starts in DRY-RUN and the sniper starts disabled. Read the warnings at
+> the top of this file before turning either off.
+
+The feed, the charts, the bundle column and looking up any token all work with
+no wallet and no funds, so someone can run it and see whether they like it
+before going anywhere near a private key.
+
+## Running an always-on instance
+
+Only two reasons to bother: your own sniper running while you sleep, or a
+read-only shop window for the repo. Either way it needs a **persistent** host,
+not a serverless one.
+
+At boot `src/instrumentation.ts` starts four long-lived things — the position
+monitor, the sniper's chain watcher, the feed sweep and a WebSocket launch
+stream — and the app writes SQLite to local disk and holds SSE connections
+open. Vercel, Netlify and the other serverless free tiers cannot run any of
+that: functions do not persist between invocations, the filesystem is
+read-only apart from an ephemeral `/tmp`, and long-lived connections are cut.
+The background indexer is the product, and it is the first thing that dies.
+
+What does work is anything that runs a normal Node process with a disk —
+Fly.io, an Oracle Cloud Always Free VM, a cheap VPS, or the machine already in
+front of you. Avoid free tiers that **sleep on inactivity**: sleeping stops
+the sweep and empties the price history, so you wake up to an app with no
+memory. Free-tier terms change often, so check the current ones rather than
+trusting this paragraph.
+
+```bash
+npm run build
+npm start          # 127.0.0.1:3000 — this machine only
+```
+
+Note what that does NOT do. `npm start` binds to `127.0.0.1`, so it is
+unreachable from anywhere else, and that default is deliberate: an app holding
+a hot private key should not listen to the whole internet because someone
+typed `npm start`. To actually serve an instance you have to say so:
+
+```bash
+npx next start -H 0.0.0.0 -p 3000
+```
+
+Do that only behind something that terminates TLS, and only with
+`ENGINE_API_TOKEN` set — it is the single thing standing between a stranger
+and the endpoints that move funds.
+
+For a public read-only instance, leave the wallet unconfigured and the sniper
+off. Everything that spends money is behind the bot wallet, so an instance
+without one can show the feed and price nothing else. Do not expose an
+instance that has a funded keystore: `ENGINE_API_TOKEN` is the only thing
+standing between a stranger and your trading endpoints.
+
 ## Licence
 
 Use at your own risk. Nothing here is financial advice, and the author of this
