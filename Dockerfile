@@ -46,7 +46,10 @@ RUN mkdir -p /data && chown -R node:node /data
 
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
-COPY --from=build --chown=node:node /app/public ./public
+# No `public/` copy: this project does not have one. Its only static asset is
+# src/app/icon.svg, which is a Next file convention the framework compiles and
+# serves itself. A COPY of a directory that does not exist is a hard build
+# failure, not a no-op — it is what broke the first deploy.
 
 USER node
 EXPOSE 3000
