@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { directMediaUrl, mediaUrl } from "@/lib/format";
+import { mediaUrl } from "@/lib/format";
 
 interface Row {
   token: string;
@@ -195,12 +195,20 @@ function Avatar({ row, eager }: { row: Row; eager: boolean }) {
    * so it could not be verified. A fixed count can be, and it bounds the
    * queue just as well.
    *
-   * Three sources are tried in turn: the proxy, which resolves ipfs and caches
-   * it but is 403'd by Cloudflare-fronted CDNs; then the URL directly, which
-   * handles those; then the initials underneath, which are always there.
+   * Two sources, not three. The proxy resolves ipfs and caches it; failing
+   * that, the initials underneath, which are always there.
+   *
+   * There used to be a middle step that loaded the contract's own URL directly.
+   * It rescued the images that Cloudflare-fronted CDNs 403 at the proxy, and it
+   * cost an img-src of `https:` — permission for this page to issue a GET to
+   * any host on the internet. On a page holding an unlocked key that is an
+   * exfiltration channel: an injected script cannot fetch() a secret out, but
+   * it can put one in an image URL. Every logo is same-origin now, so img-src
+   * is 'self' and that channel is closed. The price is that some artwork shows
+   * as initials.
    */
   const [stage, setStage] = useState<0 | 1 | 2>(0);
-  const src = !eager ? "" : stage === 0 ? mediaUrl(row.logo) : stage === 1 ? directMediaUrl(row.logo) : "";
+  const src = !eager || stage !== 0 ? "" : mediaUrl(row.logo);
   return (
     <div className="savatar savatar-blank">
       {row.symbol.slice(0, 2).toUpperCase()}
@@ -210,7 +218,7 @@ function Avatar({ row, eager }: { row: Row; eager: boolean }) {
           className="savatar-img"
           src={src}
           alt=""
-          onError={() => setStage((v) => (v === 0 ? 1 : 2))}
+          onError={() => setStage(2)}
         />
       )}
     </div>

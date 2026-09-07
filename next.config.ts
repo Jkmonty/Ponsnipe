@@ -42,12 +42,11 @@ const nextConfig: NextConfig = {
    * to, and this limits that to this origin and the chain endpoints the app
    * actually uses.
    *
-   * Known gap, stated rather than hidden: img-src has to allow arbitrary https
-   * because token artwork falls back to loading the contract's own URL
-   * directly when the proxy cannot fetch it. An image URL can carry data in
-   * its query string, so that path remains an exfiltration channel. Closing it
-   * means dropping the direct fallback and serving every logo through
-   * /api/img.
+   * img-src is same-origin: the direct-URL image fallback was removed so this
+   * page never GETs an arbitrary host, since an image URL can carry a secret
+   * in its query string. /api/img itself only serves logos the app has
+   * indexed, which closes the same channel by its other door — a same-origin
+   * request that a CSP is obliged to allow.
    *
    * Applied in production only: `next dev` needs eval and inline websockets
    * for hot reload, and a CSP that has to be loosened for development is a CSP
@@ -60,7 +59,10 @@ const nextConfig: NextConfig = {
       // Next inlines its bootstrap; without nonce plumbing this is required.
       "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https:",
+      // Same-origin only. Every logo goes through /api/img, so the page has no
+      // reason to GET an arbitrary host — and an image URL is otherwise a way
+      // to carry a secret off a page that holds an unlocked key.
+      "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "connect-src 'self' https://robinhood-rpc.publicnode.com https://rpc.mainnet.chain.robinhood.com https://rpc.ordofi.network https://api.coinbase.com https://query1.finance.yahoo.com",
       "object-src 'none'",

