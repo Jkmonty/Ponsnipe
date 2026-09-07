@@ -23,7 +23,7 @@ import { REVEAL_TIMEOUT_MS } from "./useTradingKey";
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
-export default function WalletButton() {
+export default function WalletButton({ localInstall = false }: { localInstall?: boolean }) {
   const { key, ext, bal, refreshBal, limits, setLimits, spent, menu, setMenu } = useWallet();
   const [pass, setPass] = useState("");
   const [importPk, setImportPk] = useState("");
@@ -161,6 +161,17 @@ export default function WalletButton() {
               <p className="wb-fine">
                 Keep only what you are actively trading in it, the same as any hot wallet.
               </p>
+              {/* Otherwise this is a trap on a local install: you can make a
+                  wallet and fund it, and then find there is no browser buy
+                  form to spend it from, because buying here goes through the
+                  bot wallet the engine controls. */}
+              {localInstall && (
+                <p className="wb-note-local">
+                  On your own copy, buying and the sniper run through the bot wallet below.
+                  This is the wallet visitors to your hosted site get — make one to see what
+                  they see.
+                </p>
+              )}
               <details className="fineprint">
                 <summary>How it works, and what to watch</summary>
                 <p>

@@ -1909,3 +1909,100 @@ textarea.input,
   border-color: rgba(240, 180, 41, 0.45);
   background: rgba(240, 180, 41, 0.08);
 }
+
+/* Said in the menu, not in a banner: it only matters to whoever is running
+   their own copy, and only at the moment they are deciding to make a wallet. */
+.wb-note-local {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: rgba(240, 180, 41, 0.07);
+  border: 1px solid rgba(240, 180, 41, 0.2);
+}
+
+/* The fold control. Sits in header rows that often already carry a chip and a
+   switch, so it is a chevron rather than a fourth piece of text. */
+.collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  padding: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted-2);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+}
+.collapse-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.collapse-btn svg { transition: transform 0.18s ease; }
+/* Pointing right when there is something hidden behind it, down when open. */
+.collapse-btn[aria-expanded="false"] svg { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .collapse-btn svg { transition: none; }
+}
+
+/* A folded card keeps its heading and loses its padding, so a column of
+   collapsed sections reads as a list rather than a stack of empty boxes. */
+.card.is-collapsed { padding-bottom: 14px; }
+.card.is-collapsed .shead,
+.card.is-collapsed h2 { margin-bottom: 0; }
+
+/* Folding by class rather than by unmounting the body.
+ *
+ * The alternative was wrapping several hundred lines of each card in a
+ * conditional, which is a lot of JSX surgery for a chevron and a good way to
+ * lose a closing brace. display:none also takes the contents out of the
+ * accessibility tree and out of the tab order, which is what a folded section
+ * should do. */
+.is-collapsed > *:not(.card-head) { display: none; }
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* The h2 inside carries the card's bottom margin on its own, so the row does
+   not add a second one. */
+.card-head > h2,
+.card-head > h3 { margin-bottom: 0; }
+.card:not(.is-collapsed) > .card-head { margin-bottom: 14px; }
+
+/* "Coming soon" — its own colour, so a limit that is temporary does not read
+   like a warning that something is broken. Green rather than amber: this is a
+   promise, not a hazard. */
+.soon-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: rgba(47, 212, 143, 0.07);
+  border: 1px solid rgba(47, 212, 143, 0.22);
+}
+.soon-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--green);
+  background: rgba(47, 212, 143, 0.14);
+  border-radius: 999px;
+  padding: 3px 9px;
+  margin-top: 1px;
+}

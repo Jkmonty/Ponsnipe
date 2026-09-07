@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { CollapseButton, useCollapsed } from "./Collapse";
 
 /**
  * Compose a launch from a tweet.
@@ -50,7 +51,10 @@ function verdict(h: TickerHistory | undefined): { cls: string; txt: string } | n
 }
 
 export default function LaunchComposer({ flash }: { flash: (k: "ok" | "err", m: string) => void }) {
-  const [open, setOpen] = useState(false);
+  /* Was a local useState, so the composer reopened on every reload. It is the
+     section most people want out of the way, which makes forgetting the worst
+     thing it could do. */
+  const fold = useCollapsed("composer", true);
   const [text, setText] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [imageUrl, setImageUrl] = useState("");
@@ -60,15 +64,18 @@ export default function LaunchComposer({ flash }: { flash: (k: "ok" | "err", m: 
   const [busy, setBusy] = useState(false);
   const [meta, setMeta] = useState<{ drafter: string; claudeReady: boolean; insights: boolean } | null>(null);
 
+  /* Only once the section is actually open, so a dashboard that loads with the
+     composer folded does not fetch its capabilities for nobody. */
+  const opened = !fold.collapsed;
   useEffect(() => {
-    if (!open) return;
+    if (!opened) return;
     fetch("/api/launch")
       .then((r) => r.json())
       .then(setMeta)
       .catch(() => {
         /* transient */
       });
-  }, [open]);
+  }, [opened]);
 
   const run = async (override?: { symbol?: string; name?: string }) => {
     if (!text.trim()) {
@@ -107,19 +114,32 @@ export default function LaunchComposer({ flash }: { flash: (k: "ok" | "err", m: 
   };
 
   return (
-    <div className="card">
-      <div className="spread">
+    <div className={`card${fold.collapsed ? " is-collapsed" : ""}`}>
+      <div className="card-head">
         <h2>Launch composer</h2>
-        <button className="btn btn-sm btn-outline" onClick={() => setOpen((o) => !o)}>
-          {open ? "Hide" : "Open"}
-        </button>
+        <CollapseButton
+          collapsed={fold.collapsed}
+          onToggle={fold.toggle}
+          label="launch composer"
+        />
       </div>
       <p className="muted small" style={{ marginTop: 4, marginBottom: 0 }}>
-        Draft a launch from a tweet, checked against our own launch history. Never deploys —
-        you paste the fields into pons yourself.
+        Draft a launch from a tweet, checked against our own launch history.
+      </p>
+      {/*
+        Said in its own colour and its own box, because it is the one thing
+        about this section that will surprise someone: it writes the fields,
+        it does not press the button. Deploying stays a deliberate act on pons
+        with your own wallet, and the badge says that is today's answer rather
+        than the permanent one.
+      */}
+      <p className="soon-note">
+        <span className="soon-badge">Coming soon</span>
+        Ponsnipe never deploys — you paste the fields into pons yourself. One-click launching
+        is on the way.
       </p>
 
-      {open && (
+      {!fold.collapsed && (
         <div style={{ marginTop: 14 }}>
           <label className="small muted">Tweet text, or just the idea</label>
           <textarea

@@ -8,6 +8,7 @@ import Feed from "./Feed";
 import TradePanel from "./TradePanel";
 import WalletSetup from "./WalletSetup";
 import WalletButton from "./WalletButton";
+import { CollapseButton, useCollapsed } from "./Collapse";
 
 interface WalletInfo {
   /** Set by a read-only instance: show the feed, hide everything that trades. */
@@ -93,6 +94,8 @@ export default function Dashboard() {
    * with the address alone the effect would not fire the second time.
    */
   const [picked, setPicked] = useState<{ address: string; n: number } | null>(null);
+  const posFold = useCollapsed("positions");
+  const aboutFold = useCollapsed("about");
   /* Read after mount rather than during render: the server has no location,
      and deciding this while rendering would make the first client paint
      disagree with the HTML it is replacing. */
@@ -245,9 +248,6 @@ export default function Dashboard() {
                   Source
                 </a>
               )}
-              {/* Where every other exchange puts it, because that is where
-                  people look for it. */}
-              <WalletButton />
             </>
           ) : (
             <>
@@ -264,6 +264,17 @@ export default function Dashboard() {
           />
             </>
           )}
+          {/*
+            In both views, because that is where everyone looks for it and
+            because a control that moves depending on how the app was started
+            is a control you have to hunt for.
+
+            It does mean the browser wallet is reachable on a local install,
+            where buying goes through the bot wallet instead — so the menu says
+            so rather than leaving somebody to fund a wallet with nothing to
+            spend it on.
+          */}
+          <WalletButton localInstall={wallet != null && !wallet.publicMode} />
         </div>
       </header>
 
@@ -312,8 +323,15 @@ export default function Dashboard() {
               picked={picked}
               onPickHolding={(address) => setPicked({ address, n: Date.now() })}
             />
-            <aside className="card">
-              <h2 className="shead">What this is</h2>
+            <aside className={`card${aboutFold.collapsed ? " is-collapsed" : ""}`}>
+              <div className="card-head">
+                <h2 className="shead">What this is</h2>
+                <CollapseButton
+                  collapsed={aboutFold.collapsed}
+                  onToggle={aboutFold.toggle}
+                  label="what this is"
+                />
+              </div>
               <p className="ssub" style={{ marginLeft: 13 }}>
                 Every pons launch as it happens, with price charts, holder counts and how much
                 of each crowd is one operator wearing several wallets.
@@ -414,8 +432,15 @@ export default function Dashboard() {
       <LaunchComposer flash={flash} />
 
       {/* ── open positions ─────────────────────────────────────────── */}
-      <div className="card">
-        <h2>Open positions {open.length > 0 && <span className="muted">· {open.length}</span>}</h2>
+      <div className={`card${posFold.collapsed ? " is-collapsed" : ""}`}>
+        <div className="card-head">
+          <h2>Open positions {open.length > 0 && <span className="muted">· {open.length}</span>}</h2>
+          <CollapseButton
+            collapsed={posFold.collapsed}
+            onToggle={posFold.toggle}
+            label="open positions"
+          />
+        </div>
         {open.length === 0 ? (
           <p className="muted small" style={{ margin: 0 }}>
             None yet. Buy a token above and it shows up here with live profit/loss.
@@ -529,6 +554,7 @@ function BuyCard({
   onDone: () => void;
   picked: { address: string; n: number } | null;
 }) {
+  const fold = useCollapsed("buy");
   const [addr, setAddr] = useState("");
   const [snap, setSnap] = useState<TokenSnap | null>(null);
   const [looking, setLooking] = useState(false);
@@ -669,8 +695,14 @@ function BuyCard({
   const g = snap?.graduation;
 
   return (
-    <div className={`card${arrived ? " card-arrived" : ""}`} ref={cardRef}>
-      <h2>Buy a token</h2>
+    <div
+      className={`card${arrived ? " card-arrived" : ""}${fold.collapsed ? " is-collapsed" : ""}`}
+      ref={cardRef}
+    >
+      <div className="card-head">
+        <h2>Buy a token</h2>
+        <CollapseButton collapsed={fold.collapsed} onToggle={fold.toggle} label="buy a token" />
+      </div>
       {/*
         Looking up a token reads the chain and costs nothing, so it must work
         with an empty wallet — inspecting a token before deciding to fund one is
@@ -985,6 +1017,7 @@ function SniperCard({
   funded: boolean;
   flash: (k: "ok" | "err", m: string) => void;
 }) {
+  const fold = useCollapsed("sniper");
   const [cfg, setCfg] = useState<SniperCfg | null>(null);
   const [status, setStatus] = useState<SniperStatus | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1038,8 +1071,11 @@ function SniperCard({
   const num = (v: string): number | null => (v.trim() === "" ? null : Number(v));
 
   return (
-    <div className="card" style={{ opacity: funded ? 1 : 0.55 }}>
-      <div className="spread">
+    <div
+      className={`card${fold.collapsed ? " is-collapsed" : ""}`}
+      style={{ opacity: funded ? 1 : 0.55 }}
+    >
+      <div className="spread card-head">
         <h2 className="shead">Sniper</h2>
         <div className="row" style={{ gap: 10 }}>
           <span className={cfg.enabled ? "chip chip-live" : "chip chip-off"}>
@@ -1063,6 +1099,7 @@ function SniperCard({
               save({ enabled: next });
             }}
           />
+          <CollapseButton collapsed={fold.collapsed} onToggle={fold.toggle} label="sniper" />
         </div>
       </div>
       <p className="ssub">Buys brand-new launches for you, by rule, without asking.</p>
@@ -1329,6 +1366,7 @@ function TickerWatch({
   cfg: SniperCfg;
   patch: (p: Partial<SniperCfg>) => void;
 }) {
+  const fold = useCollapsed("ticker");
   const [ticker, setTicker] = useState("");
   const [dev, setDev] = useState("");
   const list = cfg.tickerWatch ?? [];
@@ -1356,8 +1394,15 @@ function TickerWatch({
   };
 
   return (
-    <div style={{ marginTop: 14 }}>
-      <h3 className="shead">Buy a ticker on sight</h3>
+    <div className={fold.collapsed ? "is-collapsed" : undefined} style={{ marginTop: 14 }}>
+      <div className="card-head">
+        <h3 className="shead">Buy a ticker on sight</h3>
+        <CollapseButton
+          collapsed={fold.collapsed}
+          onToggle={fold.toggle}
+          label="buy a ticker on sight"
+        />
+      </div>
       <p className="ssub">
         For when you already know a coin is coming and what it will be called. A match
         skips the waiting and the quality checks — but never the tax check or your
