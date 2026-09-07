@@ -27,6 +27,7 @@ interface Row {
   snipers: number;
   sameBlock: number;
   spark: number[];
+  bundled: number;
 }
 
 interface Payload {
@@ -349,6 +350,17 @@ const FeedRow = memo(function FeedRow({
               </span>
             )}
             {r.devSold && <span className="pill pill-cold">maker sold</span>}
+            {/* One operator wearing several wallets. Worth more than the
+                holder count next to it, because it says that count is a
+                costume. */}
+            {r.bundled >= 2 && (
+              <span
+                className={`pill ${r.bundled >= 4 ? "pill-hot" : ""}`}
+                title={`${r.bundled} of this coin's buyers are wallets funded from the same source — one operator, not ${r.bundled} people. Wallets newer than the last cluster scan are not counted, so the real number can only be higher.`}
+              >
+                {r.bundled} bundled
+              </span>
+            )}
             {r.top10Rate > 0.2 && (
               <span className="pill" title="how much the ten biggest wallets hold between them">
                 top 10 {Math.round(r.top10Rate * 100)}%
@@ -397,6 +409,7 @@ const FeedRow = memo(function FeedRow({
   a.r.top10Rate === b.r.top10Rate &&
   a.r.progressPct === b.r.progressPct &&
   a.r.snipers === b.r.snipers &&
+  a.r.bundled === b.r.bundled &&
   // Cheap enough: 20 numbers, and it changes at most once a minute.
   a.r.spark.join() === b.r.spark.join() &&
   a.fresh === b.fresh &&
