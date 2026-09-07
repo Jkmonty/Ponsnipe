@@ -248,6 +248,51 @@ Do that only behind something that terminates TLS, and only with
 `ENGINE_API_TOKEN` set — it is the single thing standing between a stranger
 and the endpoints that move funds.
 
+### Deploying to Fly.io
+
+`Dockerfile` and `fly.toml` are in the repo, configured for a read-only public
+instance. Fly runs a normal Node process with a disk, which is what this app
+needs and what the serverless hosts cannot give it.
+
+```bash
+# Once, on your machine
+iwr https://fly.io/install.ps1 -useb | iex   # Windows. macOS/Linux: brew install flyctl
+fly auth login
+
+# In the project
+fly launch --no-deploy          # reads fly.toml; give the app a unique name
+fly volumes create ponsnipe_data --size 3 --region lhr
+fly deploy
+fly open                        # your URL
+```
+
+The volume is not optional. Every database lives on it, and without one each
+redeploy starts from empty, which for this app means losing the price history
+the charts are drawn from since that only accumulates while the process runs.
+Three gigabytes is comfortable for the three-hour feed window plus twelve
+hours of price points.
+
+`auto_stop_machines` is off deliberately. Fly stops idle machines by default
+and that is fatal here in a way it is not for a normal web app: Ponsnipe is an
+indexer with a page attached, so a machine stopped between visitors is not
+serving a stale page, it is not indexing at all, and it wakes with a hole in
+its history for every minute it slept.
+
+One machine, also deliberately. Two would each sweep the chain against their
+own volume, double every RPC call, and show two visitors two different feeds,
+because the databases are per-machine local files rather than a shared store.
+Scaling past one means moving the index out of SQLite first.
+
+**On secrets.** `next build` copies `.env` and the whole of `data/`, keystore
+included, into `.next/standalone`. `.dockerignore` keeps all of it out of the
+build context, so the image cannot contain what Docker never received. That
+does mean your local `.next` directory holds secrets: it is gitignored, and it
+should never be zipped, uploaded, or copied to another machine.
+
+Deploy from a checkout with **no wallet configured**. `PUBLIC_MODE` hides the
+trading UI and `ENGINE_API_TOKEN` guards the routes, but an instance with no
+keystore on it has nothing to reach in the first place.
+
 ### A public read-only instance
 
 Set `PUBLIC_MODE=1`. The instance then serves the feed — launches, price

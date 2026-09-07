@@ -1,0 +1,40 @@
+# Keep secrets and data out of the build context.
+#
+# This is not tidiness. `next build` with output:"standalone" copies the
+# project directory into .next/standalone, and on this machine that swept up
+# .env and data/bot.keystore.json along with 1.8GB of scan databases. Built
+# into an image and pushed to a registry, that would have put the API token,
+# the keystore passphrase AND the encrypted key itself inside a published
+# artifact — both halves of the wallet, in one layer, permanently.
+#
+# Docker never sees these, so the build cannot copy what is not there.
+
+# ── secrets ─────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.keystore.json
+
+# ── data: databases are built at runtime on the mounted volume ──────────
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# ── build output and local state ────────────────────────────────────────
+.next/
+node_modules/
+out/
+build/
+*.log
+
+# ── repo furniture with no place in a runtime image ─────────────────────
+.git/
+.github/
+.gitignore
+docs/
+tests/
+scripts/
+README.md
+AGENTS.md
+CLAUDE.md

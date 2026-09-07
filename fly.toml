@@ -1,0 +1,69 @@
+# Ponsnipe on Fly.io — a read-only public feed.
+#
+# Rename `app` before the first deploy; it has to be unique across Fly, and
+# `fly launch` will otherwise pick a name for you.
+
+app = "ponsnipe"
+primary_region = "lhr"          # London. `fly platform regions` lists the rest.
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  PUBLIC_MODE = "1"
+  DATABASE_PATH = "/data/positions.sqlite"
+
+# The index lives here. Without a volume every redeploy starts from an empty
+# database, which for this app means losing the price history the charts are
+# drawn from — it only ever accumulates while the process is running.
+[[mounts]]
+  source = "ponsnipe_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+
+  # THE important setting.
+  #
+  # Fly stops idle machines by default, and that is fatal here in a way it is
+  # not for a normal web app. Ponsnipe is an indexer with a page attached: it
+  # sweeps the chain, holds a WebSocket for new launches and writes one price
+  # point per curve per minute. A machine stopped between visitors is not
+  # serving a stale page, it is not indexing at all, and it wakes with a hole
+  # in its history for every minute it was asleep.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    # The feed holds an SSE connection open per viewer, so these are lower
+    # than they look: a browser sitting on the page counts as a live request
+    # for as long as it is open.
+    soft_limit = 60
+    hard_limit = 120
+
+# One machine, deliberately.
+#
+# Two would each run their own sweep against their own volume, double every
+# RPC call, and serve visitors two feeds that disagree — the databases are
+# per-machine local files, not a shared store. Scaling this app means moving
+# the index out of SQLite first.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[checks]
+  [checks.feed]
+    type = "http"
+    port = 3000
+    method = "GET"
+    # A path that only answers once the feed has actually initialised, so a
+    # process that booted but cannot reach the chain fails the check instead
+    # of sitting there green and empty.
+    path = "/api/feed?limit=1"
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "60s"
