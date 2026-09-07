@@ -39,6 +39,23 @@ import { robinhoodChain } from "@/lib/chain";
 const STORE = "ponsnipe.tradingKey.v1";
 
 /**
+ * Lock the key again after this long without a trade.
+ *
+ * An unlocked key spends without confirming, so leaving one unlocked in a
+ * forgotten tab is the same as leaving a wallet open on the desk. Fifteen
+ * minutes is longer than a trade takes and shorter than a lunch.
+ */
+const IDLE_LOCK_MS = 15 * 60_000;
+
+/**
+ * How long a revealed private key stays on screen.
+ *
+ * Long enough to copy into a password manager, short enough that it is not
+ * still sitting in the DOM an hour later on a shared machine.
+ */
+export const REVEAL_TIMEOUT_MS = 60_000;
+
+/**
  * Broadcast endpoint, chosen by measurement rather than by name.
  *
  * Of the four public endpoints, one refuses browser requests outright (no CORS
@@ -94,6 +111,8 @@ function readVault(): Vault | null {
 export interface TradingKey {
   /** A vault exists in this browser, locked or not. */
   exists: boolean;
+  /** Milliseconds until the idle lock fires, or null while locked. */
+  lockingIn: number | null;
   /** Address of the stored key, known even while locked. */
   address: Address | null;
   /** Unlocked and ready to sign without prompting. */
@@ -107,6 +126,8 @@ export interface TradingKey {
   /** The raw key, for backing up or sweeping into another wallet. */
   reveal: (pass: string) => Promise<string | null>;
   forget: () => void;
+  /** Push the idle deadline out; call when the key is used. */
+  touch: () => void;
   account: Account | null;
   client: WalletClient | null;
 }
@@ -116,9 +137,33 @@ export function useTradingKey(): TradingKey {
   const [account, setAccount] = useState<Account | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lockAt, setLockAt] = useState<number | null>(null);
 
   // localStorage is not available during render on the server.
   useEffect(() => setVault(readVault()), []);
+
+  /** Push the idle deadline out. Called whenever the key is actually used. */
+  const touch = useCallback(() => {
+    setLockAt(Date.now() + IDLE_LOCK_MS);
+  }, []);
+
+  /*
+   * Lock on inactivity, and on the tab being hidden for a long stretch.
+   *
+   * The timer is checked rather than scheduled once, because a laptop that
+   * sleeps does not fire a pending setTimeout on time — the deadline is a
+   * timestamp so a machine that wakes an hour later locks immediately.
+   */
+  useEffect(() => {
+    if (!account || lockAt == null) return;
+    const iv = setInterval(() => {
+      if (Date.now() >= lockAt) {
+        setAccount(null);
+        setLockAt(null);
+      }
+    }, 10_000);
+    return () => clearInterval(iv);
+  }, [account, lockAt]);
 
   const store = useCallback(async (pk: Hex, pass: string) => {
     const acct = privateKeyToAccount(pk);
@@ -134,6 +179,7 @@ export function useTradingKey(): TradingKey {
     localStorage.setItem(STORE, JSON.stringify(v));
     setVault(v);
     setAccount(acct);
+    setLockAt(Date.now() + IDLE_LOCK_MS);
   }, []);
 
   const create = useCallback(
@@ -141,7 +187,7 @@ export function useTradingKey(): TradingKey {
       setBusy(true);
       setError(null);
       try {
-        if (pass.length < 8) throw new Error("Use at least 8 characters.");
+        if (pass.length < 12) throw new Error("Use at least 12 characters.");
         await store(generatePrivateKey(), pass);
       } catch (e) {
         setError(e instanceof Error ? e.message : "could not create the key");
@@ -157,7 +203,7 @@ export function useTradingKey(): TradingKey {
       setBusy(true);
       setError(null);
       try {
-        if (pass.length < 8) throw new Error("Use at least 8 characters.");
+        if (pass.length < 12) throw new Error("Use at least 12 characters.");
         const pk = privateKey.trim().startsWith("0x") ? privateKey.trim() : `0x${privateKey.trim()}`;
         if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) throw new Error("That is not a private key.");
         await store(pk as Hex, pass);
@@ -188,6 +234,7 @@ export function useTradingKey(): TradingKey {
       setError(null);
       try {
         setAccount(privateKeyToAccount(await decrypt(v, pass)));
+        setLockAt(Date.now() + IDLE_LOCK_MS);
       } catch {
         // AES-GCM fails authentication on a wrong passphrase; there is no way
         // to tell that apart from corruption, and the honest message is the
@@ -214,12 +261,16 @@ export function useTradingKey(): TradingKey {
     [decrypt],
   );
 
-  const lock = useCallback(() => setAccount(null), []);
+  const lock = useCallback(() => {
+    setAccount(null);
+    setLockAt(null);
+  }, []);
 
   const forget = useCallback(() => {
     localStorage.removeItem(STORE);
     setVault(null);
     setAccount(null);
+    setLockAt(null);
   }, []);
 
   /*
@@ -236,6 +287,7 @@ export function useTradingKey(): TradingKey {
 
   return {
     exists: !!vault,
+    lockingIn: account && lockAt != null ? Math.max(0, lockAt - Date.now()) : null,
     address: vault?.address ?? null,
     unlocked: !!account,
     busy,
@@ -248,5 +300,6 @@ export function useTradingKey(): TradingKey {
     forget,
     account,
     client,
+    touch,
   };
 }

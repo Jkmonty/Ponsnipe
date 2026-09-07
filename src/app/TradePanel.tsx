@@ -23,7 +23,7 @@ import { applySlippage, quoteSell } from "@/lib/pons/pricing";
 import { robinhoodChain } from "@/lib/chain";
 import { browserPublic, executeBuy, findRoute } from "./browserTrade";
 import { useBrowserWallet } from "./useBrowserWallet";
-import { useTradingKey } from "./useTradingKey";
+import { REVEAL_TIMEOUT_MS, useTradingKey } from "./useTradingKey";
 
 interface Snap {
   address: string;
@@ -104,6 +104,18 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
   const [fundEth, setFundEth] = useState("0.05");
   const [revealed, setRevealed] = useState<string | null>(null);
 
+  /*
+   * Take the key back off the screen on its own.
+   *
+   * It was shown until someone remembered to press hide, which on a shared
+   * machine means it can sit in the DOM indefinitely after being copied.
+   */
+  useEffect(() => {
+    if (!revealed) return;
+    const t = setTimeout(() => setRevealed(null), REVEAL_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [revealed]);
+
   useEffect(() => {
     setLimits(readLimits());
     setSpent(readSpentToday());
@@ -183,6 +195,7 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
         creatorTaxBps: snap.creatorTaxBps,
         slippageBps,
       });
+      key.touch();
       addSpentToday(amount);
       setSpent(readSpentToday());
       setMsg({ kind: "ok", text: `Bought ${snap.symbol}.`, tx: hashes[hashes.length - 1] });
@@ -237,6 +250,7 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
         args: [held, applySlippage(q.quoteOut, slippageBps), key.address],
       });
       await c.waitForTransactionReceipt({ hash });
+      key.touch();
       setMsg({ kind: "ok", text: `Sold ${snap.symbol}.`, tx: hash });
       void refresh();
     } catch (e) {
@@ -313,7 +327,7 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
           in it — you can send funds back to your own wallet at any time.
         </p>
         <label className="field">
-          <span>Passphrase (8+ characters)</span>
+          <span>Passphrase (12+ characters)</span>
           <input
             className="input"
             type="password"
@@ -396,9 +410,19 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
         <h2 className="shead" style={{ margin: 0 }}>
           Trade
         </h2>
-        <span className="muted small mono" title={key.address ?? ""}>
+        <span
+          className="muted small mono"
+          title={
+            key.lockingIn != null
+              ? `Locks after 15 minutes without a trade — about ${Math.ceil(key.lockingIn / 60_000)} min left`
+              : (key.address ?? "")
+          }
+        >
           {key.address ? short(key.address) : ""} ·{" "}
           {bal != null ? `${Number(formatEther(bal)).toFixed(4)} ETH` : "…"}
+          {key.lockingIn != null && key.lockingIn < 5 * 60_000
+            ? ` · locks in ${Math.ceil(key.lockingIn / 60_000)}m`
+            : ""}
         </span>
       </div>
 

@@ -29,6 +29,61 @@ const nextConfig: NextConfig = {
    * never received. Locally, treat .next as containing secrets: it is
    * gitignored, but do not zip it, upload it, or copy it to another machine.
    */
+
+  /*
+   * Security headers.
+   *
+   * These matter more here than on a normal site: a trading key lives in the
+   * visitor's browser, so any script that runs on this page can spend it. A
+   * CSP does not stop a hostile deploy — nothing client-side can — but it is
+   * what stands between an injected third-party script and the key.
+   *
+   * connect-src is the important line. Exfiltration needs somewhere to send
+   * to, and this limits that to this origin and the chain endpoints the app
+   * actually uses.
+   *
+   * Known gap, stated rather than hidden: img-src has to allow arbitrary https
+   * because token artwork falls back to loading the contract's own URL
+   * directly when the proxy cannot fetch it. An image URL can carry data in
+   * its query string, so that path remains an exfiltration channel. Closing it
+   * means dropping the direct fallback and serving every logo through
+   * /api/img.
+   *
+   * Applied in production only: `next dev` needs eval and inline websockets
+   * for hot reload, and a CSP that has to be loosened for development is a CSP
+   * nobody trusts in production.
+   */
+  async headers() {
+    if (process.env.NODE_ENV !== "production") return [];
+    const csp = [
+      "default-src 'self'",
+      // Next inlines its bootstrap; without nonce plumbing this is required.
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data:",
+      "connect-src 'self' https://robinhood-rpc.publicnode.com https://rpc.mainnet.chain.robinhood.com https://rpc.ordofi.network https://api.coinbase.com https://query1.finance.yahoo.com",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "upgrade-insecure-requests",
+    ].join("; ");
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: csp },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Frame-Options", value: "DENY" },
+          // No reason for this page to reach a camera, a microphone or a
+          // location, and saying so cheaply removes a class of abuse.
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
