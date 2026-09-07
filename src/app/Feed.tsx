@@ -471,10 +471,42 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
     }
   }, []);
 
+  /** True while the push connection is up, so the UI can say which it is on. */
+  const [pushed, setPushed] = useState(false);
+
   useEffect(() => {
     load();
-    const iv = setInterval(load, 2000);
-    return () => clearInterval(iv);
+
+    /*
+     * Pushed, with a poll underneath.
+     *
+     * A launch is indexed in about 0.09s and the browser used to wait up to
+     * two more seconds to ask about it — the largest remaining delay in the
+     * path, and all of it after the hard part. The stream says "something
+     * landed" and this fetches; it carries no rows itself, so there is still
+     * one copy of the query, the USD conversion and the ordering.
+     *
+     * The interval stays, at ten seconds rather than two. If the stream is
+     * refused, dies, or was never established, the feed gets slower and stays
+     * correct — which is the right way round for something that decides what
+     * you buy. EventSource reconnects on its own, so there is nothing to
+     * retry here.
+     */
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource("/api/feed/stream");
+      es.onopen = () => setPushed(true);
+      es.onmessage = () => load();
+      es.onerror = () => setPushed(false);
+    } catch {
+      // No EventSource, or blocked: the poll below is the whole mechanism.
+    }
+
+    const iv = setInterval(load, 10_000);
+    return () => {
+      clearInterval(iv);
+      es?.close();
+    };
   }, [load]);
 
   /*
@@ -534,9 +566,18 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
             {find.trim() && all.length !== rows.length ? ` of ${all.length}` : ""}
           </span>
         </h2>
-        <span className={`livedot${held ? " livedot-held" : ""}`} title={held ? "Paused while you hover" : "Live"}>
+        <span
+          className={`livedot${held ? " livedot-held" : ""}`}
+          title={
+            held
+              ? "Paused while you hover"
+              : pushed
+                ? "Pushed from the chain as launches land"
+                : "Checking every 10s — the live connection is not up"
+          }
+        >
           <i />
-          {held ? "paused" : "live"}
+          {held ? "paused" : pushed ? "live" : "polling"}
         </span>
         <div className="findwrap">
           <svg className="findicon" viewBox="0 0 16 16" aria-hidden="true">

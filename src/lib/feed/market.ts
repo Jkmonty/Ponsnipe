@@ -464,6 +464,7 @@ export async function ingestLaunches(fresh: RawLaunch[], head: bigint): Promise<
   // takes longer than that, so without this the newest coins -- the ones anyone
   // is actually looking at -- would always show initials.
   warmImages(add.map((_, i) => (meta[i * PER + 2]?.status === "success" ? String(meta[i * PER + 2].result) : null)));
+  if (add.length) notifyFeed(add.length);
   return add.length;
 }
 
@@ -862,6 +863,36 @@ function recordPrices(points: [curve: string, price: number][]): void {
     for (const [curve, price] of rows) up.run(curve, b, price);
   } catch {
     /* history is decoration; never let it break a sweep */
+  }
+}
+
+/*
+ * Subscribers waiting to be told a launch landed.
+ *
+ * The browser used to poll every two seconds, which put up to two seconds
+ * between a coin being indexed in 0.09s and appearing on screen — most of the
+ * latency in the whole path, and all of it after the hard part was done.
+ * Pushing instead means the wait is a fetch, not a poll interval.
+ *
+ * globalThis-backed for the usual reason: route handlers and the sweep are
+ * separate module registries in Next, and a Set that each of them has its own
+ * copy of would never deliver anything.
+ */
+const fg = globalThis as typeof globalThis & { __ponsFeedSubs?: Set<(n: number) => void> };
+
+export function feedSubscribers(): Set<(n: number) => void> {
+  fg.__ponsFeedSubs ??= new Set();
+  return fg.__ponsFeedSubs;
+}
+
+/** Tell every open feed that `n` launches just landed. Never throws. */
+function notifyFeed(n: number): void {
+  for (const fn of feedSubscribers()) {
+    try {
+      fn(n);
+    } catch {
+      // A dead connection must not take the sweep down with it.
+    }
   }
 }
 
