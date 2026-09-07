@@ -121,6 +121,7 @@ for a while. The toggle in the header switches to live.
 | `BUNDLES_PATH` | Where the wallet-cluster database lives, for the bundle column. Defaults to `data/bundles.sqlite`, built by `npm run bundles`. |
 | `REPUTATION_PATH` | Where the deployer/proven-buyer database lives. Defaults to `data/reputation.sqlite`, built by `npm run reputation`. |
 | `PUBLIC_MODE` | Set to `1` to serve the feed only — no wallet, no trading UI. For an instance on a public URL. |
+| `NEXT_PUBLIC_REPO_URL` | Where the header's SOURCE link points, so visitors can find the code and run their own copy. Unset, the header just says READ-ONLY and links nowhere. |
 | `DISABLE_PRICE_FEEDS` | Set to `1` to make no outbound calls except the RPC. The feed then shows amounts in each token's own quote asset rather than dollars. |
 | `ANTHROPIC_API_KEY` | Lets the launch composer draft with Claude instead of a built-in heuristic. Costs a fraction of a penny per draft. |
 

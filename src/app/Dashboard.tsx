@@ -77,6 +77,9 @@ const PRESETS = {
 } as const;
 type Mode = keyof typeof PRESETS | "custom";
 
+/** Where to send people who want to run their own copy. Unset = no link. */
+const REPO_URL = process.env.NEXT_PUBLIC_REPO_URL?.trim() || "";
+
 export default function Dashboard() {
   const [wallet, setWallet] = useState<WalletInfo | null>(null);
   const [engine, setEngine] = useState<EngineInfo | null>(null);
@@ -200,15 +203,25 @@ export default function Dashboard() {
           {/* A read-only instance has nothing to switch, and offering the
               switch anyway just produces a 401 at whoever presses it. */}
           {wallet?.publicMode ? (
-            <a
-              className="chip chip-off"
-              href="https://github.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Run your own copy, with your own wallet"
-            >
-              READ-ONLY
-            </a>
+            /*
+              Links to the repo only when there is a repo to link to.
+              This was hardcoded to https://github.com — a placeholder that
+              shipped, and sent anyone who clicked it to the GitHub homepage.
+              Set NEXT_PUBLIC_REPO_URL to turn it back into a link.
+            */
+            REPO_URL ? (
+              <a
+                className="chip chip-off"
+                href={REPO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Run your own copy, with your own wallet"
+              >
+                SOURCE
+              </a>
+            ) : (
+              <span className="chip chip-off">READ-ONLY</span>
+            )
           ) : (
             <>
           <span className={live ? "chip chip-live" : "chip chip-dry"}>
