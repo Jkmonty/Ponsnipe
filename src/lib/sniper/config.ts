@@ -90,6 +90,14 @@ export const sniperConfigSchema = z.object({
    * the graduation rate rising 2.39% -> 3.32%. Thin, and its confidence interval
    * touched zero, so treat it as the best available edge rather than a sure one.
    * Needs data/reputation.sqlite; 0 disables.
+   *
+   * It does NOT reject almost everything, which this note used to claim and
+   * which was the stated reason it ships off. Measured against 3,660 live
+   * curves at the +20s decision point, using only wallets that had bought by
+   * then: 27.7% had four or more proven buyers, and 328 of 1,573 ETH-quoted
+   * curves passed — around a fifth of everything this sniper can actually buy.
+   * So the cost of turning it on is roughly a 4-in-5 cut in candidates, not the
+   * near-total silence the old wording implied.
    */
   minProvenBuyers: z.number().int().min(0).max(50),
 
@@ -189,8 +197,10 @@ export const DEFAULT_CONFIG: SniperConfig = {
   minBuyVelocity: null,
   // 20 dud launches is where the measured graduation rate collapses to 0.17%.
   maxDeployerDudLaunches: 20,
-  // Off by default: it is a real but thin edge, and it silently rejects almost
-  // everything, so it should be a deliberate choice rather than a surprise.
+  // Off by default because it is a real but thin edge whose confidence
+  // interval touched zero — a deliberate choice, not a surprise. Not because
+  // it rejects everything: measured, it passes about a fifth of ETH-quoted
+  // launches. See the note on the field.
   minProvenBuyers: 0,
   watchWhenDisabled: true,
   nameAllowRegex: null,
