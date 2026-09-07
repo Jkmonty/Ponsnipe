@@ -879,6 +879,30 @@ textarea.input,
  * eye slides off; a rule down the left and a calmer body colour keeps the
  * emphasis on the fact that this is a caution without shouting the content.
  */
+/* A checkbox with a sentence under it, rather than a bare label that makes
+   you guess what turning it on will cost. */
+.toggle-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+.toggle-row input { margin-top: 2px; accent-color: var(--accent); flex: none; }
+.toggle-row strong { display: block; font-size: 13px; font-weight: 650; }
+.toggle-row em {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .note-warn {
   margin: 10px 0 0;
   padding: 9px 12px;
@@ -1340,6 +1364,10 @@ textarea.input,
  */
 .fstat.warn { color: var(--amber); }
 .fstat.good { color: var(--green); }
+/* Duplicates a column that exists on wide screens, so it is hidden until the
+   narrow breakpoint drops that column. Declared after .fstat deliberately:
+   sitting before it, the display:none lost and the value showed twice. */
+.frow-item .onlynarrow { display: none; }
 .fstat.hot {
   color: var(--accent);
   font-weight: 650;
@@ -1443,7 +1471,7 @@ textarea.input,
   font-weight: 600;
   color: var(--muted);
 }
-.fnum:first-of-type { color: var(--text); font-weight: 700; }
+.fnum-mc { color: var(--text); font-weight: 700; }
 .fnum small { display: block; font-weight: 400; font-size: 10px; color: var(--muted-2); }
 .faddr {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1466,3 +1494,69 @@ textarea.input,
   color: var(--accent);
 }
 .fsec:first-child { padding-top: 2px; }
+
+
+/* ── narrow screens ──────────────────────────────────────────────────────
+   A phone cannot hold seven columns. On desktop the row is a table; here it
+   collapses to a card — image, identity and market cap on the first line,
+   everything else wrapping underneath — because a table that overflows its
+   viewport is worse than no table at all, and this feed is going to be read
+   on a phone more often than not. */
+@media (max-width: 760px) {
+  .wrap { padding: 0 10px 60px; }
+
+  .topbar { padding: 10px 14px; margin: 0 -10px 12px; }
+  .topbar h1 { font-size: 17px; }
+
+  /* Column headings label columns that no longer exist. */
+  .fhead { display: none; }
+
+  .feed {
+    position: static;
+    max-height: none;
+    padding: 12px 12px 4px;
+  }
+  .flist { max-height: none; overflow: visible; }
+
+  /* Title, live dot, search and the ETH price stop competing for one line. */
+  .feedhead { flex-wrap: wrap; gap: 8px; }
+  .findwrap { order: 3; flex: 1 0 100%; }
+
+  .frow-item,
+  .fhead {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    gap: 9px;
+    padding: 9px 6px;
+    /* Top-aligned here: a wrapped row is three lines tall, and centring the
+       image against that leaves it floating beside the middle of the text. */
+    align-items: start;
+  }
+  /* The sparkline and the trailing numeric columns are the first things to
+     go: they are the least legible at this width and the most expensive in
+     horizontal space. Volume and liquidity move into line two as text. */
+  /*
+     Addressed by name, not by position. nth-of-type counts among sibling
+     elements of the same TAG, and the sparkline is an <svg> when it has data
+     and a <span> placeholder when it does not — so the indices shifted by one
+     from row to row, and the phone was showing the trade count where the
+     market cap should have been.
+  */
+  .frow-item .spark,
+  .frow-item .spark-empty,
+  .frow-item .fnum-vol,
+  .frow-item .fnum-liq,
+  .frow-item .fnum-tx { display: none; }
+  .frow-item .fnum-mc { font-size: 14px; align-self: start; }
+
+  .fline2 { flex-wrap: wrap; row-gap: 3px; }
+  .frow-item .onlynarrow { display: inline-flex; }
+  /* The graduation bar goes full width under the stats rather than being
+     squeezed to nothing at the end of a wrapped flex line. */
+  .fbond-wrap { margin-left: 0; flex: 1 0 100%; margin-top: 3px; }
+  .fbond { flex: 1 1 auto; width: auto; }
+
+  /* One column, and the panel you act on below the feed rather than beside it. */
+  .cols { grid-template-columns: minmax(0, 1fr); }
+  .card { padding: 16px; }
+  .row { flex-wrap: wrap; }
+}

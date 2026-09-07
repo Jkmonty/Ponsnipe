@@ -841,6 +841,7 @@ interface SniperCfg {
   nameDenyRegex: string | null;
   deployerAllow: string[];
   deployerDeny: string[];
+  allowNonEthQuotes: boolean;
   tickerWatch: TickerWatchEntry[];
   tickerDelaySeconds: number;
   maxConcurrentSnipes: number;
@@ -1034,6 +1035,27 @@ function SniperCard({
 
       {open && (
         <div style={{ marginTop: 12 }}>
+          {/*
+            Roughly half of every pons launch is priced in something other than
+            ETH, so this doubles what the sniper can reach. It is a toggle
+            rather than a default because the extra swap costs a pool fee, its
+            own gas and its own chance to revert.
+          */}
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={!!cfg.allowNonEthQuotes}
+              onChange={(e) => patch({ allowNonEthQuotes: e.target.checked })}
+            />
+            <span>
+              <strong>Also buy coins priced in USDG, NVDA and other stocks</strong>
+              <em>
+                About half of all launches. Your ETH is swapped for the coin&rsquo;s currency
+                first, which costs a small pool fee and one extra transaction.
+              </em>
+            </span>
+          </label>
+
           <div className="row" style={{ gap: 10 }}>
             <label className="field" style={{ flex: 1, minWidth: 120 }}>
               <span>Min liquidity (ETH)</span>

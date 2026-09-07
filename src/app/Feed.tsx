@@ -335,6 +335,12 @@ const FeedRow = memo(function FeedRow({
             </span>
           )}
           <span className="fquote" title="what this curve trades against">{r.quoteSymbol}</span>
+          {/* Only rendered on narrow screens, where the Vol and Liq columns
+              are hidden — without this a phone loses them entirely. */}
+          <span className="fstat onlynarrow" title="volume">
+            <i className="fi">VOL</i>
+            {money(r.volumeUsd)}
+          </span>
 
           <span className="fbond-wrap">
             {r.devHoldRate > 0.05 && (
@@ -360,16 +366,16 @@ const FeedRow = memo(function FeedRow({
 
       <SparkLine points={r.spark} />
 
-      <span className={`fnum num${mcFlash}`} title="market cap">
+      <span className={`fnum fnum-mc num${mcFlash}`} title="market cap">
         {money(r.mcapUsd)}
       </span>
-      <span className={`fnum num${volFlash}`} title="volume">
+      <span className={`fnum fnum-vol num${volFlash}`} title="volume">
         {money(r.volumeUsd)}
       </span>
-      <span className="fnum num" title="liquidity in the curve">
+      <span className="fnum fnum-liq num" title="liquidity in the curve">
         {money(r.liquidityUsd)}
       </span>
-      <span className="fnum num" title="trades">
+      <span className="fnum fnum-tx num" title="trades">
         {r.trades || "—"}
         <small>{r.holders ? `${r.holders} hold` : ""}</small>
       </span>
