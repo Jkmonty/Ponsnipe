@@ -272,7 +272,10 @@ export default function Dashboard() {
         <div className="cols cols-solo">
           <Feed onPick={(address) => setPicked({ address, n: Date.now() })} />
           <div className="colside">
-            <TradePanel picked={picked} />
+            <TradePanel
+              picked={picked}
+              onPickHolding={(address) => setPicked({ address, n: Date.now() })}
+            />
             <aside className="card">
               <h2 className="shead">What this is</h2>
               <p className="ssub" style={{ marginLeft: 13 }}>

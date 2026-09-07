@@ -950,6 +950,35 @@ textarea.input,
  * summary they can open puts the same words one click away in a register that
  * does not look like a warning label.
  */
+/* ── what the trader is holding ─────────────────────────────────────── */
+.holdings {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+}
+.holding {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 62px;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .18);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.holding:hover { border-color: var(--line-2); background: var(--card-2); }
+.holding-sym { font-weight: 650; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.holding-val { font-size: 12px; color: var(--muted); }
+.holding-val i { font-style: normal; font-size: 10px; color: var(--muted-2); }
+.holding-pnl { text-align: right; font-size: 12.5px; font-weight: 650; }
+
 .fineprint { margin: 4px 0 12px; }
 .fineprint > summary {
   cursor: pointer;

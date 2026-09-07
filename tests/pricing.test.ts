@@ -114,3 +114,26 @@ test("applySlippage reduces the floor and never goes negative", () => {
 test("E helper unused guard", () => {
   assert.equal(E("1"), 1n);
 });
+
+/*
+ * priceFromReserves takes (reserves, tokenDecimals, quoteDecimals) and both are
+ * numbers, so swapping them typechecks and silently misprices everything. This
+ * pins the order down with a pair that cannot be symmetric: a 6-decimal quote
+ * against an 18-decimal token, which is USDG on this chain.
+ */
+test("priceFromReserves argument order is token decimals then quote decimals", () => {
+  // 100 USDG (6dp) against 1,000,000 tokens (18dp) is 0.0001 USDG per token.
+  const reserves = {
+    quoteReserve: 100n * 10n ** 6n,
+    tokenReserve: 1_000_000n * 10n ** 18n,
+  };
+  const right = priceFromReserves(reserves, 18, 6).priceQuote;
+  assert.ok(
+    Math.abs(right - 0.0001) < 1e-12,
+    `expected 0.0001 USDG per token, got ${right}`,
+  );
+
+  // Swapped, the answer is out by 1e24 — the shape of the bug this guards.
+  const wrong = priceFromReserves(reserves, 6, 18).priceQuote;
+  assert.notEqual(wrong, right);
+});

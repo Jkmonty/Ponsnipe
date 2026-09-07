@@ -24,6 +24,7 @@ import { robinhoodChain } from "@/lib/chain";
 import { browserPublic, executeBuy, findRoute } from "./browserTrade";
 import { useBrowserWallet } from "./useBrowserWallet";
 import { REVEAL_TIMEOUT_MS, useTradingKey } from "./useTradingKey";
+import { forgetPosition, recordBuy, usePositions } from "./usePositions";
 
 interface Snap {
   address: string;
@@ -84,7 +85,14 @@ function addSpentToday(eth: number): void {
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
-export default function TradePanel({ picked }: { picked: { address: string; n: number } | null }) {
+export default function TradePanel({
+  picked,
+  onPickHolding,
+}: {
+  picked: { address: string; n: number } | null;
+  /** Load one of the trader's own holdings into the panel above. */
+  onPickHolding?: (token: string) => void;
+}) {
   const ext = useBrowserWallet();
   const key = useTradingKey();
 
@@ -103,6 +111,9 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
   const [routeOk, setRouteOk] = useState<boolean | null>(null);
   const [fundEth, setFundEth] = useState("0.05");
   const [revealed, setRevealed] = useState<string | null>(null);
+  /** Bumped after any trade, so holdings re-read rather than going stale. */
+  const [moved, setMoved] = useState(0);
+  const { holdings, reload: reloadPositions } = usePositions(key.address, moved);
 
   /*
    * Take the key back off the screen on its own.
@@ -182,7 +193,8 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
     setBusy("buy");
     setMsg(null);
     try {
-      const { hashes } = await executeBuy(key.client, key.address, parseEther(eth), {
+      const ethIn = parseEther(eth);
+      const { hashes, spentQuote } = await executeBuy(key.client, key.address, ethIn, {
         curve: getAddress(snap.curve),
         token: getAddress(snap.address),
         pairToken: snap.pairToken as Address,
@@ -196,6 +208,21 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
         slippageBps,
       });
       key.touch();
+      recordBuy(key.address, {
+        token: snap.address,
+        curve: snap.curve,
+        symbol: snap.symbol,
+        decimals: snap.decimals,
+        quoteSymbol: snap.quoteSymbol,
+        quoteDecimals: snap.quoteDecimals,
+        quoteIsNative: snap.quoteIsNative,
+        // What reached the curve, which on a zapped buy is the swapped amount
+        // rather than the ETH — the two are different assets entirely.
+        spentQuote: spentQuote.toString(),
+        spentEth: ethIn.toString(),
+        at: Date.now(),
+      });
+      setMoved((n) => n + 1);
       addSpentToday(amount);
       setSpent(readSpentToday());
       setMsg({ kind: "ok", text: `Bought ${snap.symbol}.`, tx: hashes[hashes.length - 1] });
@@ -252,6 +279,8 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
       await c.waitForTransactionReceipt({ hash });
       key.touch();
       setMsg({ kind: "ok", text: `Sold ${snap.symbol}.`, tx: hash });
+      if (key.address) forgetPosition(key.address, snap.address);
+      setMoved((n) => n + 1);
       void refresh();
     } catch (e) {
       setMsg({ kind: "err", text: (e instanceof Error ? e.message : "sell failed").split("\n")[0] });
@@ -546,6 +575,46 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
             </a>
           )}
         </p>
+      )}
+
+      {/* ── everything held, not just the coin last clicked ── */}
+      {holdings.length > 0 && (
+        <div className="holdings">
+          <div className="spread" style={{ alignItems: "baseline" }}>
+            <span className="muted small">
+              Holding {holdings.length} coin{holdings.length === 1 ? "" : "s"}
+            </span>
+            <button className="linkish" onClick={() => void reloadPositions()}>
+              refresh
+            </button>
+          </div>
+          {holdings.map((h) => (
+            <button
+              key={h.token}
+              type="button"
+              className="holding"
+              /* Selecting it loads it above, which is where selling happens —
+                 rather than duplicating a sell button on every row. */
+              onClick={() => onPickHolding?.(h.token)}
+              title={`Bought for ${h.spentQuoteNum.toPrecision(4)} ${h.quoteSymbol}`}
+            >
+              <span className="holding-sym">{h.symbol}</span>
+              <span className="holding-val num">
+                {h.valueQuote > 0 ? h.valueQuote.toPrecision(4) : "—"}{" "}
+                <i>{h.quoteSymbol}</i>
+              </span>
+              <span
+                className={`holding-pnl num ${
+                  h.pnlPct == null ? "muted" : h.pnlPct >= 0 ? "pos" : "neg"
+                }`}
+              >
+                {h.pnlPct == null
+                  ? "—"
+                  : `${h.pnlPct >= 0 ? "+" : ""}${h.pnlPct.toFixed(1)}%`}
+              </span>
+            </button>
+          ))}
+        </div>
       )}
 
       {/* ── funding, limits and getting out ── */}
