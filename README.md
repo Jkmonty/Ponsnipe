@@ -120,6 +120,7 @@ for a while. The toggle in the header switches to live.
 | `ETH_USD` | Pins the ETH price used for the feed's dollar figures. Left unset it is fetched from Coinbase's public endpoint every five minutes. |
 | `BUNDLES_PATH` | Where the wallet-cluster database lives, for the bundle column. Defaults to `data/bundles.sqlite`, built by `npm run bundles`. |
 | `REPUTATION_PATH` | Where the deployer/proven-buyer database lives. Defaults to `data/reputation.sqlite`, built by `npm run reputation`. |
+| `PUBLIC_MODE` | Set to `1` to serve the feed only — no wallet, no trading UI. For an instance on a public URL. |
 | `DISABLE_PRICE_FEEDS` | Set to `1` to make no outbound calls except the RPC. The feed then shows amounts in each token's own quote asset rather than dollars. |
 | `ANTHROPIC_API_KEY` | Lets the launch composer draft with Claude instead of a built-in heuristic. Costs a fraction of a penny per draft. |
 
@@ -247,11 +248,22 @@ Do that only behind something that terminates TLS, and only with
 `ENGINE_API_TOKEN` set — it is the single thing standing between a stranger
 and the endpoints that move funds.
 
-For a public read-only instance, leave the wallet unconfigured and the sniper
-off. Everything that spends money is behind the bot wallet, so an instance
-without one can show the feed and price nothing else. Do not expose an
-instance that has a funded keystore: `ENGINE_API_TOKEN` is the only thing
-standing between a stranger and your trading endpoints.
+### A public read-only instance
+
+Set `PUBLIC_MODE=1`. The instance then serves the feed — launches, price
+charts, holders, bundle detection, token lookup — and nothing else: the wallet
+card, buy form, sniper and launch composer are not rendered, and `/api/wallet`
+stops reporting the bot's address and balance to anyone who asks.
+
+That flag is not what makes it safe. Every route that moves funds already
+refuses a non-loopback request that does not present `ENGINE_API_TOKEN`, so a
+stranger cannot trade on your instance either way. `PUBLIC_MODE` is what makes
+it *honest*: without it a visitor is shown controls that fail with 401 when
+touched, which reads as a broken app rather than a deliberate shop window.
+
+Still, do not point a public URL at a machine holding a funded keystore. Run
+the demo from a separate checkout with no wallet set up at all, so there is
+nothing on it to reach even if the token leaks.
 
 ## Licence
 

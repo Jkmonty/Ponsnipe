@@ -70,6 +70,22 @@ export const env = {
 
   databasePath: opt("DATABASE_PATH", "./data/positions.sqlite"),
   apiToken: process.env.ENGINE_API_TOKEN?.trim() ?? "",
+
+  /**
+   * Serve the feed and nothing else.
+   *
+   * For an instance put on a public URL. Every route that moves funds already
+   * refuses a non-loopback request without ENGINE_API_TOKEN, so this is not
+   * what makes hosting safe — it is what makes it honest. Without it a visitor
+   * is shown a wallet card, a buy form and a sniper switch that all fail with
+   * 401 when touched, which reads as a broken app rather than a deliberately
+   * read-only one.
+   *
+   * It also stops /api/wallet handing the bot's address and balance to anyone
+   * who asks. That is public on-chain data, but there is no reason to tie it
+   * to this instance for every passer-by.
+   */
+  publicMode: process.env.PUBLIC_MODE === "1",
 };
 
 /** Throw unless the bot wallet + API are fully configured for live use. */

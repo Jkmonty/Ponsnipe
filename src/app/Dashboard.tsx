@@ -8,6 +8,8 @@ import Feed from "./Feed";
 import WalletSetup from "./WalletSetup";
 
 interface WalletInfo {
+  /** Set by a read-only instance: show the feed, hide everything that trades. */
+  publicMode?: boolean;
   configured: boolean;
   address?: string;
   /** null when the balance could not be read; that is not the same as zero. */
@@ -194,6 +196,20 @@ export default function Dashboard() {
           <p className="sub">Pick your target. Take the shot. Walk away.</p>
         </div>
         <div className="row" style={{ gap: 10 }}>
+          {/* A read-only instance has nothing to switch, and offering the
+              switch anyway just produces a 401 at whoever presses it. */}
+          {wallet?.publicMode ? (
+            <a
+              className="chip chip-off"
+              href="https://github.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Run your own copy, with your own wallet"
+            >
+              READ-ONLY
+            </a>
+          ) : (
+            <>
           <span className={live ? "chip chip-live" : "chip chip-dry"}>
             <span className="dot" />
             {live ? "LIVE" : "DRY-RUN"}
@@ -205,6 +221,8 @@ export default function Dashboard() {
             onClick={() => toggleLive(!live)}
             title={live ? "Switch to dry-run" : "Enable live trading"}
           />
+            </>
+          )}
         </div>
       </header>
 
@@ -227,6 +245,32 @@ export default function Dashboard() {
         you do about it. Clicking a coin fills in the buy form rather than
         making you copy an address between two panels.
       */}
+      {/*
+        A read-only instance shows the feed and stops there.
+        
+        Every route that moves funds already refuses a remote request without
+        ENGINE_API_TOKEN, so this is not the thing keeping a hosted instance
+        safe — it is the thing that stops it looking broken. Rendering a wallet
+        card, a buy form and a sniper switch that all 401 on touch reads as a
+        failure rather than as a deliberate shop window.
+      */}
+      {wallet?.publicMode ? (
+        <div className="cols cols-solo">
+          <Feed onPick={() => {}} />
+          <aside className="card demo-note">
+            <h2 className="shead">This is a read-only demo</h2>
+            <p className="ssub" style={{ marginLeft: 13 }}>
+              The live pons feed — every launch as it happens, with price charts, holder
+              counts and how much of each crowd is one operator wearing several wallets.
+            </p>
+            <p className="muted small" style={{ marginLeft: 13 }}>
+              Trading is switched off here, and this instance holds no wallet. Ponsnipe runs
+              on your own machine with your own keys: nothing is custodial to anyone, which
+              is only true because you are the one running it.
+            </p>
+          </aside>
+        </div>
+      ) : (
       <div className="cols">
         <Feed onPick={(address) => setPicked({ address, n: Date.now() })} />
 
@@ -366,6 +410,7 @@ export default function Dashboard() {
       </div>
         </div>
       </div>
+      )}
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.msg}</div>}
     </div>

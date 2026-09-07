@@ -1,3 +1,4 @@
+import { env } from "@/lib/env";
 import { json } from "@/lib/api";
 import { hasBotWallet, botAddress, getBotBalance } from "@/lib/wallet/botWallet";
 import { redactRpc } from "@/lib/chain";
@@ -17,6 +18,9 @@ export const dynamic = "force-dynamic";
  * than an absent wallet.
  */
 export async function GET() {
+  // A read-only instance has no wallet as far as anyone asking is concerned.
+  if (env.publicMode) return json({ configured: false, publicMode: true });
+
   if (!hasBotWallet()) {
     return json({ configured: false, hint: "run `npm run wallet:init`" });
   }
