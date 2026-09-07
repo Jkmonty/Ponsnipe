@@ -5,6 +5,7 @@
   "description": "Buy pons.family memecoins on Robinhood Chain with automatic take-profit / stop-loss exits.",
   "scripts": {
     "dev": "next dev -H 127.0.0.1",
+    "dev:public": "node scripts/dev-public.mjs",
     "build": "next build",
     "start": "next start -H 127.0.0.1",
     "typecheck": "tsc --noEmit",

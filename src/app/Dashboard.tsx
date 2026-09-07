@@ -93,6 +93,13 @@ export default function Dashboard() {
    * with the address alone the effect would not fire the second time.
    */
   const [picked, setPicked] = useState<{ address: string; n: number } | null>(null);
+  /* Read after mount rather than during render: the server has no location,
+     and deciding this while rendering would make the first client paint
+     disagree with the HTML it is replacing. */
+  const [onLocalhost, setOnLocalhost] = useState(false);
+  useEffect(() => {
+    setOnLocalhost(/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname));
+  }, []);
 
   const flash = useCallback((kind: "ok" | "err", msg: string) => {
     setToast({ kind, msg });
@@ -211,6 +218,22 @@ export default function Dashboard() {
               Set NEXT_PUBLIC_REPO_URL to turn it back into a link.
             */
             <>
+              {/*
+                Only on your own machine.
+
+                PUBLIC_MODE hides the sniper, the positions table, the launch
+                composer and the live switch, which is right for a hosted
+                instance and looks like half the app has been deleted when it
+                is your own. A dev server left running with the variable set
+                did exactly that, with nothing on screen to say why. On the
+                real site this says nothing, because a visitor is not missing
+                anything — there is only one view for them.
+              */}
+              {onLocalhost && (
+                <span className="chip chip-dry" title="PUBLIC_MODE=1 — the sniper, positions and launch composer are hidden. Run `npm run dev` for the full app.">
+                  PUBLIC VIEW
+                </span>
+              )}
               {REPO_URL && (
                 <a
                   className="topbar-link"
