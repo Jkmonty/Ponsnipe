@@ -496,12 +496,31 @@ a:hover {
   align-items: start;
 }
 /* Read-only instance: the feed takes the room the workflow column used. */
-.cols-solo { grid-template-columns: minmax(0, 1fr) 320px; }
-.demo-note { position: sticky; top: 74px; }
+/* Public instance: feed on the left, the trader's own wallet on the right. */
+.cols-solo { grid-template-columns: minmax(0, 1fr) 380px; }
+.colside {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  position: sticky;
+  top: 74px;
+}
 @media (max-width: 1100px) {
   .cols-solo { grid-template-columns: minmax(0, 1fr); }
-  .demo-note { position: static; }
+  .colside { position: static; }
 }
+
+/* A button that reads as a link, for a minor action inside a sentence. */
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.linkish:hover { color: var(--text); }
 
 .colmain { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .colside { min-width: 0; position: sticky; top: 12px; }
@@ -1066,12 +1085,31 @@ textarea.input,
   align-items: start;
 }
 /* Read-only instance: the feed takes the room the workflow column used. */
-.cols-solo { grid-template-columns: minmax(0, 1fr) 320px; }
-.demo-note { position: sticky; top: 74px; }
+/* Public instance: feed on the left, the trader's own wallet on the right. */
+.cols-solo { grid-template-columns: minmax(0, 1fr) 380px; }
+.colside {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  position: sticky;
+  top: 74px;
+}
 @media (max-width: 1100px) {
   .cols-solo { grid-template-columns: minmax(0, 1fr); }
-  .demo-note { position: static; }
+  .colside { position: static; }
 }
+
+/* A button that reads as a link, for a minor action inside a sentence. */
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.linkish:hover { color: var(--text); }
 
 .colmain {
   display: grid;

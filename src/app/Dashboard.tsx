@@ -5,6 +5,7 @@ import { fmtEth, fmtPct, fmtPrice, shortAddr, weiToUnits, EXPLORER } from "@/lib
 import LaunchComposer from "./LaunchComposer";
 import Logo from "./Logo";
 import Feed from "./Feed";
+import TradePanel from "./TradePanel";
 import WalletSetup from "./WalletSetup";
 
 interface WalletInfo {
@@ -256,19 +257,23 @@ export default function Dashboard() {
       */}
       {wallet?.publicMode ? (
         <div className="cols cols-solo">
-          <Feed onPick={() => {}} />
-          <aside className="card demo-note">
-            <h2 className="shead">This is a read-only demo</h2>
-            <p className="ssub" style={{ marginLeft: 13 }}>
-              The live pons feed — every launch as it happens, with price charts, holder
-              counts and how much of each crowd is one operator wearing several wallets.
-            </p>
-            <p className="muted small" style={{ marginLeft: 13 }}>
-              Trading is switched off here, and this instance holds no wallet. Ponsnipe runs
-              on your own machine with your own keys: nothing is custodial to anyone, which
-              is only true because you are the one running it.
-            </p>
-          </aside>
+          <Feed onPick={(address) => setPicked({ address, n: Date.now() })} />
+          <div className="colside">
+            <TradePanel picked={picked} />
+            <aside className="card">
+              <h2 className="shead">What this is</h2>
+              <p className="ssub" style={{ marginLeft: 13 }}>
+                Every pons launch as it happens, with price charts, holder counts and how much
+                of each crowd is one operator wearing several wallets.
+              </p>
+              <p className="muted small" style={{ marginLeft: 13, marginBottom: 0 }}>
+                This site holds no wallet and no keys — trades are signed by you, in your own
+                wallet. For take-profit and stop-loss that keep working after you close the
+                tab, run your own copy: that needs a key on your machine, which no website can
+                have.
+              </p>
+            </aside>
+          </div>
         </div>
       ) : (
       <div className="cols">
