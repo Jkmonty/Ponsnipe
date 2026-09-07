@@ -9,6 +9,12 @@ primary_region = "lhr"          # London. `fly platform regions` lists the rest.
 [build]
   dockerfile = "Dockerfile"
 
+  # Baked into the client bundle at build time. A runtime secret cannot do this
+  # job: Next inlines NEXT_PUBLIC_* during `next build`, so the browser only
+  # ever sees what was present when the image was made.
+  [build.args]
+    NEXT_PUBLIC_REPO_URL = "https://github.com/JKmonty/ponsnipe"
+
 [env]
   PORT = "3000"
   PUBLIC_MODE = "1"

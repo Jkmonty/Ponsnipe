@@ -25,6 +25,14 @@ COPY . .
 # runtime. .dockerignore keeps .env and data/ out of the context entirely, so
 # there is nothing secret here to bake in.
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# NEXT_PUBLIC_* is inlined into the client bundle by `next build`, so it has to
+# exist HERE, at build time. Setting it as a runtime secret does nothing at all
+# — the value never reaches the browser, which is exactly what happened the
+# first time this was wired up.
+ARG NEXT_PUBLIC_REPO_URL=""
+ENV NEXT_PUBLIC_REPO_URL=$NEXT_PUBLIC_REPO_URL
+
 RUN npm run build
 
 # ── runtime ─────────────────────────────────────────────────────────────
