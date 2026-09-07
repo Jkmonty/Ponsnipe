@@ -7,6 +7,7 @@ import Logo from "./Logo";
 import Feed from "./Feed";
 import TradePanel from "./TradePanel";
 import WalletSetup from "./WalletSetup";
+import WalletButton from "./WalletButton";
 
 interface WalletInfo {
   /** Set by a read-only instance: show the feed, hide everything that trades. */
@@ -209,19 +210,22 @@ export default function Dashboard() {
               shipped, and sent anyone who clicked it to the GitHub homepage.
               Set NEXT_PUBLIC_REPO_URL to turn it back into a link.
             */
-            REPO_URL ? (
-              <a
-                className="chip chip-off"
-                href={REPO_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Run your own copy, with your own wallet"
-              >
-                SOURCE
-              </a>
-            ) : (
-              <span className="chip chip-off">READ-ONLY</span>
-            )
+            <>
+              {REPO_URL && (
+                <a
+                  className="topbar-link"
+                  href={REPO_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Run your own copy, with your own wallet"
+                >
+                  Source
+                </a>
+              )}
+              {/* Where every other exchange puts it, because that is where
+                  people look for it. */}
+              <WalletButton />
+            </>
           ) : (
             <>
           <span className={live ? "chip chip-live" : "chip chip-dry"}>
@@ -292,10 +296,11 @@ export default function Dashboard() {
                 of each crowd is one operator wearing several wallets.
               </p>
               <p className="muted small" style={{ marginLeft: 13, marginBottom: 0 }}>
-                This site holds no wallet and no keys — trades are signed by you, in your own
-                wallet. For take-profit and stop-loss that keep working after you close the
-                tab, run your own copy: that needs a key on your machine, which no website can
-                have.
+                This site holds no wallet and no keys. Connect one and it is made in your
+                browser, encrypted with your passphrase, and never sent here. Take-profit and
+                stop-loss run for as long as this tab is open — for exits that keep working
+                after you close it, run your own copy, because that needs a key on your
+                machine and no website can have one.
               </p>
             </aside>
           </div>

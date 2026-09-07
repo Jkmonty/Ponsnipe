@@ -30,3 +30,4 @@ next-env.d.ts
 # Personal Claude Code overrides for this checkout. Not shared: these are
 # permission grants for one machine, and this repo is meant to be published.
 .claude/settings.local.json
+.claude/launch.json

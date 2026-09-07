@@ -1,29 +1,27 @@
 "use client";
 
 /**
- * Instant buying from the hosted feed.
+ * Buying and selling. Nothing else.
  *
- * Two wallets, doing two different jobs. The trader's normal wallet (MetaMask,
- * Rabby) funds and empties a trading key that lives in this browser; the
- * trading key does the buying, signing locally with nothing to confirm. That
- * is the whole difference between a two-second popup and a buy that lands
- * while the coin is still four seconds old.
+ * This panel used to be the wallet as well: create it, unlock it, fund it, set
+ * its limits, back it up — which meant a first-time visitor met a signup form
+ * where the trading interface should be. All of that now lives behind the
+ * connect button in the header, where a trader already expects to find it, and
+ * what is left here is the thing the panel is named after.
  *
- * The trade-off is stated in the UI rather than buried here, because it is the
- * trader's to accept: a key in a browser is a hot key. This site could serve
- * different JavaScript tomorrow, clearing site data destroys it, and anything
- * that can run script on this page while it is unlocked can spend it. It is
- * for the float you are actively trading, nothing more — which is why the
- * limits below are not optional.
+ * The two wallets and why they exist are documented in WalletContext; the
+ * short version is that the trading key signs locally with nothing to confirm,
+ * which is the whole difference between a two-second popup and a buy that
+ * lands while the coin is still four seconds old.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatEther, formatUnits, getAddress, parseEther, type Address } from "viem";
+import { formatUnits, getAddress, parseEther, type Address } from "viem";
 import { bondingCurveAbi, erc20Abi } from "@/lib/pons/abis";
 import { applySlippage, quoteSell } from "@/lib/pons/pricing";
 import { robinhoodChain } from "@/lib/chain";
 import { browserPublic, executeBuy, findRoute } from "./browserTrade";
-import { useBrowserWallet } from "./useBrowserWallet";
-import { REVEAL_TIMEOUT_MS, useTradingKey } from "./useTradingKey";
+import { useWallet } from "./WalletContext";
+import { addSpentToday } from "./limits";
 import { forgetPosition, recordBuy, usePositions, type Holding } from "./usePositions";
 import { useAutoSell, WATCH_INTERVAL_MS } from "./useAutoSell";
 
@@ -46,45 +44,16 @@ interface Snap {
 
 const EXPLORER = "https://robinhoodchain.blockscout.com";
 const PRESETS = ["0.005", "0.01", "0.05", "0.1"];
-const LIMITS_KEY = "ponsnipe.limits.v1";
-const SPENT_KEY = "ponsnipe.spentToday.v1";
 
-interface Limits {
-  perTrade: number;
-  perDay: number;
-}
-const DEFAULT_LIMITS: Limits = { perTrade: 0.05, perDay: 0.25 };
-
-function readLimits(): Limits {
-  try {
-    const r = localStorage.getItem(LIMITS_KEY);
-    return r ? { ...DEFAULT_LIMITS, ...JSON.parse(r) } : DEFAULT_LIMITS;
-  } catch {
-    return DEFAULT_LIMITS;
-  }
-}
-
-/** Spend so far today, reset by date so a forgotten cap does not last forever. */
-function readSpentToday(): number {
-  try {
-    const r = JSON.parse(localStorage.getItem(SPENT_KEY) ?? "{}") as { d?: string; v?: number };
-    return r.d === new Date().toISOString().slice(0, 10) ? (r.v ?? 0) : 0;
-  } catch {
-    return 0;
-  }
-}
-function addSpentToday(eth: number): void {
-  try {
-    localStorage.setItem(
-      SPENT_KEY,
-      JSON.stringify({ d: new Date().toISOString().slice(0, 10), v: readSpentToday() + eth }),
-    );
-  } catch {
-    /* private mode; the cap simply does not persist */
-  }
-}
-
-const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+/**
+ * Slippage tolerance, in percent.
+ *
+ * Fixed rather than a control, and deliberately loose: a coin seconds old moves
+ * between reading its reserves and the transaction landing, and a tight
+ * tolerance on a curve this thin reverts the buy — which on a launch costs the
+ * whole entry, not a few basis points.
+ */
+const SLIPPAGE_PCT = 8;
 
 export default function TradePanel({
   picked,
@@ -94,24 +63,14 @@ export default function TradePanel({
   /** Load one of the trader's own holdings into the panel above. */
   onPickHolding?: (token: string) => void;
 }) {
-  const ext = useBrowserWallet();
-  const key = useTradingKey();
+  const { key, bal, refreshBal, limits, spent, syncSpent, openMenu } = useWallet();
 
   const [snap, setSnap] = useState<Snap | null>(null);
   const [eth, setEth] = useState("0.01");
-  const [slipPct, setSlipPct] = useState("8");
-  const [pass, setPass] = useState("");
-  const [importPk, setImportPk] = useState("");
-  const [showImport, setShowImport] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string; tx?: string } | null>(null);
-  const [bal, setBal] = useState<bigint | null>(null);
   const [held, setHeld] = useState<bigint | null>(null);
-  const [limits, setLimits] = useState<Limits>(DEFAULT_LIMITS);
-  const [spent, setSpent] = useState(0);
   const [routeOk, setRouteOk] = useState<boolean | null>(null);
-  const [fundEth, setFundEth] = useState("0.05");
-  const [revealed, setRevealed] = useState<string | null>(null);
   /** Set once sellHolding exists, so the watcher declared above can reach it. */
   const sellHoldingRef = useRef<((h: {
     address: string;
@@ -144,24 +103,7 @@ export default function TradePanel({
   );
   useEffect(() => setAutoTick(auto.tick), [auto.tick]);
   // Armed rules keep the wallet awake; disarming lets it idle out again.
-  useEffect(() => key.setWatching(auto.armed > 0), [auto.armed, key]);
-
-  /*
-   * Take the key back off the screen on its own.
-   *
-   * It was shown until someone remembered to press hide, which on a shared
-   * machine means it can sit in the DOM indefinitely after being copied.
-   */
-  useEffect(() => {
-    if (!revealed) return;
-    const t = setTimeout(() => setRevealed(null), REVEAL_TIMEOUT_MS);
-    return () => clearTimeout(t);
-  }, [revealed]);
-
-  useEffect(() => {
-    setLimits(readLimits());
-    setSpent(readSpentToday());
-  }, []);
+  useEffect(() => key.setWatching(auto.armed > 0), [auto.armed, key.setWatching]);
 
   /** Load whichever coin the feed handed over. */
   useEffect(() => {
@@ -184,36 +126,30 @@ export default function TradePanel({
     })();
   }, [picked]);
 
+  const address = key.address;
   const refresh = useCallback(async () => {
-    const c = browserPublic();
-    if (key.address) {
-      try {
-        setBal(await c.getBalance({ address: key.address }));
-      } catch {
-        setBal(null);
-      }
-    }
-    if (key.address && snap) {
+    void refreshBal();
+    if (address && snap) {
       try {
         setHeld(
-          (await c.readContract({
+          (await browserPublic().readContract({
             address: getAddress(snap.address),
             abi: erc20Abi,
             functionName: "balanceOf",
-            args: [key.address],
+            args: [address],
           })) as bigint,
         );
       } catch {
         setHeld(null);
       }
     } else setHeld(null);
-  }, [key.address, snap]);
+  }, [address, snap, refreshBal]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const slippageBps = Math.round((Number(slipPct) || 0) * 100);
+  const slippageBps = SLIPPAGE_PCT * 100;
   const amount = Number(eth) || 0;
   const overPerTrade = amount > limits.perTrade;
   const overDaily = spent + amount > limits.perDay;
@@ -255,7 +191,7 @@ export default function TradePanel({
       });
       setMoved((n) => n + 1);
       addSpentToday(amount);
-      setSpent(readSpentToday());
+      syncSpent();
       setMsg({ kind: "ok", text: `Bought ${snap.symbol}.`, tx: hashes[hashes.length - 1] });
       void refresh();
     } catch (e) {
@@ -400,162 +336,33 @@ export default function TradePanel({
     }
   };
 
-  /** Move ETH from the trader's real wallet into the trading key. */
-  const fund = async () => {
-    if (!ext.client || !ext.address || !key.address) return;
-    setBusy("fund");
-    setMsg(null);
-    try {
-      const hash = await ext.client.sendTransaction({
-        account: ext.address,
-        chain: null,
-        to: key.address,
-        value: parseEther(fundEth),
-      });
-      setMsg({ kind: "ok", text: "Funding sent.", tx: hash });
-      await browserPublic().waitForTransactionReceipt({ hash });
-      setMsg({ kind: "ok", text: `Funded with ${fundEth} ETH.`, tx: hash });
-      void refresh();
-    } catch (e) {
-      const m = e instanceof Error ? e.message : "funding failed";
-      setMsg(/rejected|denied|4001/i.test(m) ? null : { kind: "err", text: m.split("\n")[0] });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  /** Send everything back, less a little for the gas of doing so. */
-  const withdraw = async () => {
-    if (!key.client || !key.address || !ext.address || !bal) return;
-    setBusy("withdraw");
-    setMsg(null);
-    try {
-      const c = browserPublic();
-      const gas = 21_000n;
-      const price = await c.getGasPrice();
-      const fee = gas * price * 2n;
-      if (bal <= fee) throw new Error("balance is too small to cover the transfer fee");
-      const hash = await key.client.sendTransaction({
-        account: key.account!,
-        chain: robinhoodChain,
-        to: ext.address,
-        value: bal - fee,
-      });
-      await c.waitForTransactionReceipt({ hash });
-      setMsg({ kind: "ok", text: "Sent back to your wallet.", tx: hash });
-      void refresh();
-    } catch (e) {
-      setMsg({ kind: "err", text: (e instanceof Error ? e.message : "withdraw failed").split("\n")[0] });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  // ── no trading key yet ──────────────────────────────────────────────────
-  if (!key.exists) {
+  /*
+   * No wallet yet, or locked: point at the button rather than becoming it.
+   *
+   * The panel used to replace itself with a signup form here, so someone who
+   * had just clicked a coin was shown a passphrase field instead of the coin.
+   * Now the coin stays on screen and the wallet is one click away in the
+   * header, which is also where it will be next time they need it.
+   */
+  if (!key.exists || !key.unlocked) {
     return (
       <aside className="card">
-        <h2 className="shead">Instant buys</h2>
-        <p className="ssub">
-          A trading wallet that lives in this browser, so a buy is one click with nothing to
-          confirm. Your normal wallet fills it and empties it; it does the buying.
-        </p>
-        {/*
-          One calm line, with the detail behind a summary.
-
-          It used to be a block of amber, which reads as a hazard sign and gets
-          skipped. This says the same thing in the register of a product note,
-          and anyone who wants the specifics can open them. What it does not do
-          is disappear: it is the only place a stranger is told their money can
-          be lost here in a way it could not be in MetaMask, and that sentence
-          is what makes putting funds in an informed choice rather than a
-          surprise.
-        */}
-        <p className="ssub" style={{ marginLeft: 0 }}>
-          Your key stays in this browser, encrypted with your passphrase. Like any hot wallet,
-          keep only what you are actively trading — you can send it back to your own wallet
-          whenever you like.
-        </p>
-        <details className="fineprint">
-          <summary>How it works, and what to watch</summary>
-          <p>
-            The key is generated here and encrypted with your passphrase before being saved.
-            It never leaves your browser and this site never receives it. It relocks after
-            fifteen minutes without a trade, and there are per-trade and daily spend limits
-            you can set below.
+        <h2 className="shead">Trade</h2>
+        {snap ? (
+          <p className="ssub">
+            <strong>{snap.symbol}</strong> is ready to buy.{" "}
+            {key.exists ? "Unlock your wallet" : "Connect a wallet"} to take the shot.
           </p>
-          <p>
-            Two things to know. Clearing this site&rsquo;s data deletes the key, so back it up if
-            the balance matters. And while it is unlocked, anything able to run script on this
-            page could spend it — which is why it is for a trading float rather than savings.
-            For take-profit and stop-loss that survive closing the tab, run your own copy.
+        ) : (
+          <p className="ssub">
+            {key.exists
+              ? "Unlock your wallet, then pick a coin from the feed."
+              : "Connect a wallet, then pick a coin from the feed to buy it in one click."}
           </p>
-        </details>
-        <label className="field">
-          <span>Passphrase (12+ characters)</span>
-          <input
-            className="input"
-            type="password"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void key.create(pass)}
-          />
-        </label>
-        {showImport && (
-          <label className="field">
-            <span>Private key to import</span>
-            <input className="input" value={importPk} onChange={(e) => setImportPk(e.target.value)} />
-          </label>
         )}
-        <div className="row" style={{ gap: 8 }}>
-          <button
-            className="btn btn-primary"
-            disabled={key.busy || pass.length < 8}
-            onClick={() => void (showImport ? key.importKey(importPk, pass) : key.create(pass))}
-          >
-            {key.busy ? "…" : showImport ? "Import wallet" : "Create trading wallet"}
-          </button>
-          <button className="btn btn-sm btn-outline" onClick={() => setShowImport((v) => !v)}>
-            {showImport ? "or create new" : "or import a key"}
-          </button>
-        </div>
-        {key.error && <p className="neg small">{key.error}</p>}
-      </aside>
-    );
-  }
-
-  // ── locked ──────────────────────────────────────────────────────────────
-  if (!key.unlocked) {
-    return (
-      <aside className="card">
-        <h2 className="shead">Unlock trading wallet</h2>
-        <p className="ssub mono" style={{ marginLeft: 13 }}>
-          {key.address ? short(key.address) : ""}
-        </p>
-        <label className="field">
-          <span>Passphrase</span>
-          <input
-            className="input"
-            type="password"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void key.unlock(pass)}
-          />
-        </label>
-        <div className="row" style={{ gap: 8 }}>
-          <button className="btn btn-primary" disabled={key.busy} onClick={() => void key.unlock(pass)}>
-            {key.busy ? "…" : "Unlock"}
-          </button>
-          <button
-            className="btn btn-sm btn-outline"
-            onClick={() => {
-              if (confirm("Delete this trading wallet from the browser? Any funds still in it are lost unless you have the key backed up.")) key.forget();
-            }}
-          >
-            Forget it
-          </button>
-        </div>
-        {key.error && <p className="neg small">{key.error}</p>}
+        <button className="btn btn-primary btn-lg" onClick={openMenu}>
+          {key.exists ? "Unlock wallet" : "Connect wallet"}
+        </button>
       </aside>
     );
   }
@@ -571,30 +378,17 @@ export default function TradePanel({
 
   return (
     <aside className="card">
-      <div className="spread" style={{ alignItems: "center" }}>
-        <h2 className="shead" style={{ margin: 0 }}>
-          Trade
-        </h2>
-        <span
-          className="muted small mono"
-          title={
-            key.lockingIn != null
-              ? `Locks after 15 minutes without a trade — about ${Math.ceil(key.lockingIn / 60_000)} min left`
-              : (key.address ?? "")
-          }
-        >
-          {key.address ? short(key.address) : ""} ·{" "}
-          {bal != null ? `${Number(formatEther(bal)).toFixed(4)} ETH` : "…"}
-          {key.lockingIn != null && key.lockingIn < 5 * 60_000
-            ? ` · locks in ${Math.ceil(key.lockingIn / 60_000)}m`
-            : ""}
-        </span>
-      </div>
+      {/* The address and balance live in the header pill now, so repeating
+          them here would just be two places to disagree. */}
+      <h2 className="shead">Trade</h2>
 
       {bal != null && bal === 0n && (
         <p className="note-warn">
-          <strong>Empty.</strong> Send ETH to this wallet to trade with it — from your own
-          wallet below, or any exchange.
+          <strong>Your trading wallet is empty.</strong>{" "}
+          <button className="linkish" onClick={openMenu}>
+            Add funds
+          </button>{" "}
+          from your own wallet, or send ETH to it from anywhere.
         </p>
       )}
 
@@ -623,12 +417,19 @@ export default function TradePanel({
             </p>
           )}
 
+          {/* Presets on their own row rather than trailing the input. In a
+              narrower sidebar the four of them wrapped, leaving a lone 0.1
+              sitting under the others like a mistake. */}
           <label className="field" style={{ marginTop: 10 }}>
             <span>Spend (ETH)</span>
-            <div className="row" style={{ gap: 8 }}>
-              <input className="input" value={eth} onChange={(e) => setEth(e.target.value)} style={{ maxWidth: 120 }} />
+            <input className="input" value={eth} onChange={(e) => setEth(e.target.value)} />
+            <div className="presets">
               {PRESETS.map((v) => (
-                <button key={v} className="btn btn-sm btn-outline" onClick={() => setEth(v)}>
+                <button
+                  key={v}
+                  className={`btn btn-sm btn-outline${eth === v ? " on" : ""}`}
+                  onClick={() => setEth(v)}
+                >
                   {v}
                 </button>
               ))}
@@ -794,91 +595,6 @@ export default function TradePanel({
         </div>
       )}
 
-      {/* ── funding, limits and getting out ── */}
-      <details style={{ marginTop: 14 }}>
-        <summary className="muted small" style={{ cursor: "pointer" }}>
-          Funds, limits and backup
-        </summary>
-
-        <div style={{ marginTop: 10 }}>
-          {ext.address ? (
-            <>
-              <label className="field">
-                <span>Add from {short(ext.address)} (ETH)</span>
-                <div className="row" style={{ gap: 8 }}>
-                  <input className="input" value={fundEth} onChange={(e) => setFundEth(e.target.value)} style={{ maxWidth: 110 }} />
-                  <button className="btn btn-sm" onClick={() => void fund()} disabled={busy !== null}>
-                    {busy === "fund" ? "Confirm in wallet…" : "Send"}
-                  </button>
-                </div>
-              </label>
-              <button className="btn btn-sm btn-outline" onClick={() => void withdraw()} disabled={busy !== null || !bal}>
-                {busy === "withdraw" ? "Sending…" : "Send everything back"}
-              </button>
-            </>
-          ) : (
-            <button className="btn btn-sm" onClick={() => void ext.connect()}>
-              Connect your wallet to add or remove funds
-            </button>
-          )}
-
-          <div className="row" style={{ gap: 10, marginTop: 12 }}>
-            <label className="field" style={{ flex: 1, minWidth: 110, marginBottom: 0 }}>
-              <span>Max per trade</span>
-              <input
-                className="input"
-                value={limits.perTrade}
-                onChange={(e) => {
-                  const l = { ...limits, perTrade: Number(e.target.value) || 0 };
-                  setLimits(l);
-                  localStorage.setItem(LIMITS_KEY, JSON.stringify(l));
-                }}
-              />
-            </label>
-            <label className="field" style={{ flex: 1, minWidth: 110, marginBottom: 0 }}>
-              <span>Max per day</span>
-              <input
-                className="input"
-                value={limits.perDay}
-                onChange={(e) => {
-                  const l = { ...limits, perDay: Number(e.target.value) || 0 };
-                  setLimits(l);
-                  localStorage.setItem(LIMITS_KEY, JSON.stringify(l));
-                }}
-              />
-            </label>
-          </div>
-          <p className="muted small">Spent today: {spent.toFixed(4)} ETH.</p>
-
-          <div className="row" style={{ gap: 8, marginTop: 8 }}>
-            <button
-              className="btn btn-sm btn-outline"
-              onClick={() => {
-                const p = prompt("Passphrase, to show the private key:");
-                if (p) void key.reveal(p).then(setRevealed);
-              }}
-            >
-              Back up key
-            </button>
-            <button className="btn btn-sm btn-outline" onClick={key.lock}>
-              Lock
-            </button>
-          </div>
-          {revealed && (
-            <p className="note-warn mono" style={{ wordBreak: "break-all" }}>
-              {revealed}
-              <br />
-              <button className="linkish" onClick={() => setRevealed(null)}>
-                hide
-              </button>
-            </p>
-          )}
-          <p className="muted small" style={{ marginBottom: 0, marginTop: 10 }}>
-            Take-profit and stop-loss still need the version you run yourself — a page cannot
-            sell for you once it is closed.
-          </p>
-        </div>
-      </details>
     </aside>
   );
 }

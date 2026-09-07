@@ -24,7 +24,7 @@
  * is exactly what the local install's bot wallet is, and it carries the same
  * rule — do not keep more in it than you are trading.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createWalletClient,
   http,
@@ -166,8 +166,17 @@ export function useTradingKey(): TradingKey {
    * Arming a rule extends the deadline immediately rather than at the next
    * trade, or a wallet already thirteen minutes idle would lock two minutes
    * after the trader set a stop-loss.
+   *
+   * Idempotent, and that is load-bearing rather than tidiness. The caller is
+   * an effect that re-runs on every render, and pushing the deadline to
+   * Date.now() + window produces a different number each time — a state change
+   * that causes the render that causes the state change. Unlocked wallets sat
+   * in that loop. Nothing moves unless the answer actually flips.
    */
+  const watchingRef = useRef(false);
   const setWatching = useCallback((on: boolean) => {
+    if (watchingRef.current === on) return;
+    watchingRef.current = on;
     setWatchingState(on);
     setLockAt((prev) =>
       prev == null ? prev : Date.now() + (on ? WATCHING_LOCK_MS : IDLE_LOCK_MS),
@@ -208,6 +217,7 @@ export function useTradingKey(): TradingKey {
     setAccount(acct);
     setLockAt(Date.now() + IDLE_LOCK_MS);
     setWatchingState(false);
+    watchingRef.current = false;
   }, []);
 
   const create = useCallback(
