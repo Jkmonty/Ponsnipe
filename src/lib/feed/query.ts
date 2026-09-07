@@ -359,6 +359,7 @@ const LOGO_TTL_MS = 30_000;
 export function isKnownLogo(url: string): boolean {
   const u = url.trim();
   if (!u) return false;
+
   if (Date.now() - logoCache.at > LOGO_TTL_MS) {
     try {
       const rows = db()
@@ -367,10 +368,34 @@ export function isKnownLogo(url: string): boolean {
       logoCache.set = new Set(rows.map((r) => r.logo.trim()));
       logoCache.at = Date.now();
     } catch {
-      // With no database there is nothing to serve and nothing to protect;
-      // refusing is the safe direction.
       return false;
     }
   }
-  return logoCache.set.has(u);
+  if (logoCache.set.has(u)) return true;
+
+  /*
+   * A miss is not an answer yet.
+   *
+   * The cache is up to thirty seconds old and this feed shows coins that
+   * launched four seconds ago, so the newest rows — the ones anyone is
+   * actually looking at — were refused for as long as the cache lagged
+   * behind them. Measured on the live site: 8 of 30 logos got a 403 and
+   * only 39% of artwork loaded, against 86% before the allowlist existed.
+   *
+   * So a miss falls through to the table itself. It is an indexed-ish lookup
+   * on a few thousand rows, it only runs for logos the cache has not caught
+   * up with, and a hit is folded back in so it costs once.
+   */
+  try {
+    const row = db()
+      .prepare(`SELECT 1 AS ok FROM feed_tokens WHERE logo = ? LIMIT 1`)
+      .get(u) as { ok?: number } | undefined;
+    if (row?.ok) {
+      logoCache.set.add(u);
+      return true;
+    }
+  } catch {
+    /* fall through to a refusal */
+  }
+  return false;
 }

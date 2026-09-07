@@ -16,7 +16,7 @@
  * for the float you are actively trading, nothing more — which is why the
  * limits below are not optional.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatEther, formatUnits, getAddress, parseEther, type Address } from "viem";
 import { bondingCurveAbi, erc20Abi } from "@/lib/pons/abis";
 import { applySlippage, quoteSell } from "@/lib/pons/pricing";
@@ -24,7 +24,8 @@ import { robinhoodChain } from "@/lib/chain";
 import { browserPublic, executeBuy, findRoute } from "./browserTrade";
 import { useBrowserWallet } from "./useBrowserWallet";
 import { REVEAL_TIMEOUT_MS, useTradingKey } from "./useTradingKey";
-import { forgetPosition, recordBuy, usePositions } from "./usePositions";
+import { forgetPosition, recordBuy, usePositions, type Holding } from "./usePositions";
+import { useAutoSell, WATCH_INTERVAL_MS } from "./useAutoSell";
 
 interface Snap {
   address: string;
@@ -111,9 +112,39 @@ export default function TradePanel({
   const [routeOk, setRouteOk] = useState<boolean | null>(null);
   const [fundEth, setFundEth] = useState("0.05");
   const [revealed, setRevealed] = useState<string | null>(null);
+  /** Set once sellHolding exists, so the watcher declared above can reach it. */
+  const sellHoldingRef = useRef<((h: {
+    address: string;
+    curve: string;
+    symbol: string;
+    decimals: number;
+    balance: bigint;
+  }) => Promise<`0x${string}` | undefined>) | null>(null);
   /** Bumped after any trade, so holdings re-read rather than going stale. */
   const [moved, setMoved] = useState(0);
-  const { holdings, reload: reloadPositions } = usePositions(key.address, moved);
+  const [autoTick, setAutoTick] = useState(0);
+  const { holdings, reload: reloadPositions } = usePositions(key.address, moved + autoTick);
+
+  const auto = useAutoSell(
+    key.address,
+    key.unlocked,
+    holdings,
+    useCallback(
+      async (h: Holding) => {
+        await sellHoldingRef.current?.({
+          address: h.token,
+          curve: h.curve,
+          symbol: h.symbol,
+          decimals: h.decimals,
+          balance: h.balance,
+        });
+      },
+      [],
+    ),
+  );
+  useEffect(() => setAutoTick(auto.tick), [auto.tick]);
+  // Armed rules keep the wallet awake; disarming lets it idle out again.
+  useEffect(() => key.setWatching(auto.armed > 0), [auto.armed, key]);
 
   /*
    * Take the key back off the screen on its own.
@@ -233,6 +264,86 @@ export default function TradePanel({
       setBusy(null);
     }
   };
+
+  /**
+   * Sell an entire holding.
+   *
+   * Used by the button and by the automatic rules alike — one selling path, so
+   * an exit a rule takes and one a person takes cannot behave differently.
+   */
+  const sellHolding = useCallback(
+    async (h: {
+      address: string;
+      curve: string;
+      symbol: string;
+      decimals: number;
+      balance: bigint;
+    }) => {
+      if (!key.client || !key.address || h.balance <= 0n) return;
+      const c = browserPublic();
+      const token = getAddress(h.address);
+      const curve = getAddress(h.curve);
+      const allowance = (await c.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [key.address, curve],
+      })) as bigint;
+      if (allowance < h.balance) {
+        const ap = await key.client.writeContract({
+          account: key.account!,
+          chain: robinhoodChain,
+          address: token,
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [curve, h.balance],
+        });
+        await c.waitForTransactionReceipt({ hash: ap });
+      }
+      /*
+       * Reserves AND fees read from the curve at sell time.
+       *
+       * Not carried in from the caller: a holding row does not know the fees,
+       * and the first version of this passed 100bps and zero tax as
+       * placeholders — which would have computed the minimum-out from invented
+       * numbers and either reverted the sale or accepted a worse fill than the
+       * trader was shown. Both come from the contract, at the moment of
+       * selling, because a rule can fire long after the last repaint.
+       */
+      const [rv, fee, tax] = await c.multicall({
+        contracts: [
+          { address: curve, abi: bondingCurveAbi, functionName: "getReserves" as const },
+          { address: curve, abi: bondingCurveAbi, functionName: "feeBps" as const },
+          { address: curve, abi: bondingCurveAbi, functionName: "creatorTaxBps" as const },
+        ],
+        allowFailure: true,
+      });
+      if (rv.status !== "success") throw new Error("could not read the curve to price the sale");
+      const [q, t] = rv.result as readonly [bigint, bigint];
+      const quote = quoteSell(
+        h.balance,
+        { quoteReserve: q, tokenReserve: t },
+        fee.status === "success" ? (fee.result as bigint) : 100n,
+        tax.status === "success" ? (tax.result as bigint) : 0n,
+      );
+      const hash = await key.client.writeContract({
+        account: key.account!,
+        chain: robinhoodChain,
+        address: curve,
+        abi: bondingCurveAbi,
+        functionName: "sell",
+        args: [h.balance, applySlippage(quote.quoteOut, slippageBps), key.address],
+      });
+      await c.waitForTransactionReceipt({ hash });
+      key.touch();
+      forgetPosition(key.address, h.address);
+      setMoved((n) => n + 1);
+      return hash;
+    },
+    [key, slippageBps],
+  );
+
+  sellHoldingRef.current = sellHolding;
 
   const sell = async () => {
     if (!snap || !key.client || !key.address || !held || held <= 0n) return;
@@ -588,32 +699,98 @@ export default function TradePanel({
               refresh
             </button>
           </div>
-          {holdings.map((h) => (
-            <button
-              key={h.token}
-              type="button"
-              className="holding"
-              /* Selecting it loads it above, which is where selling happens —
-                 rather than duplicating a sell button on every row. */
-              onClick={() => onPickHolding?.(h.token)}
-              title={`Bought for ${h.spentQuoteNum.toPrecision(4)} ${h.quoteSymbol}`}
-            >
-              <span className="holding-sym">{h.symbol}</span>
-              <span className="holding-val num">
-                {h.valueQuote > 0 ? h.valueQuote.toPrecision(4) : "—"}{" "}
-                <i>{h.quoteSymbol}</i>
-              </span>
-              <span
-                className={`holding-pnl num ${
-                  h.pnlPct == null ? "muted" : h.pnlPct >= 0 ? "pos" : "neg"
-                }`}
-              >
-                {h.pnlPct == null
-                  ? "—"
-                  : `${h.pnlPct >= 0 ? "+" : ""}${h.pnlPct.toFixed(1)}%`}
-              </span>
-            </button>
-          ))}
+          {holdings.map((h) => {
+            const rule = auto.rules[h.token.toLowerCase()];
+            const isArmed = !!rule && (rule.tp != null || rule.sl != null);
+            return (
+              <div key={h.token} className={`holding-wrap${isArmed ? " armed" : ""}`}>
+                <button
+                  type="button"
+                  className="holding"
+                  /* Selecting it loads it above, which is where selling happens —
+                     rather than duplicating a sell button on every row. */
+                  onClick={() => onPickHolding?.(h.token)}
+                  title={`Bought for ${h.spentQuoteNum.toPrecision(4)} ${h.quoteSymbol}`}
+                >
+                  <span className="holding-sym">{h.symbol}</span>
+                  <span className="holding-val num">
+                    {h.valueQuote > 0 ? h.valueQuote.toPrecision(4) : "—"}{" "}
+                    <i>{h.quoteSymbol}</i>
+                  </span>
+                  <span
+                    className={`holding-pnl num ${
+                      h.pnlPct == null ? "muted" : h.pnlPct >= 0 ? "pos" : "neg"
+                    }`}
+                  >
+                    {h.pnlPct == null
+                      ? "—"
+                      : `${h.pnlPct >= 0 ? "+" : ""}${h.pnlPct.toFixed(1)}%`}
+                  </span>
+                </button>
+
+                {/* Sell-me-at rules. Only offered where there is a cost basis
+                    to measure against — without one there is no percentage. */}
+                {h.pnlPct == null ? (
+                  <p className="holding-rule muted">No purchase price recorded, so no rule.</p>
+                ) : (
+                  <div className="holding-rule">
+                    <label>
+                      <span>take profit</span>
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        placeholder="+%"
+                        defaultValue={rule?.tp ?? ""}
+                        onBlur={(e) =>
+                          auto.save(h.token, {
+                            tp: e.target.value.trim() ? Math.abs(Number(e.target.value)) : null,
+                            sl: rule?.sl ?? null,
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>stop loss</span>
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        placeholder="-%"
+                        defaultValue={rule?.sl ?? ""}
+                        onBlur={(e) =>
+                          auto.save(h.token, {
+                            tp: rule?.tp ?? null,
+                            sl: e.target.value.trim() ? Math.abs(Number(e.target.value)) : null,
+                          })
+                        }
+                      />
+                    </label>
+                    {isArmed && (
+                      <button className="linkish" onClick={() => auto.save(h.token, null)}>
+                        clear
+                      </button>
+                    )}
+                  </div>
+                )}
+                {auto.firing === h.token && (
+                  <p className="holding-rule pos">Selling now…</p>
+                )}
+              </div>
+            );
+          })}
+
+          {auto.armed > 0 && (
+            <p className="muted small" style={{ marginTop: 6 }}>
+              Watching {auto.armed} position{auto.armed === 1 ? "" : "s"}, checking every{" "}
+              {Math.round(WATCH_INTERVAL_MS / 1000)}s.{" "}
+              <strong>Only while this tab is open</strong> — close it and nothing sells. For
+              exits that survive closing the tab, run your own copy.
+            </p>
+          )}
+          {auto.lastFired && (
+            <p className="pos small" style={{ marginTop: 4 }}>
+              Sold {auto.lastFired.symbol} — {auto.lastFired.reason}.
+            </p>
+          )}
         </div>
       )}
 

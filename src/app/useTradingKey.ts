@@ -48,6 +48,17 @@ const STORE = "ponsnipe.tradingKey.v1";
 const IDLE_LOCK_MS = 15 * 60_000;
 
 /**
+ * The idle window while take-profit or stop-loss rules are armed.
+ *
+ * Arming a rule is asking this tab to act while you are not watching, so the
+ * fifteen-minute lock would quietly disarm the very thing you set up — a
+ * stop-loss that stops existing after a quarter of an hour is worse than no
+ * stop-loss, because you believe it is there. Longer, but still finite: a tab
+ * forgotten overnight should not be able to trade in the morning.
+ */
+const WATCHING_LOCK_MS = 8 * 60 * 60_000;
+
+/**
  * How long a revealed private key stays on screen.
  *
  * Long enough to copy into a password manager, short enough that it is not
@@ -128,6 +139,8 @@ export interface TradingKey {
   forget: () => void;
   /** Push the idle deadline out; call when the key is used. */
   touch: () => void;
+  /** Tell the lock that rules are armed, so it uses the longer window. */
+  setWatching: (on: boolean) => void;
   account: Account | null;
   client: WalletClient | null;
 }
@@ -138,13 +151,27 @@ export function useTradingKey(): TradingKey {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lockAt, setLockAt] = useState<number | null>(null);
+  const [watching, setWatchingState] = useState(false);
+  const window = watching ? WATCHING_LOCK_MS : IDLE_LOCK_MS;
 
   // localStorage is not available during render on the server.
   useEffect(() => setVault(readVault()), []);
 
   /** Push the idle deadline out. Called whenever the key is actually used. */
   const touch = useCallback(() => {
-    setLockAt(Date.now() + IDLE_LOCK_MS);
+    setLockAt(Date.now() + window);
+  }, [window]);
+
+  /*
+   * Arming a rule extends the deadline immediately rather than at the next
+   * trade, or a wallet already thirteen minutes idle would lock two minutes
+   * after the trader set a stop-loss.
+   */
+  const setWatching = useCallback((on: boolean) => {
+    setWatchingState(on);
+    setLockAt((prev) =>
+      prev == null ? prev : Date.now() + (on ? WATCHING_LOCK_MS : IDLE_LOCK_MS),
+    );
   }, []);
 
   /*
@@ -180,6 +207,7 @@ export function useTradingKey(): TradingKey {
     setVault(v);
     setAccount(acct);
     setLockAt(Date.now() + IDLE_LOCK_MS);
+    setWatchingState(false);
   }, []);
 
   const create = useCallback(
@@ -301,5 +329,6 @@ export function useTradingKey(): TradingKey {
     account,
     client,
     touch,
+    setWatching,
   };
 }

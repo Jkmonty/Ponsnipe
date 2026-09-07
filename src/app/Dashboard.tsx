@@ -240,7 +240,16 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {engine?.status.rpcSlow && (
+      {/*
+        Only where the advice can be acted on.
+
+        This told every visitor to a hosted instance to "set RPC_URL in .env
+        and restart" — a file they do not have, on a machine they do not run,
+        about a delay that only matters to the automatic selling a read-only
+        instance does not do. Advice aimed at the wrong reader is worse than
+        silence: it reads as the site being broken.
+      */}
+      {engine?.status.rpcSlow && !wallet?.publicMode && (
         <div
           className="card"
           style={{ padding: "12px 16px", borderColor: "#6b5a2f", color: "var(--amber)" }}
