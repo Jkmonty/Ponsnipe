@@ -16,7 +16,7 @@ which is the opposite of how most people trade a memecoin launch.
 
 **This has never executed a live trade.** Every price path, quote and contract
 read is verified against the live chain, and the money-critical maths is
-covered by 100 tests — but no transaction has ever been signed. Your first
+covered by 115 tests — but no transaction has ever been signed. Your first
 live trade is also this code's first live trade. Start with an amount you
 would shrug at losing.
 
@@ -52,12 +52,37 @@ bot wallet than you are actively trading.
 - **Sniper** — auto-buys new launches through a filter chain. Off by default.
   See the warning above.
 - **New-pairs feed** — every pons launch as it happens, newest first, with
-  market cap, volume, buyer count and progress to graduation. Click one to load
-  it into the buy form, or type a ticker or address to find it. Volume and
-  buyers come from the curve trade events themselves rather than an estimate,
-  and coins paired against tokenised equities are converted at the real share
-  price. Launches arrive pushed over a WebSocket rather than polled: measured
-  at 100% of launches captured and ~0.09s from launch to visible.
+  market cap, volume, liquidity, holder and trade counts, a twenty-minute price
+  chart, and progress to graduation. Click one to load it into the buy form and
+  jump straight to it, or press Ctrl/⌘-K and type a ticker or address. Volume
+  and holders come from the curve trade events themselves rather than an
+  estimate, and coins paired against tokenised equities are converted at the
+  real share price.
+
+  Launches arrive pushed over a WebSocket rather than polled — measured at 100%
+  of launches captured and ~0.09s from launch to indexed — and are then pushed
+  again from the server to the browser, so what you see is not waiting on a
+  poll interval. If that connection fails the feed falls back to a ten-second
+  check and says "polling" instead of "live".
+
+- **Bundle detection** — how many of a coin's buyers are one operator wearing
+  several wallets, clustered by funding graph. On a live sample, 29 of 250
+  coins had a detectable bundle; one showed 5 bundled buyers against 6 holders.
+  It is a floor, never a ceiling: wallets newer than the last `npm run bundles`
+  scan are unknown and count as separate people. Needs `data/bundles.sqlite`;
+  without it the column is simply absent.
+
+- **Buy coins priced in anything** — about half of pons launches are quoted in
+  USDG, NVDA, AAPL and other tokenised equities rather than ETH. Your ETH is
+  swapped through the deepest Uniswap V3 pool for that asset first. Off by
+  default for the sniper, because the hop costs a pool fee, a second
+  transaction and a second chance to revert.
+
+- **Snipe a ticker you know is coming** — name a ticker and it buys on sight,
+  skipping the observation window and the crowd filters, but never the tax cap
+  or your spend limits. Pin the maker's address: 27% of tickers on this chain
+  have already been used more than once, and a ticker-only watch will very
+  likely fire on a copy first.
 
 ## Setting up your wallet
 
@@ -93,6 +118,8 @@ for a while. The toggle in the header switches to live.
 | `LOGS_RPC_URL` | Pins log sweeps to one endpoint. Left unset they spread across every public endpoint for the chain, which is what stopped a single node's rate limit being the ceiling. |
 | `FALLBACK_RPC_URL` | Where reads go when the primary refuses. Defaults to Robinhood's public endpoint, so a provider that hits its monthly quota costs you latency rather than a dead app. |
 | `ETH_USD` | Pins the ETH price used for the feed's dollar figures. Left unset it is fetched from Coinbase's public endpoint every five minutes. |
+| `BUNDLES_PATH` | Where the wallet-cluster database lives, for the bundle column. Defaults to `data/bundles.sqlite`, built by `npm run bundles`. |
+| `REPUTATION_PATH` | Where the deployer/proven-buyer database lives. Defaults to `data/reputation.sqlite`, built by `npm run reputation`. |
 | `DISABLE_PRICE_FEEDS` | Set to `1` to make no outbound calls except the RPC. The feed then shows amounts in each token's own quote asset rather than dollars. |
 | `ANTHROPIC_API_KEY` | Lets the launch composer draft with Claude instead of a built-in heuristic. Costs a fraction of a penny per draft. |
 
@@ -107,7 +134,14 @@ npm run analyse     # dip patterns, deployer records, early-buyer signal
 npm run bundles     # cluster wallets that are really one operator
 npm run poolscan    # what happens after a token graduates
 npm run clusters    # narrative waves: the same ticker minted repeatedly
+npm run bundles     # cluster wallets by funding graph -> data/bundles.sqlite
+npm run reputation  # deployer records and proven buyers -> data/reputation.sqlite
 ```
+
+The last two are not only research: the feed reads `bundles.sqlite` for its
+bundle column, and the sniper reads `reputation.sqlite` for its deployer and
+proven-buyer filters. Both are optional, and both degrade to "no data" rather
+than to a wrong answer.
 
 Findings are written up in [`docs/FINDINGS.md`](docs/FINDINGS.md), including
 the strategies that did not work and why — which is most of them.
@@ -118,7 +152,7 @@ the strategies that did not work and why — which is most of them.
 npm test
 ```
 
-100 tests over the parts where a bug costs money: bonding-curve maths, exit
+115 tests over the parts where a bug costs money: bonding-curve maths, exit
 rules, the event fast path, the keystore, the double-sell guard, and CSRF on
 the routes that move funds.
 
