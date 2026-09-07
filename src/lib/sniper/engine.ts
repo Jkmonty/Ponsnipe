@@ -13,6 +13,7 @@ import { PONS } from "../pons/addresses";
 import { ponsFactoryAbi, bondingCurveAbi } from "../pons/abis";
 import { getTokenSnapshot } from "../pons/tokens";
 import { buyOnCurve } from "../pons/swap";
+import { quoteAmountInEth, zapEthToQuote } from "../pons/zap";
 import { createPosition, countOpenBySource } from "../db/positions";
 import { getBotBalance, hasBotWallet } from "../wallet/botWallet";
 import { isLive } from "../engine/liveState";
@@ -216,7 +217,25 @@ async function evaluate(
     const snapshot = await getTokenSnapshot(launch.token);
     const buyers = await otherBuyers(getAddress(launch.curve), getAddress(launch.deployer), launchBlock);
     const otherBuys = buyers.length;
-    const liquidityEth = snapshot.graduation.currentQuote;
+    /*
+     * The liquidity band is written in ETH, so the curve's reserve has to be
+     * expressed in ETH before it is compared to one.
+     *
+     * For a native curve those are the same number. For a USDG or NVDA curve
+     * they are not, and reading the raw reserve as if it were ETH compared 100
+     * USDG against a 0.05 ETH floor and let it through — a bug that could not
+     * happen until non-ETH launches became buyable, and appears the moment
+     * they do. Priced through the same pool the zap would use, so the filter
+     * judges what a real swap would fetch.
+     */
+    let liquidityEth = snapshot.graduation.currentQuote;
+    if (!snapshot.quoteIsNative && cfg.allowNonEthQuotes) {
+      const raw = snapshot.reserves?.quoteReserve ?? 0n;
+      const inEth = await quoteAmountInEth(getAddress(snapshot.pairToken), raw);
+      // No route means we could not buy it anyway; leave it at zero so the
+      // liquidity floor rejects it rather than guessing.
+      liquidityEth = inEth == null ? 0 : Number(inEth) / 1e18;
+    }
     /** Everything the launch feed shows, recorded on every decision alike. */
     const seen = {
       token: launch.token,
@@ -271,7 +290,26 @@ async function evaluate(
     s.inFlightCount += 1;
     s.inFlightEth += Number(ethAmount);
     let buy;
+    /*
+     * A curve that does not take ETH needs its quote asset bought first.
+     *
+     * Sized from what the swap actually delivered rather than from the quote,
+     * and recorded as the cost basis below for the same reason: the executor
+     * computes realised PnL in quote units, so an ETH figure against a 6-decimal
+     * stablecoin would be out by a factor of 1e12.
+     */
+    let curveInWei = ethWei;
+    let zapTx: string | null = null;
     try {
+      if (!snapshot.quoteIsNative) {
+        const zapped = await zapEthToQuote(
+          getAddress(snapshot.pairToken),
+          ethWei,
+          cfg.slippageBps,
+        );
+        curveInWei = zapped.received;
+        zapTx = zapped.hash;
+      }
       buy = await buyOnCurve({
         curve: getAddress(snapshot.curve!),
         token: getAddress(launch.token),
@@ -282,7 +320,7 @@ async function evaluate(
         creatorTaxBps: snapshot.creatorTaxBps,
         reserves: snapshot.reserves,
         slippageBps: cfg.slippageBps,
-        quoteInWei: ethWei,
+        quoteInWei: curveInWei,
       });
     } finally {
       s.inFlightCount -= 1;
@@ -322,7 +360,7 @@ async function evaluate(
         quoteDecimals: snapshot.quoteDecimals,
         feeBps: snapshot.feeBps,
         creatorTaxBps: snapshot.creatorTaxBps,
-        quoteInWei: ethWei,
+        quoteInWei: curveInWei,
         tokensHeldWei: buy.filled,
         entryPrice: buy.effectivePrice || snapshot.price.priceQuote,
         buyTx: buy.hash,
@@ -352,7 +390,7 @@ async function evaluate(
     }
 
     kickMonitor();
-    record("bought", `sniped for ${ethAmount} ETH, tx ${buy.hash}`, {
+    record("bought", `sniped for ${ethAmount} ETH${zapTx ? ` via ${snapshot.quoteSymbol}` : ""}, tx ${buy.hash}`, {
       token: launch.token,
       symbol: snapshot.symbol,
       deployer: launch.deployer,

@@ -215,3 +215,48 @@ test("an older saved config still loads instead of resetting to defaults", () =>
     assert.equal(parsed.data.tickerDelaySeconds, 4);
   }
 });
+
+/* ── non-ETH quotes ───────────────────────────────────────────────────────
+   Roughly half of pons launches are quoted in USDG or a tokenised equity.
+   The sniper refused all of them until the zap existed; now that is a choice,
+   and these pin down that it is genuinely a choice in both directions. */
+
+test("a USDG-quoted launch is still refused while the zap is off", () => {
+  const v = evaluateLaunch(
+    input({ snapshot: snap({ quoteIsNative: false, quoteSymbol: "USDG" }) }),
+    cfg({ allowNonEthQuotes: false }),
+  );
+  assert.equal(v.buy, false);
+  assert.match(v.reason, /USDG/);
+  // blockedByQuote says the quote asset was the ONLY thing wrong, which is what
+  // lets the UI tell "we rejected this" apart from "we cannot reach it yet".
+  assert.equal(v.blockedByQuote, true);
+});
+
+test("a USDG-quoted launch passes once the zap is allowed", () => {
+  const v = evaluateLaunch(
+    input({ snapshot: snap({ quoteIsNative: false, quoteSymbol: "USDG" }) }),
+    cfg({ allowNonEthQuotes: true }),
+  );
+  assert.equal(v.buy, true, v.reason);
+});
+
+test("allowing non-ETH quotes does not weaken any other filter", () => {
+  // The quote gate is the only thing that moves. A launch that would fail on
+  // its own merits still fails, whatever it is priced in.
+  const c = cfg({ allowNonEthQuotes: true, minOtherBuys: 8 });
+  assert.equal(
+    evaluateLaunch(
+      input({ snapshot: snap({ quoteIsNative: false, quoteSymbol: "NVDA" }), otherBuys: 0 }),
+      c,
+    ).buy,
+    false,
+  );
+  assert.equal(
+    evaluateLaunch(
+      input({ snapshot: snap({ quoteIsNative: false, creatorTaxBps: 9000 }) }),
+      cfg({ allowNonEthQuotes: true }),
+    ).buy,
+    false,
+  );
+});

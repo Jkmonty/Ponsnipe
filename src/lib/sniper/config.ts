@@ -172,6 +172,22 @@ export const sniperConfigSchema = z.object({
    */
   tickerDelaySeconds: z.number().int().min(0).max(120).default(4),
 
+  /**
+   * Buy launches quoted in something other than ETH, by swapping first.
+   *
+   * About half of all launches are quoted in USDG, NVDA or another tokenised
+   * equity, and without this every one is refused with "pairs against X, not
+   * ETH" — measured at 128 of 250 live rows. Turning it on routes ETH through
+   * the deepest Uniswap V3 pool for that asset before buying the curve.
+   *
+   * Off by default because it is not free: the swap costs its own pool fee
+   * (5bps on the deep tiers), a second transaction's gas, and a second chance
+   * to be reverted, all inside the seconds that decide a snipe. Worth it to
+   * double the reachable market, but it should be a decision rather than a
+   * surprise on someone's gas bill.
+   */
+  allowNonEthQuotes: z.boolean().default(false),
+
   /** Safety caps. */
   maxConcurrentSnipes: z.number().int().min(1).max(50),
   maxSnipesPerHour: z.number().int().min(1).max(200),
@@ -208,6 +224,7 @@ export const DEFAULT_CONFIG: SniperConfig = {
   deployerAllow: [],
   deployerDeny: [],
   tickerWatch: [],
+  allowNonEthQuotes: false,
   // Fast, but not zero: pons taxes the first ~3 seconds after a launch at up
   // to 99%, so buying instantly hands most of the position to the tax.
   tickerDelaySeconds: 4,

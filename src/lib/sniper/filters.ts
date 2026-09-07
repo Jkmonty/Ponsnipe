@@ -76,7 +76,7 @@ export function evaluateLaunch(
   if (snapshot.venue !== "curve" || !snapshot.tradeable) {
     return { buy: false, reason: snapshot.reason ?? "not tradeable" };
   }
-  if (!snapshot.quoteIsNative && !opts.ignoreQuote) {
+  if (!snapshot.quoteIsNative && !cfg.allowNonEthQuotes && !opts.ignoreQuote) {
     // Re-run everything else to find out whether the quote token is the ONLY
     // obstacle. That distinction is the difference between "we rejected this"
     // and "we are simply unable to reach it yet".

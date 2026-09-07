@@ -171,6 +171,29 @@ export async function quoteZap(
   }
 }
 
+/**
+ * What an amount of a quote asset is worth in ETH.
+ *
+ * Needed because the sniper's liquidity band is written in ETH while a curve's
+ * reserve is denominated in whatever that curve trades against. Before the zap
+ * existed the two were always the same asset so the comparison was safe; the
+ * moment non-ETH launches became buyable it started comparing NVDA to ETH and
+ * calling the answer "ETH". A curve holding 100 USDG was being read as 100 ETH
+ * and waved past a 0.05 floor it should have been measured against properly.
+ *
+ * Priced off the same pool the zap would trade through, so the number the
+ * filter judges is the number a real swap would produce. Returns null when the
+ * asset has no route, which is the honest answer — an unreachable curve should
+ * not be given a liquidity figure at all.
+ */
+export async function quoteAmountInEth(quote: Address, amountRaw: bigint): Promise<bigint | null> {
+  if (amountRaw <= 0n) return 0n;
+  const perEth = await quoteZap(quote, 10n ** 18n);
+  if (!perEth || perEth.out <= 0n) return null;
+  // amount / (quote per 1 ETH), kept in wei.
+  return (amountRaw * 10n ** 18n) / perEth.out;
+}
+
 /** How much of `quote` the bot is holding right now. */
 export async function quoteBalance(quote: Address): Promise<bigint> {
   const { account } = botWallet();
