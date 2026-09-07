@@ -320,12 +320,37 @@ export default function TradePanel({ picked }: { picked: { address: string; n: n
           A trading wallet that lives in this browser, so a buy is one click with nothing to
           confirm. Your normal wallet fills it and empties it; it does the buying.
         </p>
-        <p className="note-warn">
-          <strong>This is a hot wallet.</strong> The key is kept in this browser, encrypted with
-          your passphrase. Clearing site data destroys it, and anything able to run script on
-          this page while it is unlocked can spend it. Keep only what you are actively trading
-          in it — you can send funds back to your own wallet at any time.
+        {/*
+          One calm line, with the detail behind a summary.
+
+          It used to be a block of amber, which reads as a hazard sign and gets
+          skipped. This says the same thing in the register of a product note,
+          and anyone who wants the specifics can open them. What it does not do
+          is disappear: it is the only place a stranger is told their money can
+          be lost here in a way it could not be in MetaMask, and that sentence
+          is what makes putting funds in an informed choice rather than a
+          surprise.
+        */}
+        <p className="ssub" style={{ marginLeft: 0 }}>
+          Your key stays in this browser, encrypted with your passphrase. Like any hot wallet,
+          keep only what you are actively trading — you can send it back to your own wallet
+          whenever you like.
         </p>
+        <details className="fineprint">
+          <summary>How it works, and what to watch</summary>
+          <p>
+            The key is generated here and encrypted with your passphrase before being saved.
+            It never leaves your browser and this site never receives it. It relocks after
+            fifteen minutes without a trade, and there are per-trade and daily spend limits
+            you can set below.
+          </p>
+          <p>
+            Two things to know. Clearing this site&rsquo;s data deletes the key, so back it up if
+            the balance matters. And while it is unlocked, anything able to run script on this
+            page could spend it — which is why it is for a trading float rather than savings.
+            For take-profit and stop-loss that survive closing the tab, run your own copy.
+          </p>
+        </details>
         <label className="field">
           <span>Passphrase (12+ characters)</span>
           <input

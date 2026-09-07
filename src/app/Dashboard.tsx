@@ -1346,11 +1346,10 @@ function TickerWatch({
         </button>
       </div>
 
-      <p className="note-warn">
-        <strong>Add the maker&rsquo;s address.</strong> Without it this buys any coin using
-        that ticker — and tickers get reused constantly. In three hours of launches, 27%
-        were already taken: VLAD 65 times from 51 different makers. Expect a copy to beat
-        the real one to it.
+      <p className="ssub" style={{ marginLeft: 0 }}>
+        Add the maker&rsquo;s address if you know it. Tickers get reused constantly — 27% were
+        already taken in three hours of launches — so without one this may well buy a copy
+        before the launch you meant.
       </p>
 
       {list.length > 0 && (
