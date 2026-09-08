@@ -321,16 +321,31 @@ const FeedRow = memo(function FeedRow({
               {soc.label}
             </a>
           )}
+          {/*
+            Age sits on the identity line, not down among the metadata.
+
+            How old a coin is IS its status here — a launch under a minute old
+            is the entire reason this feed exists — and it was previously the
+            second of seven similar-looking items on the line below, where it
+            read as just another statistic. A fresh one carries a live dot.
+          */}
+          <span
+            className={`fage${r.ageMinutes < 1 ? " is-live" : ""}`}
+            title="how long ago it launched"
+          >
+            {r.ageMinutes < 1 && <i className="fage-dot" />}
+            {age(r.ageMinutes)}
+          </span>
         </div>
 
         <div className="fline2 muted small">
-          <span className="faddr" title={r.token}>{shortAddr(r.token)}</span>
-          {/* Colour here is a reading, not decoration: a coin under a minute
-              old is the thing this feed exists for, and a crowd already
-              holding is the strongest signal we ever measured. */}
-          <span className={`fstat${r.ageMinutes < 1 ? " hot" : ""}`} title="how long ago it launched">
-            {age(r.ageMinutes)}
-          </span>
+          {/* What it trades against, first. Over half of pons is priced in a
+              tokenised stock rather than ETH, which changes what a position
+              in it actually is — so it leads the metadata rather than sitting
+              seventh along the line. */}
+          <span className="fquote" title="what this curve trades against">{r.quoteSymbol}</span>
+          {/* A crowd already holding is the strongest signal we ever
+              measured, so the count brightens once there is one. */}
           <span className={`fstat${r.holders >= 10 ? " good" : ""}`} title="wallets still holding">
             <i className="fi">H</i>
             {r.holders}
@@ -354,7 +369,6 @@ const FeedRow = memo(function FeedRow({
               {r.snipers}
             </span>
           )}
-          <span className="fquote" title="what this curve trades against">{r.quoteSymbol}</span>
           {/* Only rendered on narrow screens, where the Vol and Liq columns
               are hidden — without this a phone loses them entirely. */}
           <span className="fstat onlynarrow" title="volume">
@@ -392,6 +406,11 @@ const FeedRow = memo(function FeedRow({
               <span className="fbond-txt">{r.progressPct > 0 ? `${r.progressPct.toFixed(0)}%` : "0%"}</span>
             </span>
           </span>
+
+          {/* Last and quietest. The contract address is the least-read thing
+              on the row and it was leading the line in monospace, which gave
+              the dullest field the most distinctive shape. */}
+          <span className="faddr" title={r.token}>{shortAddr(r.token)}</span>
         </div>
       </div>
 
@@ -645,20 +664,28 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
         <p className="neg small">Feed is not running — restart the app.</p>
       )}
 
-      <div className="fhead">
-        <span>Coin</span>
-        <span className="ta-c">20m</span>
-        <span className="ta-r">MC</span>
-        <span className="ta-r">Vol</span>
-        <span className="ta-r">Liq</span>
-        <span className="ta-r">Tx</span>
-      </div>
-
       <div
         className="flist"
         onMouseEnter={() => setHeld(true)}
         onMouseLeave={() => setHeld(false)}
       >
+        {/*
+          The header lives inside the scrolling list, stuck to its top.
+
+          Outside it, the rows sat in a scrolled box fifteen pixels narrower
+          than the header did, so every numeric label was fifteen pixels right
+          of the column it named — on the same grid, with the same tracks, and
+          still not lining up. Inside, both share one width whatever the
+          scrollbar does, and the header stays put while the feed moves.
+        */}
+        <div className="fhead">
+          <span>Coin</span>
+          <span className="ta-c">20m</span>
+          <span className="ta-r">MC</span>
+          <span className="ta-r">Vol</span>
+          <span className="ta-r">Liq</span>
+          <span className="ta-r">Tx</span>
+        </div>
         {rows.length === 0 ? (
           <p className="muted small" style={{ margin: "10px 0" }}>
             {data ? "Nothing yet." : "Loading…"}
