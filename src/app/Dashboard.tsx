@@ -219,10 +219,37 @@ export default function Dashboard() {
     <div className="wrap">
       <header className="topbar">
         <div className="row" style={{ gap: 0, minWidth: 0 }}>
+          {/*
+            The supplied wordmark, with the name and tagline still in the DOM
+            behind it.
+
+            The artwork carries its own lettering, so setting the name in a
+            system font beside it produced two versions of the same word in two
+            different typefaces. The text stays as the accessible name and as
+            what a screen reader or a search engine gets; the image is what a
+            person sees.
+          */}
           <div className="lockup">
             <Logo size={34} />
-            <h1>Ponsnipe</h1>
+            <img
+              className="wordmark"
+              src="/brand/wordmark.webp"
+              srcSet="/brand/wordmark.webp 1x, /brand/wordmark@2x.webp 2x"
+              alt="Ponsnipe"
+              decoding="async"
+            />
+            <h1 className="sr-only">Ponsnipe</h1>
           </div>
+          {/*
+            The tagline stays as text.
+
+            It is part of the supplied wordmark image, but only as a quarter of
+            its height — at header size that is about four pixels tall and
+            unreadable. As live text it is legible, it resizes, it can be
+            searched, and it is tracked-out capitals, which type reproduces
+            exactly. The distinctive lettering above is the part that had to be
+            artwork.
+          */}
           <p className="sub">Precision sniping. Maximum edge.</p>
         </div>
         <div className="row" style={{ gap: 10 }}>
