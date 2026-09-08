@@ -75,6 +75,8 @@ export interface Watch {
    */
   tp: number | null;
   sl: number | null;
+  /** How much of the position the take-profit sells, as a percentage. */
+  tpSellPct: number;
 }
 
 export interface SniperHit {
@@ -119,6 +121,8 @@ export interface AutoConfig {
   /** Exit rules armed on everything this buys, in percent. null = none. */
   tp: number | null;
   sl: number | null;
+  /** How much of the position the take-profit sells, as a percentage. */
+  tpSellPct: number;
 }
 
 export const DEFAULT_AUTO: AutoConfig = {
@@ -134,6 +138,10 @@ export const DEFAULT_AUTO: AutoConfig = {
      combination in this app that can lose everything while you are away. */
   tp: 50,
   sl: 25,
+  /* Sell most of it at the target and let a slice run. Taking the stake back
+     and keeping some upside is the usual move on a launch, and it is a better
+     default than closing the whole position at the first target. */
+  tpSellPct: 70,
 };
 
 /** One line in the log: what the sniper saw and what it did about it. */
@@ -484,7 +492,9 @@ export function useSniper(
            * panel: the position is unprotected for every second between those,
            * and a snipe fires precisely when nobody is watching.
            */
-          const exit = w ? { tp: w.tp, sl: w.sl } : { tp: rules.tp, sl: rules.sl };
+          const exit = w
+            ? { tp: w.tp, sl: w.sl, tpSellPct: w.tpSellPct }
+            : { tp: rules.tp, sl: rules.sl, tpSellPct: rules.tpSellPct };
           if (exit.tp != null || exit.sl != null) setRule(owner, row.token, exit);
 
           note({

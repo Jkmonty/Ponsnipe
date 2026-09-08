@@ -83,13 +83,19 @@ export default function TradePanel({
      looking, so the protected version is what you get by not deciding. */
   const [wTp, setWTp] = useState("50");
   const [wSl, setWSl] = useState("25");
+  /* What share of the position the take-profit sells. Under 100 leaves a
+     runner behind, which is why the stop-loss stays armed on it. */
+  const [wTpPct, setWTpPct] = useState("70");
   /** Set once sellHolding exists, so the watcher declared above can reach it. */
   const sellHoldingRef = useRef<((h: {
     address: string;
     curve: string;
     symbol: string;
     decimals: number;
+    /** How many tokens to sell, which may be less than the whole holding. */
     balance: bigint;
+    /** Set when something is being left behind, so the record is kept. */
+    partial?: boolean;
   }) => Promise<`0x${string}` | undefined>) | null>(null);
   /** Bumped after any trade, so holdings re-read rather than going stale. */
   const [moved, setMoved] = useState(0);
@@ -101,13 +107,21 @@ export default function TradePanel({
     key.unlocked,
     holdings,
     useCallback(
-      async (h: Holding) => {
+      async (h: Holding, sellPct: number) => {
         await sellHoldingRef.current?.({
           address: h.token,
           curve: h.curve,
           symbol: h.symbol,
           decimals: h.decimals,
-          balance: h.balance,
+          /*
+           * The share is worked out here, in BigInt, rather than passed down
+           * as a percentage and converted later. Token balances routinely
+           * exceed what a double can hold exactly, so a round trip through a
+           * float would ask the curve to sell an amount a few units off the
+           * one the wallet actually has.
+           */
+          balance: (h.balance * BigInt(Math.round(sellPct))) / 100n,
+          partial: sellPct < 100,
         });
       },
       [],
@@ -276,6 +290,7 @@ export default function TradePanel({
       symbol: string;
       decimals: number;
       balance: bigint;
+      partial?: boolean;
     }) => {
       if (!key.client || !key.address || h.balance <= 0n) return;
       const c = browserPublic();
@@ -334,7 +349,10 @@ export default function TradePanel({
       });
       await c.waitForTransactionReceipt({ hash });
       key.touch();
-      forgetPosition(key.address, h.address);
+      // Only forget a position that is actually gone. A partial sell leaves
+      // tokens and a cost basis behind, and dropping the record would lose the
+      // profit column on what is still held.
+      if (!h.partial) forgetPosition(key.address, h.address);
       setMoved((n) => n + 1);
       return hash;
     },
@@ -621,6 +639,7 @@ export default function TradePanel({
                           auto.save(h.token, {
                             tp: e.target.value.trim() ? Math.abs(Number(e.target.value)) : null,
                             sl: rule?.sl ?? null,
+                            tpSellPct: rule?.tpSellPct ?? 100,
                           })
                         }
                       />
@@ -636,6 +655,26 @@ export default function TradePanel({
                           auto.save(h.token, {
                             tp: rule?.tp ?? null,
                             sl: e.target.value.trim() ? Math.abs(Number(e.target.value)) : null,
+                            tpSellPct: rule?.tpSellPct ?? 100,
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>sell %</span>
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        placeholder="100"
+                        defaultValue={rule?.tpSellPct ?? ""}
+                        title="how much of this position the take profit sells"
+                        onBlur={(e) =>
+                          auto.save(h.token, {
+                            tp: rule?.tp ?? null,
+                            sl: rule?.sl ?? null,
+                            tpSellPct: e.target.value.trim()
+                              ? Math.max(1, Math.min(100, Number(e.target.value) || 100))
+                              : 100,
                           })
                         }
                       />
@@ -737,6 +776,23 @@ export default function TradePanel({
             />
           </label>
         </div>
+
+        <label className="field">
+          <span>
+            Sell at take profit <i className="muted">— % of the position</i>
+          </span>
+          <input
+            className="input"
+            inputMode="decimal"
+            value={wTpPct}
+            onChange={(e) => setWTpPct(e.target.value)}
+          />
+        </label>
+        <p className="ssub" style={{ marginTop: -6 }}>
+          {Number(wTpPct) >= 100
+            ? "Closes the whole position at the target."
+            : `Sells ${Number(wTpPct) || 0}% at the target and leaves ${100 - (Number(wTpPct) || 0)}% running, still covered by the stop loss.`}
+        </p>
         {/*
           Said at the point of the decision, not in a help page.
 
@@ -762,6 +818,7 @@ export default function TradePanel({
               eth: wEth,
               tp: wTp.trim() ? Math.abs(Number(wTp)) : null,
               sl: wSl.trim() ? Math.abs(Number(wSl)) : null,
+              tpSellPct: Math.max(1, Math.min(100, Number(wTpPct) || 100)),
               maxBuys: 1,
               // A watch you set and forget should not fire next week.
               expiresAt: Date.now() + 24 * 3600_000,

@@ -86,6 +86,37 @@ export function recordBuy(owner: Address, rec: PositionRecord): void {
   }
 }
 
+/**
+ * Scale a position's cost basis down after a partial sell.
+ *
+ * This is the load-bearing half of selling part of a holding, and getting it
+ * wrong is worse than not having the feature. Profit is measured as current
+ * value against recorded spend, and value is read from the balance that is
+ * left — so selling 60% of the tokens while still claiming to have spent 100%
+ * makes the remainder read as roughly minus sixty percent, which would trip
+ * its own stop-loss on the very next tick and dump a position that was up.
+ *
+ * `keep` is the fraction still held, as a percentage. Both figures are integer
+ * strings of wei, so the arithmetic stays in BigInt rather than going through
+ * a float that would quietly lose the last digits.
+ */
+export function reduceBasis(owner: Address, token: string, keepPct: number): void {
+  try {
+    const all = readAll();
+    const key = owner.toLowerCase();
+    const list = all[key] ?? [];
+    const rec = list.find((p) => p.token.toLowerCase() === token.toLowerCase());
+    if (!rec) return;
+    const keep = BigInt(Math.max(0, Math.min(100, Math.round(keepPct))));
+    rec.spentQuote = ((BigInt(rec.spentQuote) * keep) / 100n).toString();
+    rec.spentEth = ((BigInt(rec.spentEth) * keep) / 100n).toString();
+    all[key] = list;
+    localStorage.setItem(STORE, JSON.stringify(all));
+  } catch {
+    /* private mode: the basis is already not persisting */
+  }
+}
+
 export function forgetPosition(owner: Address, token: string): void {
   try {
     const all = readAll();

@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Address } from "viem";
-import type { Holding } from "./usePositions";
+import { reduceBasis, type Holding } from "./usePositions";
 
 const STORE = "ponsnipe.autosell.v1";
 
@@ -27,6 +27,15 @@ export interface Rule {
   tp: number | null;
   /** Sell when down this many percent. null = no stop-loss. */
   sl: number | null;
+  /**
+   * How much of the position the take-profit sells, as a percentage.
+   *
+   * Defaults to all of it. Selling part is the common move on a launch — take
+   * enough back to cover the stake, let the rest run — and it only applies to
+   * the take-profit. A stop-loss that sells half is not a stop: the point of
+   * one is to be out, and a slower loss is still a loss.
+   */
+  tpSellPct?: number;
 }
 
 type Store = Record<string, Record<string, Rule>>;
@@ -80,7 +89,7 @@ export function useAutoSell(
   owner: Address | null,
   unlocked: boolean,
   holdings: Holding[],
-  sell: (h: Holding) => Promise<void>,
+  sell: (h: Holding, sellPct: number) => Promise<void>,
 ): AutoSell {
   const [rules, setRules] = useState<Record<string, Rule>>({});
   const [tick, setTick] = useState(0);
@@ -139,16 +148,41 @@ export function useAutoSell(
       if (inFlight.current.has(key)) continue;
       inFlight.current.add(key);
       setFiring(h.token);
-      void sell(h)
+
+      /*
+       * A stop always sells everything; a take-profit sells what it was told
+       * to. Clamped, because a hand-typed percentage over 100 would ask the
+       * curve for more tokens than the wallet holds and simply revert.
+       */
+      const pct = hitTp ? Math.max(1, Math.min(100, r.tpSellPct ?? 100)) : 100;
+
+      void sell(h, pct)
         .then(() => {
           setLastFired({
             symbol: h.symbol,
-            reason: hitTp ? `hit +${r.tp}%` : `hit -${Math.abs(r.sl!)}%`,
+            reason:
+              (hitTp ? `hit +${r.tp}%` : `hit -${Math.abs(r.sl!)}%`) +
+              (pct < 100 ? ` — sold ${pct}%` : ""),
             at: Date.now(),
           });
-          // The rule has done its job; leaving it armed would fire again on a
-          // position that no longer exists.
-          save(h.token, null);
+          if (pct >= 100) {
+            // Nothing left to act on; leaving the rule armed would fire again
+            // on a position that no longer exists.
+            save(h.token, null);
+            return;
+          }
+          /*
+           * A partial sell leaves a live position, so two things have to
+           * happen together.
+           *
+           * The basis shrinks with the tokens, or the remainder reads as a
+           * heavy loss and its own stop-loss dumps it on the next tick. And
+           * the take-profit clears while the stop-loss stays: the price has
+           * not moved, so an armed take-profit would fire again immediately
+           * and keep selling the position in slices.
+           */
+          reduceBasis(owner, h.token, 100 - pct);
+          save(h.token, { tp: null, sl: r.sl, tpSellPct: r.tpSellPct });
         })
         .catch(() => {
           /* left armed on purpose: a failed sell should be retried next tick */
