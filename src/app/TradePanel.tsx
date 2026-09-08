@@ -698,9 +698,7 @@ export default function TradePanel({
           </label>
         </div>
         <label className="field">
-          <span>
-            Dev wallet <i className="muted">— strongly recommended</i>
-          </span>
+          <span>Dev wallet</span>
           <input
             className="input mono"
             placeholder="0x… the address you expect to launch it"

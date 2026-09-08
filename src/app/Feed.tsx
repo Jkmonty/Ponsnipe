@@ -322,18 +322,11 @@ const FeedRow = memo(function FeedRow({
             </a>
           )}
           {/*
-            Age sits on the identity line, not down among the metadata.
-
-            How old a coin is IS its status here — a launch under a minute old
-            is the entire reason this feed exists — and it was previously the
-            second of seven similar-looking items on the line below, where it
-            read as just another statistic. A fresh one carries a live dot.
+            Age, plainly. It used to carry a lime dot and lime text when under
+            a minute old, but the feed is sorted newest-first so nearly every
+            visible row had one — a status everything shares is not a status.
           */}
-          <span
-            className={`fage${r.ageMinutes < 1 ? " is-live" : ""}`}
-            title="how long ago it launched"
-          >
-            {r.ageMinutes < 1 && <i className="fage-dot" />}
+          <span className="fage" title="how long ago it launched">
             {age(r.ageMinutes)}
           </span>
         </div>

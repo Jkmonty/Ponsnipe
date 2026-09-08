@@ -131,8 +131,8 @@ body {
   background-attachment: fixed;
   color: var(--t1);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -148,12 +148,12 @@ body {
  * Five levels and no more. The old interface had eleven font sizes between
  * 10 and 16px, which is why everything competed: nothing was clearly more
  * important than anything else. */
-h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
-h2 { font-size: 14.5px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
-h3 { font-size: 14px; font-weight: 600; margin: 0; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 15.5px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
 
 .muted { color: var(--t2); }
-.small { font-size: 12.5px; }
+.small { font-size: 13.5px; }
 .pos { color: var(--up); }
 .neg { color: var(--down); }
 .ta-c { text-align: center; }
@@ -163,7 +163,7 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
 .wrap {
   max-width: 1640px;
   margin: 0 auto;
-  padding: 0 var(--sp-5) var(--sp-7);
+  padding: 0 var(--sp-6) var(--sp-8);
 }
 
 /* ══ HEADER ═══════════════════════════════════════════════════════════════
@@ -179,7 +179,7 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  min-height: 52px;
+  min-height: 58px;
   background: linear-gradient(180deg, rgba(10, 12, 16, 0.92), rgba(6, 7, 10, 0.86));
   backdrop-filter: blur(20px) saturate(1.3);
   border-bottom: 1px solid var(--line);
@@ -204,7 +204,7 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
 
 /* The supplied lettering, sized off its own height. The tagline is part of the
    artwork, so there is no separate text to keep in step with it. */
-.wordmark { display: block; height: 21px; width: auto; flex: none; }
+.wordmark { display: block; height: 24px; width: auto; flex: none; }
 
 /* In the DOM for screen readers and search engines, off the screen for
    everyone else — the visible name lives in the artwork above. */
@@ -275,14 +275,14 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
-  height: 36px;
-  padding: 0 14px;
+  height: 40px;
+  padding: 0 16px;
   border-radius: var(--r-ctl);
   border: 1px solid var(--line-2);
   background: var(--s3);
   color: var(--t1);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -308,7 +308,7 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
 .btn-outline:hover:not(:disabled) { background: var(--s3); color: var(--t1); }
 .btn-danger { background: var(--down-dim); border-color: rgba(255, 107, 107, 0.3); color: #ffb4b4; }
 .btn-sm { height: 32px; padding: 0 12px; font-size: 13px; }
-.btn-lg { height: 42px; width: 100%; font-size: 14px; }
+.btn-lg { height: 46px; width: 100%; font-size: 15px; }
 
 .linkish {
   background: none;
@@ -339,14 +339,14 @@ label.field > span i { font-style: normal; text-transform: none; letter-spacing:
 
 .input {
   width: 100%;
-  height: 36px;
+  height: 40px;
   background: var(--s2);
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
   padding: 0 var(--sp-3);
   color: var(--t1);
   font: inherit;
-  font-size: 13.5px;
+  font-size: 14.5px;
   outline: none;
   transition: border-color var(--fast), background var(--fast), box-shadow var(--fast);
 }
@@ -582,7 +582,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   align-items: center;
   gap: var(--sp-2);
   margin: 0;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.11em;
   text-transform: uppercase;
@@ -599,9 +599,9 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .card h2:not(.shead) { font-size: 14px; font-weight: 600; }
 
 .ssub {
-  margin: 6px 0 var(--sp-3);
-  font-size: 12.5px;
-  line-height: 1.55;
+  margin: var(--sp-2) 0 var(--sp-3);
+  font-size: 13px;
+  line-height: 1.6;
   color: var(--t3);
 }
 
@@ -645,7 +645,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 }
 .feedhead h2 {
   color: var(--t1);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.005em;
   white-space: nowrap;
@@ -662,7 +662,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   color: var(--t4);
   pointer-events: none;
 }
-.feedfind { height: 34px; padding-left: 34px; padding-right: 48px; font-size: 13px; background: var(--s2); }
+.feedfind { height: 36px; padding-left: 36px; padding-right: 50px; font-size: 13.5px; background: var(--s2); }
 .findkbd {
   position: absolute;
   right: var(--sp-2);
@@ -727,7 +727,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .frow-item {
   position: relative;
   width: 100%;
-  padding: 6px var(--sp-4);
+  padding: 8px var(--sp-4);
   text-align: left;
   border: 0;
   border-bottom: 1px solid var(--hair);
@@ -780,8 +780,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
  */
 .savatar {
   position: relative;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   flex: none;
   display: flex;
   align-items: center;
@@ -816,14 +816,14 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 /* Line one is the identity: ticker loud, name quiet. */
 .fline1 { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
 .fline1 > strong {
-  font-size: 14.5px;
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
   color: var(--t1);
   flex: none;
-  max-width: 150px;
+  max-width: 160px;
 }
-.fname { font-size: 12px; color: var(--t3); font-weight: 400; }
+.fname { font-size: 13px; color: var(--t3); font-weight: 400; }
 .fsoc {
   font-size: 11.5px;
   color: var(--t3);
@@ -841,9 +841,9 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .fline2 {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--t3);
 }
 .faddr { font-family: var(--mono); font-size: 10.5px; color: var(--t4); flex: none; margin-left: auto; opacity: 0.75; }
@@ -937,8 +937,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   position: relative;
   display: inline-flex;
   align-items: center;
-  width: 88px;
-  height: 15px;
+  width: 96px;
+  height: 16px;
   flex: none;
   border-radius: 5px;
   background: var(--bg);
@@ -972,13 +972,13 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .fnum.is-blank { color: var(--t4); font-weight: 400; }
 .fnum {
   text-align: right;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 500;
   color: var(--t2);
   white-space: nowrap;
 }
-.fnum-mc { font-size: 15px; font-weight: 700; color: var(--t1); letter-spacing: -0.015em; }
-.fnum-tx { font-size: 12px; color: var(--t3); font-weight: 400; }
+.fnum-mc { font-size: 16.5px; font-weight: 700; color: var(--t1); letter-spacing: -0.015em; }
+.fnum-tx { font-size: 13px; color: var(--t3); font-weight: 400; }
 
 /* A value that just moved. One frame of colour, no movement — a number that
    jumps is a number you cannot read. */
@@ -999,7 +999,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .spark-empty {
   display: block;
   width: 100%;
-  height: 15px;
+  height: 16px;
   position: relative;
 }
 .spark-empty::after {
@@ -1042,7 +1042,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   border: 1px solid var(--lime-line);
   background: var(--lime-dim);
 }
-.locked-bar p { margin: 0; flex: 1 1 180px; font-size: 12.5px; line-height: 1.5; color: var(--t1); }
+.locked-bar p { margin: 0; flex: 1 1 180px; font-size: 13px; line-height: 1.5; color: var(--t1); }
 .locked-bar .btn { flex: none; }
 .card.is-locked .field,
 .card.is-locked .presets,
@@ -1089,7 +1089,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .rule-toggle { border-color: var(--lime-line); background: var(--lime-dim); }
 .rule-toggle input, .rule-check input { margin-top: 3px; accent-color: var(--lime); flex: none; }
 .rule-toggle span, .rule-check span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.rule-toggle strong, .rule-check strong { font-size: 13px; font-weight: 600; }
+.rule-toggle strong, .rule-check strong { font-size: 13.5px; font-weight: 600; }
 .rule-toggle i, .rule-check i { font-style: normal; font-size: 12px; color: var(--t3); line-height: 1.5; }
 .rule-check.off { opacity: 0.5; cursor: default; }
 
@@ -1161,14 +1161,14 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  height: 34px;
+  height: 38px;
   padding: 0 var(--sp-4);
   border-radius: var(--r-ctl);
   border: 1px solid var(--line-2);
   background: var(--s3);
   color: var(--t1);
   font: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 550;
   cursor: pointer;
   transition: background var(--fast), border-color var(--fast), transform var(--fast);
@@ -1519,3 +1519,101 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .lc-a { width: 42%; }
 .lc-b { width: 72%; }
 .lc-c { height: 38px; width: 100%; border-radius: var(--r-ctl); }
+
+/* ── the tape ───────────────────────────────────────────────────────────
+ * A single band of movement between the header and the feed. Slim, quiet, and
+ * the only animation on the page that runs continuously — which is why it is
+ * a hairline tall and never brightens. */
+.tape {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: 38px;
+  margin-bottom: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  background: var(--s1);
+  overflow: hidden;
+}
+.tape-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 0 14px;
+  border-right: 1px solid var(--line);
+  background: var(--s2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lime);
+}
+.tape-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 2.6s ease-out infinite;
+}
+
+/* The window clips; the track moves. Masked at both ends so items fade in and
+   out rather than being chopped off by a hard edge. */
+.tape-window {
+  position: relative;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+}
+.tape-track {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  width: max-content;
+  /* Exactly half the track's width: the second copy of the list arrives as the
+     first leaves, so the loop has no seam. */
+  animation: tape 64s linear infinite;
+}
+@keyframes tape {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.tape:hover .tape-track { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .tape-track { animation: none; }
+  .tape-window { overflow-x: auto; }
+}
+
+.tape-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  flex: none;
+  padding: 0 16px;
+  height: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--t3);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--fast);
+}
+.tape-item:hover { color: var(--t1); }
+.tape-item b { font-size: 13px; font-weight: 700; color: var(--t2); transition: color var(--fast); }
+.tape-item:hover b { color: var(--lime); }
+.tape-item span { font-size: 12px; font-variant-numeric: tabular-nums; }
+/* A coin that launched inside the last minute, marked once and quietly. */
+.tape-new {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lime);
+  align-self: center;
+}
+
+@media (max-width: 940px) {
+  .tape { height: 34px; margin-bottom: var(--sp-3); }
+  .tape-label { padding: 0 10px; letter-spacing: 0.1em; }
+}

@@ -106,17 +106,6 @@ export default function SniperRules({
           turn it on.
         </p>
 
-        {/*
-          Stated once, here, in the place where somebody is about to switch it
-          on. It is not a disclaimer — it is the most useful thing we know.
-        */}
-        <p className="note-warn">
-          <strong>Buying every launch loses money.</strong> We simulated about 4.9 million
-          trades across 1,500 rule sets: unfiltered, every single exit strategy came out
-          negative. These defaults are deliberately strict — loosen them on purpose, not by
-          accident.
-        </p>
-
         <label className="rule-toggle">
           <input
             type="checkbox"

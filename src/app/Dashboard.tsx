@@ -7,6 +7,7 @@ import Feed from "./Feed";
 import TradePanel from "./TradePanel";
 import WalletSetup from "./WalletSetup";
 import WalletButton from "./WalletButton";
+import TickerTape from "./TickerTape";
 import { CollapseButton, useCollapsed } from "./Collapse";
 
 interface WalletInfo {
@@ -94,7 +95,6 @@ export default function Dashboard() {
    */
   const [picked, setPicked] = useState<{ address: string; n: number } | null>(null);
   const posFold = useCollapsed("positions");
-  const aboutFold = useCollapsed("about");
   /* Read after mount rather than during render: the server has no location,
      and deciding this while rendering would make the first client paint
      disagree with the HTML it is replacing. */
@@ -366,6 +366,12 @@ export default function Dashboard() {
         was a visible flash of the wrong layout and a burst of requests to
         routes a public instance answers with 404.
       */}
+      {/* Fills the space between the header and the feed, and gives the page
+          its one moving part. */}
+      {wallet?.publicMode && (
+        <TickerTape onPick={(address) => setPicked({ address, n: Date.now() })} />
+      )}
+
       {wallet === null ? (
         <div className="cols cols-solo">
           <div className="card feed-skeleton" aria-busy="true" />
@@ -379,40 +385,7 @@ export default function Dashboard() {
               picked={picked}
               onPickHolding={(address) => setPicked({ address, n: Date.now() })}
             />
-            <aside className={`card${aboutFold.collapsed ? " is-collapsed" : ""}`}>
-              <div className="card-head">
-                <h2 className="shead">What this is</h2>
-                <CollapseButton
-                  collapsed={aboutFold.collapsed}
-                  onToggle={aboutFold.toggle}
-                  label="what this is"
-                />
-              </div>
-              {/*
-                Three facts, not two paragraphs.
-
-                This was a wall of grey prose in a card that looked like every
-                other card, so the one thing a stranger needs to know — that
-                the site never sees their key — was buried mid-sentence. As a
-                short list each fact can be read on its own, and the reader can
-                stop after the one they cared about.
-              */}
-              <dl className="facts">
-                <div>
-                  <dt>Every launch, instantly</dt>
-                  <dd>Price charts, holder counts, and how much of a crowd is one operator wearing several wallets.</dd>
-                </div>
-                <div>
-                  <dt>No wallet, no keys, no custody</dt>
-                  <dd>Connect one and it is made in your browser, encrypted with your passphrase, and never sent here.</dd>
-                </div>
-                <div>
-                  <dt>Exits run while the tab is open</dt>
-                  <dd>For take-profit and stop-loss that survive closing it, run your own copy — that needs a key on your machine, and no website can have one.</dd>
-                </div>
-              </dl>
-            </aside>
-          </div>
+</div>
         </div>
       ) : (
       <div className="cols">
