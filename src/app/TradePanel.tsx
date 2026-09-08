@@ -24,6 +24,7 @@ import { useWallet } from "./WalletContext";
 import { addSpentToday } from "./limits";
 import { forgetPosition, recordBuy, usePositions, type Holding } from "./usePositions";
 import { useAutoSell, WATCH_INTERVAL_MS } from "./useAutoSell";
+import { useSniper, WATCH_POLL_MS } from "./useSniper";
 
 interface Snap {
   address: string;
@@ -71,6 +72,11 @@ export default function TradePanel({
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string; tx?: string } | null>(null);
   const [held, setHeld] = useState<bigint | null>(null);
   const [routeOk, setRouteOk] = useState<boolean | null>(null);
+  /* The snipe form. Kept here rather than inside useSniper: a half-typed
+     ticker is not a watch, and should not be persisted as one. */
+  const [wTicker, setWTicker] = useState("");
+  const [wDev, setWDev] = useState("");
+  const [wEth, setWEth] = useState("0.01");
   /** Set once sellHolding exists, so the watcher declared above can reach it. */
   const sellHoldingRef = useRef<((h: {
     address: string;
@@ -102,8 +108,6 @@ export default function TradePanel({
     ),
   );
   useEffect(() => setAutoTick(auto.tick), [auto.tick]);
-  // Armed rules keep the wallet awake; disarming lets it idle out again.
-  useEffect(() => key.setWatching(auto.armed > 0), [auto.armed, key.setWatching]);
 
   /** Load whichever coin the feed handed over. */
   useEffect(() => {
@@ -154,45 +158,70 @@ export default function TradePanel({
   const overPerTrade = amount > limits.perTrade;
   const overDaily = spent + amount > limits.perDay;
 
-  const buy = async () => {
-    if (!snap || !key.client || !key.address) return;
-    if (overPerTrade || overDaily) return;
-    setBusy("buy");
-    setMsg(null);
-    try {
-      const ethIn = parseEther(eth);
-      const { hashes, spentQuote } = await executeBuy(key.client, key.address, ethIn, {
-        curve: getAddress(snap.curve),
-        token: getAddress(snap.address),
-        pairToken: snap.pairToken as Address,
-        quoteIsNative: snap.quoteIsNative,
+  /**
+   * Buy one coin, priced fresh at the moment of buying.
+   *
+   * Takes an address rather than the loaded snapshot, because the sniper buys
+   * coins that were never loaded into the panel — it sees a launch in the feed
+   * and has to act on it, and a feed row carries no reserves or fees. One
+   * lookup gets the same snapshot the manual path uses, so there is a single
+   * buying routine rather than two that could price the same trade differently.
+   *
+   * Throws on failure. The sniper needs to know a buy did not happen so it can
+   * say so and leave the watch armed; the button below catches and displays.
+   */
+  const buyToken = useCallback(
+    async (address: string, ethIn: string) => {
+      if (!key.client || !key.address) throw new Error("wallet is locked");
+      const r = await fetch(`/api/token?address=${address}`);
+      const t = (await r.json()) as Snap & { error?: string };
+      if (!r.ok) throw new Error(t.error ?? "lookup failed");
+      if (!t.tradeable) throw new Error(t.reason ?? "not tradeable");
+
+      const wei = parseEther(ethIn);
+      const { hashes, spentQuote } = await executeBuy(key.client, key.address, wei, {
+        curve: getAddress(t.curve),
+        token: getAddress(t.address),
+        pairToken: t.pairToken as Address,
+        quoteIsNative: t.quoteIsNative,
         reserves: {
-          quoteReserve: BigInt(snap.reserves.quoteReserve),
-          tokenReserve: BigInt(snap.reserves.tokenReserve),
+          quoteReserve: BigInt(t.reserves.quoteReserve),
+          tokenReserve: BigInt(t.reserves.tokenReserve),
         },
-        feeBps: snap.feeBps,
-        creatorTaxBps: snap.creatorTaxBps,
+        feeBps: t.feeBps,
+        creatorTaxBps: t.creatorTaxBps,
         slippageBps,
       });
       key.touch();
       recordBuy(key.address, {
-        token: snap.address,
-        curve: snap.curve,
-        symbol: snap.symbol,
-        decimals: snap.decimals,
-        quoteSymbol: snap.quoteSymbol,
-        quoteDecimals: snap.quoteDecimals,
-        quoteIsNative: snap.quoteIsNative,
+        token: t.address,
+        curve: t.curve,
+        symbol: t.symbol,
+        decimals: t.decimals,
+        quoteSymbol: t.quoteSymbol,
+        quoteDecimals: t.quoteDecimals,
+        quoteIsNative: t.quoteIsNative,
         // What reached the curve, which on a zapped buy is the swapped amount
         // rather than the ETH — the two are different assets entirely.
         spentQuote: spentQuote.toString(),
-        spentEth: ethIn.toString(),
+        spentEth: wei.toString(),
         at: Date.now(),
       });
       setMoved((n) => n + 1);
+      return { symbol: t.symbol, tx: hashes[hashes.length - 1] };
+    },
+    [key, slippageBps],
+  );
+
+  const buy = async () => {
+    if (!snap || overPerTrade || overDaily) return;
+    setBusy("buy");
+    setMsg(null);
+    try {
+      const done = await buyToken(snap.address, eth);
       addSpentToday(amount);
       syncSpent();
-      setMsg({ kind: "ok", text: `Bought ${snap.symbol}.`, tx: hashes[hashes.length - 1] });
+      setMsg({ kind: "ok", text: `Bought ${done.symbol}.`, tx: done.tx });
       void refresh();
     } catch (e) {
       setMsg({ kind: "err", text: (e instanceof Error ? e.message : "buy failed").split("\n")[0] });
@@ -200,6 +229,33 @@ export default function TradePanel({
       setBusy(null);
     }
   };
+
+  /*
+   * The sniper. Spends through the same routine as the button above, so a
+   * sniped entry and a hand-pressed one cannot behave differently.
+   */
+  const sniper = useSniper(
+    key.address,
+    key.unlocked,
+    limits,
+    useCallback(
+      async (token: string, ethIn: string) => {
+        await buyToken(token, ethIn);
+        syncSpent();
+        void refresh();
+      },
+      [buyToken, syncSpent, refresh],
+    ),
+  );
+
+  /* An armed watch or an armed sell rule both keep the wallet awake; with
+     neither it goes back to idling out after fifteen minutes. Declared here
+     rather than beside the sell rules because it reads `sniper`, which is
+     defined just above — a hook cannot reach a const that has not run yet. */
+  useEffect(
+    () => key.setWatching(auto.armed + sniper.armed > 0),
+    [auto.armed, sniper.armed, key.setWatching],
+  );
 
   /**
    * Sell an entire holding.
@@ -594,6 +650,120 @@ export default function TradePanel({
           )}
         </div>
       )}
+
+      {/* ── snipe a coin you already know is coming ── */}
+      <div className="snipe">
+        <div className="card-head">
+          <h3 className="shead">Snipe a launch</h3>
+          {sniper.armed > 0 && (
+            <span className="chip chip-live">
+              <span className="dot" />
+              {sniper.armed} ARMED
+            </span>
+          )}
+        </div>
+        <p className="ssub">
+          For when you already know the ticker. It buys the moment that coin exists, without
+          you watching for it.
+        </p>
+
+        <div className="snipe-form">
+          <label className="field">
+            <span>Ticker</span>
+            <input
+              className="input"
+              placeholder="VLAD"
+              value={wTicker}
+              onChange={(e) => setWTicker(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Spend (ETH)</span>
+            <input className="input" value={wEth} onChange={(e) => setWEth(e.target.value)} />
+          </label>
+        </div>
+        <label className="field">
+          <span>
+            Dev wallet <i className="muted">— strongly recommended</i>
+          </span>
+          <input
+            className="input mono"
+            placeholder="0x… the address you expect to launch it"
+            value={wDev}
+            onChange={(e) => setWDev(e.target.value)}
+          />
+        </label>
+        {/*
+          Said at the point of the decision, not in a help page.
+
+          Anyone can deploy a token with any ticker and they constantly do:
+          VLAD has launched 530 times from different makers and TEST 605. A
+          ticker-only watch will usually fire on a squatter rather than on the
+          launch that was meant, which is a real way to lose money quietly.
+        */}
+        {!wDev.trim() && wTicker.trim() && (
+          <p className="note-warn">
+            <strong>Without a dev wallet this will buy the first coin called {wTicker.trim()}.</strong>{" "}
+            That ticker has probably been used before — 530 different coins have been called
+            VLAD. Pin the address if you know it.
+          </p>
+        )}
+        <button
+          className="btn btn-primary btn-lg"
+          disabled={!wTicker.trim() || !(Number(wEth) > 0)}
+          onClick={() => {
+            sniper.add({
+              ticker: wTicker.trim(),
+              deployer: wDev.trim(),
+              eth: wEth,
+              maxBuys: 1,
+              // A watch you set and forget should not fire next week.
+              expiresAt: Date.now() + 24 * 3600_000,
+            });
+            setWTicker("");
+            setWDev("");
+          }}
+        >
+          Arm it
+        </button>
+
+        {sniper.watches.length > 0 && (
+          <div className="watches">
+            {sniper.watches.map((w) => {
+              const spent = w.bought >= w.maxBuys;
+              const expired = w.expiresAt <= Date.now();
+              return (
+                <div key={w.id} className={`watch${spent || expired ? " done" : ""}`}>
+                  <span className="watch-tick">{w.ticker}</span>
+                  <span className="muted small">
+                    {w.eth} ETH ·{" "}
+                    {w.deployer ? `from ${w.deployer.slice(0, 6)}…${w.deployer.slice(-4)}` : "any dev"}
+                  </span>
+                  <span className="watch-state small">
+                    {spent ? "bought" : expired ? "expired" : "waiting"}
+                  </span>
+                  <button className="linkish" onClick={() => sniper.remove(w.id)}>
+                    remove
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {sniper.armed > 0 && (
+          <p className="muted small" style={{ marginTop: 8 }}>
+            Checking every {Math.round(WATCH_POLL_MS / 1000)}s.{" "}
+            <strong>Only while this tab is open</strong> — close it and nothing is sniped.
+          </p>
+        )}
+        {sniper.firing && <p className="pos small">Buying now…</p>}
+        {sniper.recent.map((h) => (
+          <p key={h.at} className={h.ok ? "pos small" : "neg small"} style={{ marginTop: 4 }}>
+            {h.ticker} — {h.detail}
+          </p>
+        ))}
+      </div>
 
     </aside>
   );
