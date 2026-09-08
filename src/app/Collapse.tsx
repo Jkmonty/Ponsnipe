@@ -4,7 +4,7 @@
  * Sections you can fold away, and that stay folded.
  *
  * The dashboard is a column of cards that are each useful occasionally and
- * present always — the launch composer, the token lookup, the sniper filters.
+ * present always — the token lookup, the sniper filters, the positions table.
  * Once you have set the sniper up you do not want to scroll past it forever to
  * reach the positions underneath.
  *

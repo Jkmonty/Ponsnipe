@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtEth, fmtPct, fmtPrice, shortAddr, weiToUnits, EXPLORER } from "@/lib/format";
-import LaunchComposer from "./LaunchComposer";
 import Logo from "./Logo";
 import Feed from "./Feed";
 import TradePanel from "./TradePanel";
@@ -240,16 +239,16 @@ export default function Dashboard() {
               {/*
                 Only on your own machine.
 
-                PUBLIC_MODE hides the sniper, the positions table, the launch
-                composer and the live switch, which is right for a hosted
-                instance and looks like half the app has been deleted when it
-                is your own. A dev server left running with the variable set
+                PUBLIC_MODE hides the sniper, the positions table, the wallet
+                setup and the live switch, which is right for a hosted instance
+                and looks like half the app has been deleted when it is your
+                own. A dev server left running with the variable set
                 did exactly that, with nothing on screen to say why. On the
                 real site this says nothing, because a visitor is not missing
                 anything — there is only one view for them.
               */}
               {onLocalhost && (
-                <span className="chip chip-dry" title="PUBLIC_MODE=1 — the sniper, positions and launch composer are hidden. Run `npm run dev` for the full app.">
+                <span className="chip chip-dry" title="PUBLIC_MODE=1 — the sniper, positions and wallet setup are hidden. Run `npm run dev` for the full app.">
                   PUBLIC VIEW
                 </span>
               )}
@@ -445,7 +444,16 @@ export default function Dashboard() {
       {/* ── sniper ─────────────────────────────────────────────────── */}
       <SniperCard funded={!!funded} flash={flash} />
 
-      <LaunchComposer flash={flash} />
+      {/*
+        The launch composer is not rendered.
+
+        It drafts a launch and checks the ticker against the full launch
+        history, which is useful — but the drafting calls the Anthropic API per
+        request, so on a public instance strangers would spend the operator's
+        API credits, metered and uncapped. Off entirely rather than half-on:
+        LaunchComposer.tsx and /api/launch are still here, so this is one line
+        to restore if it is ever wanted with a cap or on the heuristic drafter.
+      */}
 
       {/* ── open positions ─────────────────────────────────────────── */}
       <div className={`card${posFold.collapsed ? " is-collapsed" : ""}`}>
