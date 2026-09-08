@@ -134,6 +134,12 @@ export default function SniperRules({
                onChange={(n) => set("minHolders", n)} />
           <Num label="Max top 10" suffix="%" value={cfg.maxTop10Pct} disabled={locked}
                onChange={(n) => set("maxTop10Pct", n)} />
+          {/* Armed on every coin this buys, the moment it buys it. Zero means
+              no rule of that kind. */}
+          <Num label="Take profit" suffix="%" value={cfg.tp ?? 0} disabled={locked}
+               onChange={(n) => set("tp", n > 0 ? n : null)} />
+          <Num label="Stop loss" suffix="%" value={cfg.sl ?? 0} disabled={locked}
+               onChange={(n) => set("sl", n > 0 ? n : null)} />
         </div>
 
         <Check

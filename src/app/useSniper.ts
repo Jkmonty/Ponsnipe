@@ -29,6 +29,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAddress, type Address } from "viem";
 import { addSpentToday, readSpentToday, type Limits } from "./limits";
+import { setRule } from "./useAutoSell";
 
 const STORE = "ponsnipe.watches.v1";
 
@@ -63,6 +64,17 @@ export interface Watch {
   /** Epoch ms after which this watch is ignored. */
   expiresAt: number;
   armedAt: number;
+  /**
+   * Exit rules to arm on whatever this buys, in percent. null = none.
+   *
+   * They belong on the watch rather than only on the holding it produces,
+   * because the entire premise of a snipe is that you are not at the screen
+   * when it fires. Rules that can only be set afterwards mean the position
+   * spends the gap between filling and you noticing with no stop on it — and
+   * that gap is the whole reason the feature exists.
+   */
+  tp: number | null;
+  sl: number | null;
 }
 
 export interface SniperHit {
@@ -104,6 +116,9 @@ export interface AutoConfig {
   skipDevSold: boolean;
   /** Only buy ETH-quoted coins, avoiding the swap a stock-quoted one needs. */
   ethOnly: boolean;
+  /** Exit rules armed on everything this buys, in percent. null = none. */
+  tp: number | null;
+  sl: number | null;
 }
 
 export const DEFAULT_AUTO: AutoConfig = {
@@ -115,6 +130,10 @@ export const DEFAULT_AUTO: AutoConfig = {
   skipBundled: true,
   skipDevSold: true,
   ethOnly: true,
+  /* A default stop, because an unattended buy with no exit is the one
+     combination in this app that can lose everything while you are away. */
+  tp: 50,
+  sl: 25,
 };
 
 /** One line in the log: what the sniper saw and what it did about it. */
@@ -458,9 +477,23 @@ export function useSniper(
               ].slice(0, 6),
             );
           }
+          /*
+           * The exit is armed in the same breath as the entry.
+           *
+           * Not on the next render, and not when the trader next looks at the
+           * panel: the position is unprotected for every second between those,
+           * and a snipe fires precisely when nobody is watching.
+           */
+          const exit = w ? { tp: w.tp, sl: w.sl } : { tp: rules.tp, sl: rules.sl };
+          if (exit.tp != null || exit.sl != null) setRule(owner, row.token, exit);
+
           note({
             at: Date.now(), symbol: row.symbol, token: row.token, decision: "bought",
-            reason: w ? `matched your ${w.ticker} watch · ${spendEth} ETH` : `${spendEth} ETH`,
+            reason:
+              (w ? `matched your ${w.ticker} watch · ${spendEth} ETH` : `${spendEth} ETH`) +
+              (exit.tp != null || exit.sl != null
+                ? ` · exit ${exit.tp != null ? `+${exit.tp}%` : "—"} / ${exit.sl != null ? `-${exit.sl}%` : "—"}`
+                : ""),
           });
         } catch (e) {
           const detail = (e instanceof Error ? e.message : "buy failed").split("\n")[0];

@@ -78,6 +78,11 @@ export default function TradePanel({
   const [wTicker, setWTicker] = useState("");
   const [wDev, setWDev] = useState("");
   const [wEth, setWEth] = useState("0.01");
+  /* Sensible exits pre-filled rather than blank. An unattended buy with no stop
+     is the one combination here that can lose everything while nobody is
+     looking, so the protected version is what you get by not deciding. */
+  const [wTp, setWTp] = useState("50");
+  const [wSl, setWSl] = useState("25");
   /** Set once sellHolding exists, so the watcher declared above can reach it. */
   const sellHoldingRef = useRef<((h: {
     address: string;
@@ -706,6 +711,32 @@ export default function TradePanel({
             onChange={(e) => setWDev(e.target.value)}
           />
         </label>
+
+        {/* Set here, armed the instant the snipe fills. Leaving one empty means
+            no rule of that kind — a decision the form lets you make rather than
+            the state it starts in. */}
+        <div className="snipe-form">
+          <label className="field">
+            <span>Take profit %</span>
+            <input
+              className="input"
+              inputMode="decimal"
+              placeholder="none"
+              value={wTp}
+              onChange={(e) => setWTp(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Stop loss %</span>
+            <input
+              className="input"
+              inputMode="decimal"
+              placeholder="none"
+              value={wSl}
+              onChange={(e) => setWSl(e.target.value)}
+            />
+          </label>
+        </div>
         {/*
           Said at the point of the decision, not in a help page.
 
@@ -729,6 +760,8 @@ export default function TradePanel({
               ticker: wTicker.trim(),
               deployer: wDev.trim(),
               eth: wEth,
+              tp: wTp.trim() ? Math.abs(Number(wTp)) : null,
+              sl: wSl.trim() ? Math.abs(Number(wSl)) : null,
               maxBuys: 1,
               // A watch you set and forget should not fire next week.
               expiresAt: Date.now() + 24 * 3600_000,
@@ -751,6 +784,12 @@ export default function TradePanel({
                   <span className="muted small">
                     {w.eth} ETH ·{" "}
                     {w.deployer ? `from ${w.deployer.slice(0, 6)}…${w.deployer.slice(-4)}` : "any dev"}
+                    {(w.tp != null || w.sl != null) && (
+                      <>
+                        {" · exit "}
+                        {w.tp != null ? `+${w.tp}%` : "—"}/{w.sl != null ? `-${w.sl}%` : "—"}
+                      </>
+                    )}
                   </span>
                   <span className="watch-state small">
                     {spent ? "bought" : expired ? "expired" : "waiting"}
