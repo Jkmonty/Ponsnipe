@@ -108,6 +108,21 @@ const KEEP_MINUTES = 180;
  * the feed always has its full life drawn rather than a stump.
  */
 const PRICE_KEEP_MINUTES = 720;
+/*
+ * The same history at five-second resolution, kept for two hours.
+ *
+ * A minute bar is the wrong unit for this market. The median pons coin lives
+ * three minutes, so a chart of minute closes draws three points for the
+ * typical launch — and the whole decision a sniper makes happens inside those
+ * three points. Five seconds is roughly the sweep cadence, so it is as fine as
+ * the data honestly goes; anything finer would be drawing the poll interval
+ * rather than the market.
+ *
+ * Only curves that actually trade write rows, so this costs far less than
+ * 1,440 rows per curve per two hours in practice.
+ */
+const TICK_SECONDS = 5;
+const TICK_KEEP_HOURS = 2;
 /** Curves re-priced per pass. Each costs two calls inside one multicall. */
 const PRICE_BATCH = 90;
 
@@ -235,6 +250,18 @@ function migrate(): void {
   `);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_price_bucket ON feed_prices(bucket DESC);`);
 
+  // The fine-grained twin of feed_prices. Same shape, smaller bucket, shorter
+  // life — see TICK_SECONDS for why a minute is too coarse to chart here.
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS feed_ticks (
+      curve  TEXT NOT NULL,
+      bucket INTEGER NOT NULL,
+      price  REAL NOT NULL,
+      PRIMARY KEY (curve, bucket)
+    );
+  `);
+  conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_tick_bucket ON feed_ticks(bucket DESC);`);
+
   /*
    * Net token position per wallet, per curve.
    *
@@ -302,6 +329,7 @@ function saveCursor(name: string, block: bigint): void {
 }
 
 const nowBucket = () => Math.floor(Date.now() / 60_000);
+const nowTick = () => Math.floor(Date.now() / (TICK_SECONDS * 1000));
 
 /** New launches -> feed rows, with the metadata the list needs to render. */
 async function sweepLaunches(head: bigint): Promise<void> {
@@ -859,8 +887,16 @@ function recordPrices(points: [curve: string, price: number][]): void {
     );
     // Plain loop, like every other write in this file: node:sqlite's
     // DatabaseSync has no transaction() helper.
+    const tick = db().prepare(
+      `INSERT INTO feed_ticks (curve, bucket, price) VALUES (?,?,?)
+         ON CONFLICT(curve, bucket) DO UPDATE SET price = excluded.price`,
+    );
     const b = nowBucket();
-    for (const [curve, price] of rows) up.run(curve, b, price);
+    const t = nowTick();
+    for (const [curve, price] of rows) {
+      up.run(curve, b, price);
+      tick.run(curve, t, price);
+    }
   } catch {
     /* history is decoration; never let it break a sweep */
   }
@@ -902,6 +938,9 @@ function prune(): void {
   db().prepare(`DELETE FROM feed_tokens WHERE created_at < ?`).run(cutoff);
   db().prepare(`DELETE FROM feed_volume WHERE bucket < ?`).run(nowBucket() - KEEP_MINUTES);
   db().prepare(`DELETE FROM feed_prices WHERE bucket < ?`).run(nowBucket() - PRICE_KEEP_MINUTES);
+  db()
+    .prepare(`DELETE FROM feed_ticks WHERE bucket < ?`)
+    .run(nowTick() - (TICK_KEEP_HOURS * 3600) / TICK_SECONDS);
   /*
    * Orphans go too. Price rows outlive the feed window on purpose, but a curve
    * that has dropped out of feed_tokens entirely is never drawn again, so its
@@ -910,6 +949,9 @@ function prune(): void {
    */
   db()
     .prepare(`DELETE FROM feed_prices WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
+    .run();
+  db()
+    .prepare(`DELETE FROM feed_ticks WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
     .run();
   db()
     .prepare(`DELETE FROM feed_positions WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)

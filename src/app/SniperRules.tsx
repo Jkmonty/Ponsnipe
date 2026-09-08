@@ -140,7 +140,19 @@ export default function SniperRules({
                onChange={(n) => set("tp", n > 0 ? n : null)} />
           <Num label="Stop loss" suffix="%" value={cfg.sl ?? 0} disabled={locked}
                onChange={(n) => set("sl", n > 0 ? n : null)} />
+          <Num label="Sell at TP" suffix="% of position" value={cfg.tpSellPct} disabled={locked}
+               onChange={(n) => set("tpSellPct", Math.max(1, Math.min(100, n || 100)))} />
         </div>
+
+        {/* The same sentence the manual snipe form gives, for the same reason:
+            a lone "70" in a grid does not say what happens to the other 30. */}
+        {cfg.tp != null && (
+          <p className="ssub" style={{ marginTop: -4 }}>
+            {cfg.tpSellPct >= 100
+              ? `Closes the whole position at +${cfg.tp}%.`
+              : `Sells ${cfg.tpSellPct}% at +${cfg.tp}% and leaves ${100 - cfg.tpSellPct}% running, still covered by the stop loss.`}
+          </p>
+        )}
 
         <Check
           label="Skip bundled launches"

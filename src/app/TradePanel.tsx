@@ -25,6 +25,7 @@ import { addSpentToday } from "./limits";
 import { forgetPosition, recordBuy, usePositions, type Holding } from "./usePositions";
 import { useAutoSell, WATCH_INTERVAL_MS } from "./useAutoSell";
 import { CollapseButton, useCollapsed } from "./Collapse";
+import Chart from "./Chart";
 import { useSniper, WATCH_POLL_MS } from "./useSniper";
 import SniperRules from "./SniperRules";
 
@@ -506,6 +507,11 @@ export default function TradePanel({
               {snap.graduation.progressPct.toFixed(1)}%
             </span>
           </div>
+
+          {/* Above the buy box, not below it: the chart is what you look at
+              before deciding the size, so putting it under the button would
+              mean scrolling back up to check. */}
+          <Chart address={snap.address} symbol={snap.symbol} />
 
           {!snap.quoteIsNative && routeOk === false && (
             <p className="note-warn">

@@ -1666,3 +1666,56 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   .ff-btn { height: 44px; }
   .ff-in { height: 36px; }
 }
+
+/* ── price chart ───────────────────────────────────────────────────────────
+   Sized to the sidebar rather than to a chart's usual ambitions. It sits
+   between the coin's name and the buy box, so it has to be tall enough to
+   show a shape and short enough that the button stays on screen. */
+.ch {
+  margin: var(--sp-3) 0 var(--sp-4);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  background: var(--s1);
+  overflow: hidden;
+}
+.ch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--line-1);
+}
+.ch-now { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
+.ch-price { font-size: 14px; font-weight: 600; color: var(--t1); }
+.ch-chg { font-size: 12.5px; font-weight: 700; }
+.ch-chg.up { color: var(--up); }
+.ch-chg.down { color: var(--down); }
+.ch-ranges { display: flex; gap: 2px; flex: none; }
+.ch-r {
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--t3);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ch-r:hover { color: var(--t1); background: var(--s3); }
+.ch-r.on { color: var(--t1); background: var(--s3); border-color: var(--line-2); }
+/* Height is fixed and the viewBox is stretched to it, so the box never jumps
+   as points arrive — a chart that resizes every three seconds reads as broken. */
+.ch-svg { display: block; width: 100%; height: 132px; touch-action: none; }
+.ch-box { height: 132px; display: grid; place-items: center; }
+.ch-empty { font-size: 12.5px; color: var(--t4); text-align: center; padding: 0 var(--sp-4); }
+.ch-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-top: 1px solid var(--line-1);
+  font-size: 11.5px;
+  color: var(--t4);
+}
