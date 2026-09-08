@@ -393,38 +393,22 @@ export default function TradePanel({
   };
 
   /*
-   * No wallet yet, or locked: point at the button rather than becoming it.
+   * Locked, but not hidden.
    *
-   * The panel used to replace itself with a signup form here, so someone who
-   * had just clicked a coin was shown a passphrase field instead of the coin.
-   * Now the coin stays on screen and the wallet is one click away in the
-   * header, which is also where it will be next time they need it.
+   * This used to replace the whole panel with a connect button, so a first-time
+   * visitor could not see the buy form, the spend presets or the sniper — the
+   * three things that would make them want a wallet in the first place. You
+   * cannot evaluate a tool you are not allowed to look at.
+   *
+   * So the interface stays on screen and only the controls are inert. One bar
+   * at the top says what to do about it, and every action below is disabled
+   * rather than absent.
    */
-  if (!key.exists || !key.unlocked) {
-    return (
-      <aside className="card">
-        <h2 className="shead">Trade</h2>
-        {snap ? (
-          <p className="ssub">
-            <strong>{snap.symbol}</strong> is ready to buy.{" "}
-            {key.exists ? "Unlock your wallet" : "Connect a wallet"} to take the shot.
-          </p>
-        ) : (
-          <p className="ssub">
-            {key.exists
-              ? "Unlock your wallet, then pick a coin from the feed."
-              : "Connect a wallet, then pick a coin from the feed to buy it in one click."}
-          </p>
-        )}
-        <button className="btn btn-primary btn-lg" onClick={openMenu}>
-          {key.exists ? "Unlock wallet" : "Connect wallet"}
-        </button>
-      </aside>
-    );
-  }
+  const locked = !key.exists || !key.unlocked;
 
-  // ── unlocked and trading ────────────────────────────────────────────────
+  // ── the panel, live or locked ───────────────────────────────────────────
   const canBuy =
+    !locked &&
     !!snap &&
     snap.tradeable &&
     (snap.quoteIsNative || routeOk === true) &&
@@ -433,10 +417,23 @@ export default function TradePanel({
     busy === null;
 
   return (
-    <aside className="card">
+    <aside className={`card${locked ? " is-locked" : ""}`}>
       {/* The address and balance live in the header pill now, so repeating
           them here would just be two places to disagree. */}
       <h2 className="shead">Trade</h2>
+
+      {locked && (
+        <div className="locked-bar">
+          <p>
+            {key.exists
+              ? "Your wallet is locked. Unlock it to buy and to arm a snipe."
+              : "Connect a wallet to buy in one click and snipe launches by ticker."}
+          </p>
+          <button className="btn btn-primary" onClick={openMenu}>
+            {key.exists ? "Unlock wallet" : "Connect wallet"}
+          </button>
+        </div>
+      )}
 
       {bal != null && bal === 0n && (
         <p className="note-warn">
@@ -450,7 +447,7 @@ export default function TradePanel({
 
       {!snap ? (
         <p className="ssub" style={{ marginTop: 8 }}>
-          Pick a coin from the feed to buy it.
+          Pick a coin from the feed to buy it — one click, no popup to confirm.
         </p>
       ) : !snap.tradeable ? (
         <p className="note-warn">
@@ -664,7 +661,8 @@ export default function TradePanel({
         </div>
         <p className="ssub">
           For when you already know the ticker. It buys the moment that coin exists, without
-          you watching for it.
+          you watching for it.{" "}
+          {locked && <button className="linkish" onClick={openMenu}>Connect a wallet to arm one.</button>}
         </p>
 
         <div className="snipe-form">
@@ -710,7 +708,7 @@ export default function TradePanel({
         )}
         <button
           className="btn btn-primary btn-lg"
-          disabled={!wTicker.trim() || !(Number(wEth) > 0)}
+          disabled={locked || !wTicker.trim() || !(Number(wEth) > 0)}
           onClick={() => {
             sniper.add({
               ticker: wTicker.trim(),

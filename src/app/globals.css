@@ -2060,3 +2060,36 @@ textarea.input,
 @media (max-width: 560px) {
   .snipe-form { grid-template-columns: 1fr; }
 }
+
+/* ── locked, but visible ────────────────────────────────────────────────
+ * The panel used to vanish behind a connect button, which hid the buy form
+ * and the sniper — the two things that would make someone want a wallet. The
+ * interface stays; only the controls go inert. */
+.locked-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(240, 180, 41, 0.08);
+  border: 1px solid rgba(240, 180, 41, 0.28);
+}
+.locked-bar p {
+  margin: 0;
+  flex: 1 1 180px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.locked-bar .btn { flex: none; }
+
+/* Dimmed enough to read as unavailable, not so much it cannot be read. The
+   bar above keeps full contrast, because it is the one thing to act on. */
+.card.is-locked .field,
+.card.is-locked .presets,
+.card.is-locked .snipe-form,
+.card.is-locked .btn-lg { opacity: 0.62; }
+.card.is-locked .locked-bar,
+.card.is-locked .locked-bar .btn { opacity: 1; }
