@@ -39,7 +39,42 @@ const GATEWAYS = [
  * the sum of every slow one ahead of it, so the budget below is per attempt
  * rather than per logo.
  */
-const FETCH_TIMEOUT_MS = 15_000;
+/*
+ * Fifteen seconds was the budget for a 96px thumbnail, and it was the wrong
+ * shape of number entirely.
+ *
+ * The site is served over HTTP/1.1, so a browser holds six connections to it.
+ * A handful of logos on a dead IPFS gateway sat on those connections for
+ * fifteen seconds each, and the feed and the chart queued behind them — the
+ * page was not slow, it was waiting for artwork. Four seconds is generous for
+ * an image this small, and a logo that cannot beat it is not worth a
+ * connection slot.
+ */
+const FETCH_TIMEOUT_MS = 4_000;
+/**
+ * How long a logo that failed everywhere is left alone.
+ *
+ * Without this a broken logo is retried on every render by every viewer, for
+ * ever, each retry costing a connection and the full timeout. Ten minutes is
+ * long enough to stop the stampede and short enough that a gateway coming back
+ * is noticed the same session.
+ */
+const FAIL_TTL_MS = 10 * 60_000;
+
+const fx = globalThis as typeof globalThis & { __ponsImgFail?: Map<string, number> };
+function failures(): Map<string, number> {
+  fx.__ponsImgFail ??= new Map();
+  return fx.__ponsImgFail;
+}
+
+/** Did this logo fail recently enough that it is not worth trying again? */
+export function recentlyFailed(raw: string): boolean {
+  const at = failures().get(raw);
+  if (at == null) return false;
+  if (Date.now() - at < FAIL_TTL_MS) return true;
+  failures().delete(raw);
+  return false;
+}
 
 const MAX_BYTES = 3 * 1024 * 1024;
 
@@ -311,7 +346,11 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
     try {
       entry = await Promise.any(urls.map(attempt));
     } catch {
-      // Every gateway failed: AggregateError, nothing served this logo.
+      // Every gateway failed: AggregateError, nothing served this logo. Noted,
+      // so the next viewer does not spend another four seconds finding out.
+      const f = failures();
+      if (f.size > 5_000) f.clear();
+      f.set(raw, Date.now());
       return null;
     } finally {
       // Stop the losers downloading bytes nobody will look at.

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { cached, resolveImage } from "@/lib/feed/images";
+import { cached, recentlyFailed, resolveImage } from "@/lib/feed/images";
 import { isKnownLogo } from "@/lib/feed/query";
 
 export const runtime = "nodejs";
@@ -29,10 +29,23 @@ export async function GET(req: Request) {
    */
   if (!isKnownLogo(raw)) return new NextResponse(null, { status: 403 });
 
-  const hit = cached(raw) ?? (await resolveImage(raw));
-  // 404 rather than a placeholder: the client falls back to the direct URL and
-  // then to its initials tile, which it can do only if this says nothing.
-  if (!hit) return new NextResponse(null, { status: 404 });
+  // A logo that failed everywhere a moment ago is not worth another attempt.
+  // Answered immediately so it costs the browser a round trip rather than a
+  // connection held open for the whole fetch budget.
+  const hit = recentlyFailed(raw) ? null : (cached(raw) ?? (await resolveImage(raw)));
+  /*
+   * 404 rather than a placeholder: the client falls back to the direct URL and
+   * then to its initials tile, which it can do only if this says nothing.
+   *
+   * Cached, though. An uncached 404 is re-requested on every render by every
+   * viewer, and the answer does not change minute to minute.
+   */
+  if (!hit) {
+    return new NextResponse(null, {
+      status: 404,
+      headers: { "cache-control": "public, max-age=600" },
+    });
+  }
 
   return new NextResponse(hit.body, {
     headers: { "content-type": hit.type, "cache-control": "public, max-age=1800" },
