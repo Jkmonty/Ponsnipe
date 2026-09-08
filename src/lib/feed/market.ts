@@ -49,6 +49,80 @@ const SELL_EVENT = parseAbiItem(
 const LOGS_POOL = process.env.LOGS_RPC_URL?.trim()
   ? [process.env.LOGS_RPC_URL.trim()]
   : PUBLIC_RPC_POOL;
+/*
+ * What the feed is actually asking of the node.
+ *
+ * Counted at the fetch, not at the JSON-RPC call: the transport batches, and
+ * a rate limit is applied to requests that arrive, so one batched fetch of
+ * ninety calls costs one. Sixty one-second slots, written round-robin, so the
+ * last minute is always available without keeping a list of timestamps.
+ *
+ * This exists because the poll interval is a knob with no obvious safe
+ * setting — the last time it was shortened the failure rate went to 13%, and
+ * that was discovered by the feed going wrong rather than by looking.
+ */
+const METER_SLOTS = 60;
+interface Meter {
+  hits: number[];
+  fails: number[];
+  slot: number;
+  at: number;
+  sweepMs: number[];
+}
+const mg = globalThis as typeof globalThis & { __ponsRpcMeter?: Meter };
+const meter: Meter =
+  mg.__ponsRpcMeter ??
+  (mg.__ponsRpcMeter = {
+    hits: new Array(METER_SLOTS).fill(0),
+    fails: new Array(METER_SLOTS).fill(0),
+    slot: 0,
+    at: Math.floor(Date.now() / 1000),
+    sweepMs: [],
+  });
+
+/** Move to the current second, clearing whatever the slots held a minute ago. */
+function rollMeter(): void {
+  const now = Math.floor(Date.now() / 1000);
+  const gap = Math.min(METER_SLOTS, now - meter.at);
+  for (let i = 1; i <= gap; i++) {
+    const k = (meter.slot + i) % METER_SLOTS;
+    meter.hits[k] = 0;
+    meter.fails[k] = 0;
+  }
+  if (gap > 0) {
+    meter.slot = (meter.slot + gap) % METER_SLOTS;
+    meter.at = now;
+  }
+}
+
+function countRequest(): void {
+  rollMeter();
+  meter.hits[meter.slot]++;
+}
+function countFailure(): void {
+  rollMeter();
+  meter.fails[meter.slot]++;
+}
+
+/** Requests and failures over the last minute, and how long sweeps are taking. */
+export function rpcLoad() {
+  rollMeter();
+  const hits = meter.hits.reduce((a, b) => a + b, 0);
+  const fails = meter.fails.reduce((a, b) => a + b, 0);
+  const ms = meter.sweepMs;
+  return {
+    perMin: hits,
+    perSec: Math.round((hits / METER_SLOTS) * 10) / 10,
+    fails,
+    failPct: hits ? Math.round((fails / hits) * 1000) / 10 : 0,
+    sweepMsAvg: ms.length ? Math.round(ms.reduce((a, b) => a + b, 0) / ms.length) : 0,
+    skipped: s.skipped,
+    sweepMsMax: ms.length ? Math.max(...ms) : 0,
+    pollMs: POLL_MS,
+    heavyEvery: HEAVY_EVERY,
+  };
+}
+
 let logs: PublicClient | undefined;
 function logClient(): PublicClient {
   if (logs) return logs;
@@ -63,7 +137,17 @@ function logClient(): PublicClient {
      * a faster sweep affordable.
      */
     transport: fallback(
-      LOGS_POOL.map((u) => http(u, { retryCount: 1, timeout: 25_000, batch: true })),
+      LOGS_POOL.map((u) =>
+        http(u, {
+          retryCount: 1,
+          timeout: 25_000,
+          batch: true,
+          onFetchRequest: countRequest,
+          onFetchResponse: (res) => {
+            if (!res.ok) countFailure();
+          },
+        }),
+      ),
       { retryCount: 0, rank: LOGS_POOL.length > 1 ? { interval: 30_000, sampleCount: 3 } : false },
     ),
   }) as PublicClient;
@@ -138,6 +222,8 @@ interface FeedState {
   lastTradeBlock: bigint;
   seen: number;
   sweeps: number;
+  /** Ticks dropped because the previous sweep was still running. */
+  skipped: number;
   lastError: string | null;
   busy: boolean;
 }
@@ -152,6 +238,7 @@ const s: FeedState =
     lastTradeBlock: 0n,
     seen: 0,
     sweeps: 0,
+    skipped: 0,
     lastError: null,
     busy: false,
   });
@@ -983,8 +1070,15 @@ async function stage(name: string, run: () => Promise<void>): Promise<boolean> {
 }
 
 async function sweep(): Promise<void> {
-  if (!s.running || s.busy) return;
+  // A sweep that overruns its interval is the first sign the poll is too fast:
+  // ticks start landing on a busy sweep and are dropped, so the feed runs
+  // slower than configured while asking the node for more.
+  if (!s.running || s.busy) {
+    if (s.busy) s.skipped += 1;
+    return;
+  }
   s.busy = true;
+  const began = Date.now();
   try {
     migrate();
     const head = await logClient().getBlockNumber();
@@ -1004,6 +1098,10 @@ async function sweep(): Promise<void> {
     logEngine("warn", `feed ${s.lastError}`);
   } finally {
     s.busy = false;
+    // Kept as a short window rather than a running average, so a change to the
+    // interval shows up within a minute instead of being diluted by an hour.
+    meter.sweepMs.push(Date.now() - began);
+    if (meter.sweepMs.length > 60) meter.sweepMs.shift();
   }
 }
 
@@ -1033,5 +1131,6 @@ export function feedStatus() {
     sweeps: s.sweeps,
     seen: s.seen,
     lastError: s.lastError,
+    rpc: rpcLoad(),
   };
 }
