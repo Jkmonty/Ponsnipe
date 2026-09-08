@@ -283,6 +283,9 @@ const FeedRow = memo(function FeedRow({
   const mcFlash = useFlash(r.mcapUsd);
   const volFlash = useFlash(r.volumeUsd);
   const soc = socialOf(r.socials);
+  /* Nothing has happened on this curve yet: no trades, no volume, no
+     liquidity. Measured on the live feed, that is about half of every launch. */
+  const untraded = !r.trades && !r.volumeUsd && !r.liquidityUsd;
   const pick = () => onPick(r.token);
   return (
     /*
@@ -415,19 +418,35 @@ const FeedRow = memo(function FeedRow({
       <span className={`fnum fnum-mc num${mcFlash}${isBlank(r.mcapUsd) ? " is-blank" : ""}`} title="market cap">
         {money(r.mcapUsd)}
       </span>
-      <span className={`fnum fnum-vol num${volFlash}${isBlank(r.volumeUsd) ? " is-blank" : ""}`} title="volume">
-        {money(r.volumeUsd)}
-      </span>
-      <span
-        className={`fnum fnum-liq num${isBlank(r.liquidityUsd) ? " is-blank" : ""}`}
-        title="liquidity in the curve"
-      >
-        {money(r.liquidityUsd)}
-      </span>
-      <span className="fnum fnum-tx num" title="trades">
-        {r.trades || "—"}
-        <small>{r.holders ? `${r.holders} hold` : ""}</small>
-      </span>
+      {untraded ? (
+        /*
+          One statement instead of three dashes.
+
+          Half of all launches never trade, so half the feed was showing an em
+          dash under volume, another under liquidity and a third under trades —
+          three separate pieces of punctuation for a single fact. Said once,
+          across the space the three of them occupied.
+        */
+        <span className="fnum fno-trades" title="nobody has traded this yet">
+          no trades yet
+        </span>
+      ) : (
+        <>
+          <span className={`fnum fnum-vol num${volFlash}${isBlank(r.volumeUsd) ? " is-blank" : ""}`} title="volume">
+            {money(r.volumeUsd)}
+          </span>
+          <span
+            className={`fnum fnum-liq num${isBlank(r.liquidityUsd) ? " is-blank" : ""}`}
+            title="liquidity in the curve"
+          >
+            {money(r.liquidityUsd)}
+          </span>
+          <span className="fnum fnum-tx num" title="trades">
+            {r.trades || "—"}
+            <small>{r.holders ? `${r.holders} hold` : ""}</small>
+          </span>
+        </>
+      )}
     </div>
   );
 },

@@ -7,7 +7,6 @@ import Feed from "./Feed";
 import TradePanel from "./TradePanel";
 import WalletSetup from "./WalletSetup";
 import WalletButton from "./WalletButton";
-import TickerTape from "./TickerTape";
 import { CollapseButton, useCollapsed } from "./Collapse";
 
 interface WalletInfo {
@@ -366,12 +365,6 @@ export default function Dashboard() {
         was a visible flash of the wrong layout and a burst of requests to
         routes a public instance answers with 404.
       */}
-      {/* Fills the space between the header and the feed, and gives the page
-          its one moving part. */}
-      {wallet?.publicMode && (
-        <TickerTape onPick={(address) => setPicked({ address, n: Date.now() })} />
-      )}
-
       {wallet === null ? (
         <div className="cols cols-solo">
           <div className="card feed-skeleton" aria-busy="true" />

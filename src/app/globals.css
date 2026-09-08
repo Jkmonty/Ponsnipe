@@ -970,6 +970,17 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
    a brand-new launch, and at full weight that is a wall of punctuation
    competing with the numbers that are actually there. */
 .fnum.is-blank { color: var(--t4); font-weight: 400; }
+
+/* Spans the three columns it replaces. Centred over them rather than
+   right-aligned, because it is a sentence and not a figure. */
+.fno-trades {
+  grid-column: span 3;
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--t4);
+}
 .fnum {
   text-align: right;
   font-size: 15px;
@@ -1366,7 +1377,17 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
  * It was briefly `color: var(--lime)`, which is a different mistake: the class
  * sits on the panel, so that turned everything inside it lime by inheritance.
  */
-.glow { position: relative; border-color: rgba(195, 245, 60, 0.16); }
+/*
+ * No `position` here, deliberately.
+ *
+ * This rule used to set position:relative for the ::after hairline below, and
+ * it sits after `.feed { position: sticky; top: 76px }` in the cascade — so it
+ * won the position and left the top behind, turning a sticky panel into a
+ * relative one shoved 76 pixels down the page. That was the empty band above
+ * the feed. The feed is already positioned by being sticky, which is all the
+ * pseudo-element needs.
+ */
+.glow { border-color: rgba(195, 245, 60, 0.16); }
 .glow::after {
   content: "";
   position: absolute;
@@ -1519,101 +1540,3 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .lc-a { width: 42%; }
 .lc-b { width: 72%; }
 .lc-c { height: 38px; width: 100%; border-radius: var(--r-ctl); }
-
-/* ── the tape ───────────────────────────────────────────────────────────
- * A single band of movement between the header and the feed. Slim, quiet, and
- * the only animation on the page that runs continuously — which is why it is
- * a hairline tall and never brightens. */
-.tape {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-  height: 38px;
-  margin-bottom: var(--sp-4);
-  border: 1px solid var(--line);
-  border-radius: var(--r-ctl);
-  background: var(--s1);
-  overflow: hidden;
-}
-.tape-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex: none;
-  padding: 0 14px;
-  border-right: 1px solid var(--line);
-  background: var(--s2);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--lime);
-}
-.tape-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: pulse 2.6s ease-out infinite;
-}
-
-/* The window clips; the track moves. Masked at both ends so items fade in and
-   out rather than being chopped off by a hard edge. */
-.tape-window {
-  position: relative;
-  overflow: hidden;
-  flex: 1;
-  min-width: 0;
-  mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
-}
-.tape-track {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  width: max-content;
-  /* Exactly half the track's width: the second copy of the list arrives as the
-     first leaves, so the loop has no seam. */
-  animation: tape 64s linear infinite;
-}
-@keyframes tape {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-.tape:hover .tape-track { animation-play-state: paused; }
-@media (prefers-reduced-motion: reduce) {
-  .tape-track { animation: none; }
-  .tape-window { overflow-x: auto; }
-}
-
-.tape-item {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
-  flex: none;
-  padding: 0 16px;
-  height: 100%;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: var(--t3);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color var(--fast);
-}
-.tape-item:hover { color: var(--t1); }
-.tape-item b { font-size: 13px; font-weight: 700; color: var(--t2); transition: color var(--fast); }
-.tape-item:hover b { color: var(--lime); }
-.tape-item span { font-size: 12px; font-variant-numeric: tabular-nums; }
-/* A coin that launched inside the last minute, marked once and quietly. */
-.tape-new {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--lime);
-  align-self: center;
-}
-
-@media (max-width: 940px) {
-  .tape { height: 34px; margin-bottom: var(--sp-3); }
-  .tape-label { padding: 0 10px; letter-spacing: 0.1em; }
-}
