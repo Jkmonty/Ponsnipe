@@ -39,6 +39,17 @@ interface Payload {
 }
 
 /** Compact money: $12.3k, $1.2M — the feed has no room for full numbers. */
+/**
+ * True when money() will render a dash rather than a figure.
+ *
+ * Derived from money() rather than guessed at: the cell is blank for zero as
+ * well as for null, and checking only for null left every zero-volume row
+ * showing a full-weight em dash — which is almost all of them.
+ */
+function isBlank(n: number | null): boolean {
+  return n == null || n === 0;
+}
+
 function money(n: number | null): string {
   if (n == null) return "—";
   // A brand-new coin has no volume by definition, and a column of "$0.00"
@@ -389,14 +400,14 @@ const FeedRow = memo(function FeedRow({
       {/* `is-blank` dims a cell with no figure in it. On a launch seconds old
           three of these five columns are an em dash, and at full weight that
           is a wall of punctuation competing with the numbers that are real. */}
-      <span className={`fnum fnum-mc num${mcFlash}${r.mcapUsd == null ? " is-blank" : ""}`} title="market cap">
+      <span className={`fnum fnum-mc num${mcFlash}${isBlank(r.mcapUsd) ? " is-blank" : ""}`} title="market cap">
         {money(r.mcapUsd)}
       </span>
-      <span className={`fnum fnum-vol num${volFlash}${r.volumeUsd == null ? " is-blank" : ""}`} title="volume">
+      <span className={`fnum fnum-vol num${volFlash}${isBlank(r.volumeUsd) ? " is-blank" : ""}`} title="volume">
         {money(r.volumeUsd)}
       </span>
       <span
-        className={`fnum fnum-liq num${r.liquidityUsd == null ? " is-blank" : ""}`}
+        className={`fnum fnum-liq num${isBlank(r.liquidityUsd) ? " is-blank" : ""}`}
         title="liquidity in the curve"
       >
         {money(r.liquidityUsd)}
