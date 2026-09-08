@@ -1,4 +1,4 @@
-import { json, errorJson, requireAuth } from "@/lib/api";
+import { json, errorJson, requireAuth, refuseInPublicMode } from "@/lib/api";
 import { getPosition } from "@/lib/db/positions";
 import { closePosition } from "@/lib/engine/executor";
 
@@ -10,6 +10,10 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  // Not on a public instance: this route is about the operator's own bot.
+  const gone = refuseInPublicMode();
+  if (gone) return gone;
+
   const unauth = requireAuth(req);
   if (unauth) return unauth;
 

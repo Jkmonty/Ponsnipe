@@ -16,6 +16,23 @@ export function errorJson(message: string, status = 400): NextResponse {
   return json({ error: message }, { status });
 }
 
+/**
+ * Hide a route entirely on a public instance.
+ *
+ * Writes were already refused, so nothing here could ever move funds. What
+ * was still leaking was the reading: /api/sniper handed any stranger the
+ * operator's filters, thresholds and spend limits, /api/engine handed over its
+ * recent log, and /api/positions its open trades. None of that is dangerous in
+ * the sense of losing money. It is dangerous in the sense that a sniper's edge
+ * is its configuration, and publishing it invites being front-run by it.
+ *
+ * 404 rather than 403, because 403 confirms the route exists and is worth
+ * coming back to. A public instance simply does not have these.
+ */
+export function refuseInPublicMode(): NextResponse | null {
+  return env.publicMode ? errorJson("not found", 404) : null;
+}
+
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /**

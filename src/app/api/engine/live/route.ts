@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { json, errorJson, requireAuth } from "@/lib/api";
+import { json, errorJson, requireAuth, refuseInPublicMode } from "@/lib/api";
 import { isLive, setLive } from "@/lib/engine/liveState";
 import { hasBotWallet } from "@/lib/wallet/botWallet";
 
@@ -9,11 +9,19 @@ export const dynamic = "force-dynamic";
 const schema = z.object({ live: z.boolean() });
 
 export async function GET() {
+  // Not on a public instance: this route is about the operator's own bot.
+  const gone = refuseInPublicMode();
+  if (gone) return gone;
+
   return json({ live: isLive() });
 }
 
 /** Flip live trading on/off without editing .env or restarting. */
 export async function POST(req: Request) {
+  // Not on a public instance: this route is about the operator's own bot.
+  const gone = refuseInPublicMode();
+  if (gone) return gone;
+
   const unauth = requireAuth(req);
   if (unauth) return unauth;
 

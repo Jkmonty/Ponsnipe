@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getAddress, isAddress, parseEther } from "viem";
-import { json, errorJson, requireAuth } from "@/lib/api";
+import { json, errorJson, requireAuth, refuseInPublicMode } from "@/lib/api";
 import { env } from "@/lib/env";
 import { getTokenSnapshot } from "@/lib/pons/tokens";
 import { buyOnCurve } from "@/lib/pons/swap";
@@ -54,10 +54,18 @@ function withLivePnl(row: PositionRow) {
 }
 
 export async function GET() {
+  // Not on a public instance: this route is about the operator's own bot.
+  const gone = refuseInPublicMode();
+  if (gone) return gone;
+
   return json({ positions: listPositions().map(withLivePnl) });
 }
 
 export async function POST(req: Request) {
+  // Not on a public instance: this route is about the operator's own bot.
+  const gone = refuseInPublicMode();
+  if (gone) return gone;
+
   const unauth = requireAuth(req);
   if (unauth) return unauth;
 

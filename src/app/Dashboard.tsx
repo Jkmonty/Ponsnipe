@@ -110,20 +110,36 @@ export default function Dashboard() {
   }, []);
 
   /*
-   * Three independent reads, settled independently.
+   * Reads that settle independently, so one failure cannot blank the page.
    *
-   * Promise.all meant one failing endpoint rejected the lot and the catch
-   * swallowed it, so a positions read that errored would leave `wallet` null
-   * — and a null wallet renders "set up your trading wallet" at somebody who
-   * has funds in one. Nothing here depends on anything else here.
+   * Promise.all meant a single failing endpoint rejected the lot and the catch
+   * swallowed it, so a positions read that errored would leave `wallet` null —
+   * and a null wallet renders "set up your trading wallet" at somebody who has
+   * funds in one.
    */
   const refresh = useCallback(async () => {
-    const [w, e, p] = await Promise.allSettled([
-      fetch("/api/wallet").then((r) => r.json()),
+    /*
+     * Wallet first, then the rest only if this is not a public instance.
+     *
+     * The engine and positions routes now 404 in public mode, because a
+     * sniper's configuration and open trades are its edge and there is no
+     * reason to hand them to strangers. Asking for them anyway would mean
+     * every visitor generating two 404s every four seconds — noise in the
+     * logs and a request budget spent on answers we discard.
+     */
+    let w: WalletInfo | null = null;
+    try {
+      w = (await fetch("/api/wallet").then((r) => r.json())) as WalletInfo;
+      setWallet(w);
+    } catch {
+      /* transient: leave the previous value rather than blanking the page */
+    }
+    if (w?.publicMode) return;
+
+    const [e, p] = await Promise.allSettled([
       fetch("/api/engine").then((r) => r.json()),
       fetch("/api/positions").then((r) => r.json()),
     ]);
-    if (w.status === "fulfilled") setWallet(w.value);
     if (e.status === "fulfilled") setEngine(e.value);
     if (p.status === "fulfilled") setPositions(p.value?.positions ?? []);
   }, []);

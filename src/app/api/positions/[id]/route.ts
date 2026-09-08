@@ -1,4 +1,4 @@
-import { json, errorJson, requireAuth } from "@/lib/api";
+import { json, errorJson, requireAuth, refuseInPublicMode } from "@/lib/api";
 import { getPosition, updatePosition } from "@/lib/db/positions";
 
 export const runtime = "nodejs";
@@ -9,6 +9,10 @@ export async function DELETE(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  // Not on a public instance: this route is about the operator's own bot.
+  const gone = refuseInPublicMode();
+  if (gone) return gone;
+
   const unauth = requireAuth(req);
   if (unauth) return unauth;
 
@@ -26,6 +30,10 @@ export async function GET(
   _req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  // Not on a public instance: this route is about the operator's own bot.
+  const gone = refuseInPublicMode();
+  if (gone) return gone;
+
   const { id } = await ctx.params;
   const row = getPosition(id);
   if (!row) return errorJson("position not found", 404);

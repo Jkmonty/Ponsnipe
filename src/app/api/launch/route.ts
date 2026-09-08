@@ -1,4 +1,4 @@
-import { json, errorJson, requireAuth } from "@/lib/api";
+import { json, errorJson, requireAuth, refuseInPublicMode } from "@/lib/api";
 import { activeDrafter, heuristicDrafter, claudeDrafter, type SourceMaterial } from "@/lib/launch/draft";
 import {
   adviseLaunch,
@@ -12,6 +12,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Not on a public instance: this route is about the operator's own bot.
+  const gone = refuseInPublicMode();
+  if (gone) return gone;
+
   return json({
     defaults: LAUNCH_DEFAULTS,
     baselineGraduationPct: BASELINE_GRADUATION_PCT,
@@ -28,6 +32,10 @@ export async function GET() {
  * on pons with the operator's own wallet.
  */
 export async function POST(req: Request) {
+  // Not on a public instance: this route is about the operator's own bot.
+  const gone = refuseInPublicMode();
+  if (gone) return gone;
+
   const unauth = requireAuth(req);
   if (unauth) return unauth;
 
