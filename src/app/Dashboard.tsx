@@ -240,16 +240,23 @@ export default function Dashboard() {
             <h1 className="sr-only">Ponsnipe</h1>
           </div>
           {/*
-            The tagline stays as text.
+            The tagline is artwork again.
 
-            It is part of the supplied wordmark image, but only as a quarter of
-            its height — at header size that is about four pixels tall and
-            unreadable. As live text it is legible, it resizes, it can be
-            searched, and it is tracked-out capitals, which type reproduces
-            exactly. The distinctive lettering above is the part that had to be
-            artwork.
+            It was set as text because the first supplied wordmark had it baked
+            into the bottom quarter of one image — scaled to header height that
+            left it about four pixels tall and unreadable. Supplied on its own
+            it can be sized on its own terms, so the real lettering is back.
+
+            The alt text carries the words, so it stays readable by a screen
+            reader and stays indexable.
           */}
-          <p className="sub">Precision sniping. Maximum edge.</p>
+          <img
+            className="tagline"
+            src="/brand/tagline.webp"
+            srcSet="/brand/tagline.webp 1x, /brand/tagline@2x.webp 2x"
+            alt="Precision sniping. Maximum edge."
+            decoding="async"
+          />
         </div>
         <div className="row" style={{ gap: 10 }}>
           {/* A read-only instance has nothing to switch, and offering the

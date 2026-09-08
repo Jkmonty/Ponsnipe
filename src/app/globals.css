@@ -247,16 +247,16 @@ h3 { font-size: 15px; font-weight: 600; margin: 0; }
   }
 }
 
-.topbar .sub {
-  margin: 0 0 0 var(--sp-4);
+/* The supplied tagline, sized off its own height. It is a very wide strip —
+   35:1 — so it is the first thing to go when the bar runs short of room. */
+.topbar .tagline {
+  display: block;
+  height: 12px;
+  width: auto;
+  flex: none;
+  margin-left: var(--sp-4);
   padding-left: var(--sp-4);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: #8fae98;
   border-left: 1px solid var(--line);
-  white-space: nowrap;
 }
 
 .topbar-link {
@@ -1451,6 +1451,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 }
 
 @media (max-width: 1300px) {
+  /* 420px of tagline is more header than a 1300px screen can spare. */
+  .topbar .tagline { display: none; }
   .cols, .cols-solo { grid-template-columns: minmax(0, 1fr) 380px; }
   .frow-item,
   .fhead { grid-template-columns: 40px minmax(0, 1fr) 84px 128px 112px 80px; }
@@ -1472,7 +1474,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 @media (max-width: 940px) {
   .wrap { padding: 0 var(--sp-3) var(--sp-7); }
   .topbar { margin: 0 calc(var(--sp-3) * -1) var(--sp-4); padding: var(--sp-2) var(--sp-3); min-height: 52px; gap: var(--sp-2); }
-  .topbar .sub { display: none; }
+  .topbar .tagline { display: none; }
   .topbar h1 { font-size: 16px; letter-spacing: 0.05em; margin-right: -0.05em; }
   .lockup { gap: var(--sp-2); }
   /* A localhost-only badge is not worth a phone's header width. */
