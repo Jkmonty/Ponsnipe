@@ -69,7 +69,23 @@ const nextConfig: NextConfig = {
       "base-uri 'self'",
       "form-action 'self'",
       "frame-ancestors 'none'",
-      "upgrade-insecure-requests",
+      /*
+       * upgrade-insecure-requests is NOT here, and that is deliberate.
+       *
+       * It rewrites every request on the page to https://, which is correct
+       * behind TLS and fatal without it. On a server reached by IP — no
+       * domain, so no certificate — it upgraded every stylesheet, script and
+       * image to an https:// URL that nothing was listening on, and the site
+       * rendered as raw unstyled HTML with no JavaScript at all. The server
+       * was serving every asset perfectly; the browser was throwing them away
+       * before asking.
+       *
+       * Little is lost. Caddy redirects http to https as soon as a domain is
+       * configured, every URL in this app is relative and so inherits whatever
+       * scheme the page was loaded over, and default-src 'self' already bars
+       * third-party content. The directive only ever added protection this
+       * CSP was providing anyway.
+       */
     ].join("; ");
     return [
       {
