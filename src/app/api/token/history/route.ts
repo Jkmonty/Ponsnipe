@@ -101,6 +101,12 @@ export async function GET(req: Request) {
       step,
       indexed: true,
       launchedAt: row.created_at,
+      /*
+       * When the price last actually moved, as opposed to when the line last
+       * got a point. Everything after this is carried forward, so without it a
+       * quiet coin and a broken chart draw exactly the same picture.
+       */
+      lastAt: hist.length ? hist[hist.length - 1].bucket * src.unit * 1000 : null,
       points,
       vol: vol.map((v) => ({ t: v.bucket * 60_000, q: v.quote, b: v.buys, s: v.sells })),
     });

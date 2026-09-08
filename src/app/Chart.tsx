@@ -28,6 +28,8 @@ interface History {
   step: number;
   indexed: boolean;
   launchedAt?: string;
+  /** When the price last actually moved. Everything after it is carried. */
+  lastAt?: number | null;
   points: Point[];
   vol?: Bar[];
 }
@@ -75,6 +77,14 @@ function tinyPrice(p: number): string {
     .map((d) => sub[Number(d)])
     .join("");
   return `0.0${mark}${digits}`;
+}
+
+/** "12s", "4m", "2h" — how long ago, in one short unit. */
+function ago(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  return `${Math.round(s / 3600)}h`;
 }
 
 function clock(ms: number): string {
@@ -181,6 +191,9 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
   };
 
   const cursor = hover != null && pts[hover] ? pts[hover] : null;
+  /* Two steps of carried price is a pause; anything more is worth naming. */
+  const stale =
+    hist?.lastAt != null && Date.now() - hist.lastAt > Math.max(15_000, pick.step * 2000);
 
   return (
     <div className="ch">
@@ -296,10 +309,22 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
                 <span>
                   {symbol} · {pick.label} steps
                 </span>
-                {/* The window is no longer on the button, so it is said here.
-                    A chart that does not say how far back it goes invites the
-                    reader to assume it goes as far as they want. */}
-                <span>{clock(pts[0].t)} → now</span>
+                {/*
+                  A coin nobody is trading draws a flat line to the right edge,
+                  which is indistinguishable from a chart that has stopped
+                  updating. Saying when the price last moved is the difference
+                  between "quiet" and "broken", and only one of them is worth
+                  reloading the page over.
+
+                  Otherwise the window, which is no longer named on the button:
+                  a chart that does not say how far back it goes invites the
+                  reader to assume it goes as far as they want.
+                */}
+                {stale ? (
+                  <span className="ch-stale">no trade for {ago(Date.now() - hist.lastAt!)}</span>
+                ) : (
+                  <span>{clock(pts[0].t)} → now</span>
+                )}
               </>
             )}
           </div>

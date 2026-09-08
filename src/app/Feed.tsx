@@ -492,17 +492,31 @@ const FeedRow = memo(function FeedRow({
  * Each row still carries buyer and trade counts, which is what separates a
  * launch someone wants from one nobody has touched.
  */
+/** How long the list stays frozen after the pointer stops moving over it. */
+const HOLD_IDLE_MS = 3000;
+
 export default function Feed({ onPick }: { onPick: (address: string) => void }) {
   const [data, setData] = useState<Payload | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   /**
    * Rows re-sort on every poll, so a list refreshing under the cursor moved the
-   * row you were aiming at out from under the click. Hovering freezes it.
+   * row you were aiming at out from under the click. Moving over it freezes it.
+   *
+   * On hover alone this froze the whole feed — new coins, prices, volume, the
+   * lot — for as long as the pointer sat anywhere over 250 rows, which is
+   * where a pointer sits while you read. Reading the feed stopped the feed,
+   * and it looked like the app had died.
+   *
+   * So the hold follows movement, not presence: aiming at a row keeps it
+   * still, and three seconds after the pointer stops the feed resumes with the
+   * cursor exactly where it was. The case this protects against is the click
+   * you are in the middle of making, which is never three seconds long.
    */
   const [held, setHeld] = useState(false);
   const heldRef = useRef(false);
   heldRef.current = held;
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /**
    * A finder, not a filter: it never hides a coin that would otherwise be
    * shown, it just gets you to one you already know about. Both coins reported
@@ -548,6 +562,36 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       setErr(e instanceof Error ? e.message : "failed");
     }
   }, []);
+
+  /** Freeze the list, and start the clock that thaws it. */
+  const hold = useCallback(() => {
+    clearTimeout(holdTimer.current);
+    setHeld(true);
+    holdTimer.current = setTimeout(() => setHeld(false), HOLD_IDLE_MS);
+  }, []);
+
+  /** Thaw now, and catch up immediately rather than at the next tick. */
+  const release = useCallback(() => {
+    clearTimeout(holdTimer.current);
+    setHeld(false);
+    void load();
+  }, [load]);
+
+  /*
+   * A pointer that leaves through the window edge, or a tab that goes to the
+   * background, never sends mouseleave. Without this the feed could come back
+   * to a frozen list an hour later.
+   */
+  useEffect(() => {
+    const off = () => release();
+    window.addEventListener("blur", off);
+    document.addEventListener("visibilitychange", off);
+    return () => {
+      window.removeEventListener("blur", off);
+      document.removeEventListener("visibilitychange", off);
+      clearTimeout(holdTimer.current);
+    };
+  }, [release]);
 
   /** True while the push connection is up, so the UI can say which it is on. */
   const [pushed, setPushed] = useState(false);
@@ -669,7 +713,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
           className={`livedot${held ? " livedot-held" : ""}`}
           title={
             held
-              ? "Paused while you hover"
+              ? "Held still while you move over the list — resumes a moment after you stop"
               : pushed
                 ? "Pushed from the chain as launches land"
                 : "Checking every 10s — the live connection is not up"
@@ -727,8 +771,9 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
 
       <div
         className="flist"
-        onMouseEnter={() => setHeld(true)}
-        onMouseLeave={() => setHeld(false)}
+        onPointerMove={hold}
+        onMouseLeave={release}
+        onWheel={release}
       >
         {/*
           The header lives inside the scrolling list, stuck to its top.

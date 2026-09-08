@@ -1737,3 +1737,6 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 }
 .ch-x:hover { color: var(--t1); background: var(--s3); border-color: var(--line-2); }
 .ch-x:focus-visible { outline: 2px solid var(--lime); outline-offset: 1px; }
+/* A quiet coin, said in the chart's own footer. Amber rather than red: it is
+   the market being still, not the app being wrong. */
+.ch-stale { color: var(--gold); }
