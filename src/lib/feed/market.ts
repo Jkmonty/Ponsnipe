@@ -120,7 +120,77 @@ export function rpcLoad() {
     sweepMsMax: ms.length ? Math.max(...ms) : 0,
     pollMs: POLL_MS,
     heavyEvery: HEAVY_EVERY,
+    msPerBlock: Math.round(clock.msPerBlock),
   };
+}
+
+/*
+ * Wall-clock time for a block, without asking the node for it.
+ *
+ * Prices are now recorded per trade rather than per sweep, and a trade needs
+ * to be placed in time. The obvious way — getBlock for each block a trade
+ * landed in — would add a request per block, which is the one thing this
+ * change exists to avoid: the whole point is finer history at the same cost.
+ *
+ * So the chain's clock is anchored occasionally and extrapolated in between.
+ * Two block timestamps give a rate; after that a block's time is the anchor
+ * plus the blocks since, times that rate. Re-anchored every ANCHOR_EVERY
+ * sweeps, which corrects drift for one request every few minutes.
+ */
+interface BlockClock {
+  /** The block the anchor was taken at, and its timestamp in ms. */
+  block: number;
+  atMs: number;
+  /** Measured, never assumed: this chain's block time is not ours to guess. */
+  msPerBlock: number;
+}
+const cg = globalThis as typeof globalThis & { __ponsBlockClock?: BlockClock };
+const clock: BlockClock =
+  cg.__ponsBlockClock ?? (cg.__ponsBlockClock = { block: 0, atMs: 0, msPerBlock: 0 });
+/** Sweeps between re-anchors. At a 2s poll this is about every four minutes. */
+const ANCHOR_EVERY = 120;
+
+/**
+ * Re-anchor the clock to the chain's own timestamps.
+ *
+ * The first call spends two requests to get a rate immediately; later ones
+ * spend one and derive the rate from the distance to the previous anchor.
+ * Never throws: a sweep must not fail because a chart lost some precision.
+ */
+async function syncClock(head: bigint): Promise<void> {
+  try {
+    const c = logClient();
+    const now = await c.getBlock({ blockNumber: head });
+    const nowMs = Number(now.timestamp) * 1000;
+    const nowBlock = Number(head);
+    if (clock.block > 0 && nowBlock > clock.block) {
+      const rate = (nowMs - clock.atMs) / (nowBlock - clock.block);
+      // Ignore a nonsense rate rather than let one bad reading skew the axis.
+      if (rate > 50 && rate < 60_000) clock.msPerBlock = rate;
+    } else {
+      const back = head > 200n ? head - 200n : 0n;
+      const prev = await c.getBlock({ blockNumber: back });
+      const rate = (nowMs - Number(prev.timestamp) * 1000) / (nowBlock - Number(back));
+      if (rate > 50 && rate < 60_000) clock.msPerBlock = rate;
+    }
+    clock.block = nowBlock;
+    clock.atMs = nowMs;
+  } catch {
+    /* keep the old anchor; timeOfBlock falls back to the wall clock */
+  }
+}
+
+/**
+ * When a block happened, in ms. Falls back to now while the clock is unset,
+ * which is the behaviour this replaced — every trade in a sweep sharing one
+ * timestamp — rather than a wrong answer.
+ */
+function timeOfBlock(block: number): number {
+  if (!clock.block || !clock.msPerBlock) return Date.now();
+  const t = clock.atMs + (block - clock.block) * clock.msPerBlock;
+  // Never ahead of now: a slightly fast rate estimate would otherwise write
+  // history into buckets that have not happened, and the chart draws to now.
+  return Math.min(t, Date.now());
 }
 
 let logs: PublicClient | undefined;
@@ -633,6 +703,16 @@ async function sweepTrades(head: bigint): Promise<void> {
   const deltas = new Map<string, number>();
   /** (curve|wallet) -> block of that wallet's first buy seen this sweep. */
   const firstBuy = new Map<string, number>();
+  /*
+   * A close per trade, keyed by the bucket the trade fell in so the last one
+   * in each wins — which is what a close is.
+   *
+   * This is the whole point of the change. The reserves are advanced trade by
+   * trade already, so the price after every single buy and sell is sitting
+   * there in the loop and used to be thrown away in favour of one price per
+   * sweep. Keeping it costs no request: it is arithmetic on logs we have.
+   */
+  const closes = new Map<string, { curve: string; bucket: number; price: number }>();
 
   const add = (curve: string, raw: bigint, isBuy: boolean) => {
     const m = meta.get(curve);
@@ -675,6 +755,21 @@ async function sweepTrades(head: bigint): Promise<void> {
       q -= (ev.quoteOut ?? 0n) + ev.fee + ev.tax;
     }
     moved.set(curve, { q, t, block });
+
+    // The price this trade left behind, stamped with when the block happened
+    // rather than when the sweep noticed it. On a busy coin that turns one
+    // point every two seconds into one point per trade.
+    const qDec = m.quote_decimals ?? 18;
+    const quote = Number(q) / 10 ** qDec;
+    const tok = Number(t) / 1e18;
+    if (tok > 0 && quote > 0) {
+      const price = quote / tok;
+      if (Number.isFinite(price) && price > 0) {
+        const at = timeOfBlock(block);
+        const b = Math.floor(at / (TICK_SECONDS * 1000));
+        closes.set(`${curve}|${b}`, { curve, bucket: b, price });
+      }
+    }
   };
 
   let cursor = s.lastTradeBlock;
@@ -735,6 +830,19 @@ async function sweepTrades(head: bigint): Promise<void> {
       .prepare(`UPDATE feed_tokens SET quote_reserve=NULL, token_reserve=NULL WHERE graduated=0`)
       .run();
     logEngine("warn", `feed skipped ${head - cursor} blocks — reserves will be re-read`);
+  }
+
+  if (closes.size) {
+    /*
+     * Written straight rather than through recordPrices, which stamps
+     * everything with now — these carry their own times, several of them
+     * older than this sweep, and back-filling real history is the point.
+     */
+    const up = db().prepare(
+      `INSERT INTO feed_ticks (curve, bucket, price) VALUES (?,?,?)
+         ON CONFLICT(curve, bucket) DO UPDATE SET price = excluded.price`,
+    );
+    for (const c of closes.values()) up.run(c.curve, c.bucket, c.price);
   }
 
   if (agg.size) {
@@ -1082,6 +1190,9 @@ async function sweep(): Promise<void> {
   try {
     migrate();
     const head = await logClient().getBlockNumber();
+    // Anchored before the trade sweep, which is what needs it, and rarely: one
+    // request every few minutes buys per-trade timestamps for every trade.
+    if (s.sweeps % ANCHOR_EVERY === 0 || !clock.msPerBlock) await syncClock(head);
     const ok = [await stage("launches", () => sweepLaunches(head))];
     // Trades and prices are the expensive half; a new coin does not need them
     // to appear in the list, only to have numbers next to it a moment later.
