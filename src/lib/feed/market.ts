@@ -282,6 +282,21 @@ const PRICE_KEEP_MINUTES = 720;
  */
 const TICK_SECONDS = 1;
 const TICK_KEEP_MINUTES = 60;
+/*
+ * And below a second.
+ *
+ * This chain makes a block every 105ms, and prices are now recorded per trade,
+ * so a one-second bucket is the coarse part of the pipeline rather than the
+ * data. A hundred milliseconds is about one block: the finest bucket that can
+ * still hold a distinct price, and the point past which a smaller number would
+ * be dividing empty space.
+ *
+ * Ten minutes of it. Sub-second detail is for watching a launch happen, not
+ * for reading back over an afternoon, and the second-resolution table already
+ * covers the hour behind it.
+ */
+const SUB_MS = 100;
+const SUB_KEEP_MINUTES = 10;
 /** Curves re-priced per pass. Each costs two calls inside one multicall. */
 const PRICE_BATCH = 90;
 
@@ -423,6 +438,42 @@ function migrate(): void {
     );
   `);
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_tick_bucket ON feed_ticks(bucket DESC);`);
+
+  /*
+   * A hundred milliseconds per bucket, ten minutes deep. Written only by the
+   * per-trade path, so a row here means a trade happened in that tenth of a
+   * second — unlike the coarser tables, which are also seeded by the pricing
+   * pass so a coin nobody is trading still has a line.
+   */
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS feed_subticks (
+      curve  TEXT NOT NULL,
+      bucket INTEGER NOT NULL,
+      price  REAL NOT NULL,
+      o REAL, h REAL, l REAL,
+      PRIMARY KEY (curve, bucket)
+    );
+  `);
+  conn.exec(`CREATE INDEX IF NOT EXISTS idx_feed_sub_bucket ON feed_subticks(bucket DESC);`);
+
+  /*
+   * Open, high and low alongside the close, on every price table.
+   *
+   * `price` stays the close and keeps its meaning, so the sparkline and
+   * everything else reading it are untouched. These three are what turn a line
+   * into a candle, and only the per-trade path can fill them — a price sampled
+   * once a sweep has no range to report, so its rows leave them null and the
+   * chart draws those buckets flat, which is what they were.
+   */
+  for (const t of ["feed_ticks", "feed_prices", "feed_subticks"]) {
+    for (const col of ["o", "h", "l"]) {
+      try {
+        conn.exec(`ALTER TABLE ${t} ADD COLUMN ${col} REAL;`);
+      } catch {
+        /* already present */
+      }
+    }
+  }
 
   /*
    * Net token position per wallet, per curve.
@@ -712,7 +763,31 @@ async function sweepTrades(head: bigint): Promise<void> {
    * there in the loop and used to be thrown away in favour of one price per
    * sweep. Keeping it costs no request: it is arithmetic on logs we have.
    */
-  const closes = new Map<string, { curve: string; bucket: number; price: number }>();
+  interface Candle {
+    curve: string;
+    bucket: number;
+    o: number;
+    h: number;
+    l: number;
+    c: number;
+  }
+  /** One map per resolution: sub-second, second, minute. */
+  const candles: Map<string, Candle>[] = [new Map(), new Map(), new Map()];
+
+  /** Fold one trade's price into the bucket it belongs to. */
+  const mark = (which: number, curve: string, bucket: number, price: number) => {
+    const k = `${curve}|${bucket}`;
+    const at = candles[which].get(k);
+    if (!at) {
+      candles[which].set(k, { curve, bucket, o: price, h: price, l: price, c: price });
+      return;
+    }
+    // Open is the first price seen, and getLogs returns ascending, so it is
+    // never overwritten. High and low widen; close is simply the latest.
+    if (price > at.h) at.h = price;
+    if (price < at.l) at.l = price;
+    at.c = price;
+  };
 
   const add = (curve: string, raw: bigint, isBuy: boolean) => {
     const m = meta.get(curve);
@@ -766,8 +841,9 @@ async function sweepTrades(head: bigint): Promise<void> {
       const price = quote / tok;
       if (Number.isFinite(price) && price > 0) {
         const at = timeOfBlock(block);
-        const b = Math.floor(at / (TICK_SECONDS * 1000));
-        closes.set(`${curve}|${b}`, { curve, bucket: b, price });
+        mark(0, curve, Math.floor(at / SUB_MS), price);
+        mark(1, curve, Math.floor(at / (TICK_SECONDS * 1000)), price);
+        mark(2, curve, Math.floor(at / 60_000), price);
       }
     }
   };
@@ -832,17 +908,28 @@ async function sweepTrades(head: bigint): Promise<void> {
     logEngine("warn", `feed skipped ${head - cursor} blocks — reserves will be re-read`);
   }
 
-  if (closes.size) {
-    /*
-     * Written straight rather than through recordPrices, which stamps
-     * everything with now — these carry their own times, several of them
-     * older than this sweep, and back-filling real history is the point.
-     */
+  /*
+   * Written straight rather than through recordPrices, which stamps everything
+   * with now — these carry their own times, several of them older than this
+   * sweep, and back-filling real history is the point.
+   *
+   * The conflict clause is what makes a candle correct across sweeps. A bucket
+   * straddling two passes must keep the open it already had, widen its high
+   * and low rather than replace them, and take the newer close. Doing it in
+   * SQL rather than by reading the row first keeps it to one statement.
+   */
+  const TABLES = ["feed_subticks", "feed_ticks", "feed_prices"] as const;
+  for (let i = 0; i < TABLES.length; i++) {
+    if (!candles[i].size) continue;
     const up = db().prepare(
-      `INSERT INTO feed_ticks (curve, bucket, price) VALUES (?,?,?)
-         ON CONFLICT(curve, bucket) DO UPDATE SET price = excluded.price`,
+      `INSERT INTO ${TABLES[i]} (curve, bucket, price, o, h, l) VALUES (?,?,?,?,?,?)
+         ON CONFLICT(curve, bucket) DO UPDATE SET
+           price = excluded.price,
+           o = COALESCE(${TABLES[i]}.o, excluded.o),
+           h = MAX(COALESCE(${TABLES[i]}.h, excluded.h), excluded.h),
+           l = MIN(COALESCE(${TABLES[i]}.l, excluded.l), excluded.l)`,
     );
-    for (const c of closes.values()) up.run(c.curve, c.bucket, c.price);
+    for (const c of candles[i].values()) up.run(c.curve, c.bucket, c.c, c.o, c.h, c.l);
   }
 
   if (agg.size) {
@@ -1141,6 +1228,9 @@ function prune(): void {
   db()
     .prepare(`DELETE FROM feed_ticks WHERE bucket < ?`)
     .run(nowTick() - (TICK_KEEP_MINUTES * 60) / TICK_SECONDS);
+  db()
+    .prepare(`DELETE FROM feed_subticks WHERE bucket < ?`)
+    .run(Math.floor(Date.now() / SUB_MS) - (SUB_KEEP_MINUTES * 60_000) / SUB_MS);
   /*
    * Orphans go too. Price rows outlive the feed window on purpose, but a curve
    * that has dropped out of feed_tokens entirely is never drawn again, so its
@@ -1152,6 +1242,9 @@ function prune(): void {
     .run();
   db()
     .prepare(`DELETE FROM feed_ticks WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
+    .run();
+  db()
+    .prepare(`DELETE FROM feed_subticks WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)
     .run();
   db()
     .prepare(`DELETE FROM feed_positions WHERE curve NOT IN (SELECT curve FROM feed_tokens)`)

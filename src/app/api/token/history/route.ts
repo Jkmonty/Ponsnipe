@@ -5,28 +5,53 @@ import { db } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Steps the chart may ask for, in seconds. Anything else is rounded to one. */
-const STEPS = [1, 5, 30, 60] as const;
-/** How far back the tick table reaches. Must match TICK_KEEP_MINUTES. */
-const TICK_MINUTES = 60;
+/**
+ * Steps the chart may ask for, in milliseconds. Anything else becomes 1s.
+ *
+ * Every one is a whole multiple of the bucket size of the table that serves
+ * it. 250ms was tried and dropped: against 100ms buckets it makes candles of
+ * two and three buckets alternately, so neighbouring candles would cover
+ * different amounts of time while claiming to be the same width.
+ */
+const STEPS = [200, 1_000, 5_000, 30_000, 60_000] as const;
 
 /**
- * Price history for one coin, at the step the chart asks for.
+ * The three tables prices live in, coarsest last, with the bucket size each
+ * uses. A step is served by the finest one that both divides it and reaches
+ * back far enough — see `source` below. These must match market.ts.
+ */
+const SOURCES = [
+  { table: "feed_subticks", unit: 100, keepMs: 10 * 60_000 },
+  { table: "feed_ticks", unit: 1_000, keepMs: 60 * 60_000 },
+  { table: "feed_prices", unit: 60_000, keepMs: 12 * 60 * 60_000 },
+] as const;
+
+interface Candle {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+}
+
+/**
+ * Candles for one coin, at the step the chart asks for.
  *
- * Two tables back this: one-second closes for the last hour, and minute closes
- * for the last twelve. A one-second step reads the first straight; five and
- * thirty aggregate it here rather than in another table; a minute step past
- * the tick window falls through to the minute table.
- *
- * Everything is already on disk from the feed sweep. No external data source,
- * no per-request chain call, nothing metered.
+ * Everything here is already on disk from the feed sweep, which records the
+ * price after every individual trade. No external data source, no per-request
+ * chain call, nothing metered.
  */
 export async function GET(req: Request) {
   const u = new URL(req.url);
   const address = u.searchParams.get("address")?.trim() ?? "";
-  const minutes = Math.max(1, Math.min(720, Number(u.searchParams.get("minutes")) || 15));
-  const asked = Number(u.searchParams.get("step")) || 5;
-  const step = (STEPS as readonly number[]).includes(asked) ? asked : 5;
+  /*
+   * Fractions allowed. The sub-second step asks for half a minute, and a floor
+   * of one silently doubled its window — 300 candles across a 340px chart,
+   * each a pixel wide, which is a comb rather than a chart.
+   */
+  const minutes = Math.max(0.05, Math.min(720, Number(u.searchParams.get("minutes")) || 15));
+  const asked = Number(u.searchParams.get("step")) || 1_000;
+  const step = (STEPS as readonly number[]).includes(asked) ? asked : 1_000;
   if (!isAddress(address)) return errorJson("invalid token address");
 
   try {
@@ -35,51 +60,95 @@ export async function GET(req: Request) {
       .get(address) as { curve: string; created_at: string } | undefined;
     // Not an error: a coin older than the feed window is simply not indexed
     // here, and the panel should say "no history" rather than "request failed".
-    if (!row) return json({ step, indexed: false, points: [], vol: [] });
+    if (!row) return json({ step, indexed: false, candles: [], vol: [] });
 
     /*
-     * Which table can answer this. Ticks are the only source fine enough for
-     * anything under a minute, but they only reach back an hour — so a minute
-     * step over a longer window has to come from feed_prices, which is the
-     * only one that goes back twelve.
+     * The finest table that can answer, which is not always the finest table.
+     * Sub-second buckets only reach back ten minutes, so a thirty-second step
+     * over an hour has to come from the second-resolution table even though
+     * the sub-second one is finer — asking the wrong one would silently return
+     * only the last ten minutes of a sixty-minute window.
      */
-    const fromTicks = step < 60 || minutes <= TICK_MINUTES;
-    const src = fromTicks
-      ? { table: "feed_ticks", unit: 1 }
-      : { table: "feed_prices", unit: 60 };
+    const wantMs = minutes * 60_000;
+    const src =
+      SOURCES.find((s) => step >= s.unit && wantMs <= s.keepMs) ??
+      SOURCES[SOURCES.length - 1];
 
-    const now = Math.floor(Date.now() / (src.unit * 1000));
-    const from = now - Math.ceil((minutes * 60) / src.unit);
+    const now = Math.floor(Date.now() / src.unit);
+    const from = now - Math.ceil(wantMs / src.unit);
     const hist = db()
       .prepare(
-        `SELECT bucket, price FROM ${src.table}
+        `SELECT bucket, price, o, h, l FROM ${src.table}
           WHERE curve = ? AND bucket > ? ORDER BY bucket`,
       )
-      .all(row.curve, from) as { bucket: number; price: number }[];
+      .all(row.curve, from) as {
+      bucket: number;
+      price: number;
+      o: number | null;
+      h: number | null;
+      l: number | null;
+    }[];
 
     /*
-     * Down to the asked-for step, keeping the last price in each — a close is
-     * what a bar is made of, and taking the first or an average would smooth
-     * away the spike that a sniper is watching for.
+     * Rolled up to the asked-for step. Open comes from the first row in the
+     * group and close from the last, which is what makes this a candle rather
+     * than a smoothed line — an average would hide the wick, and the wick is
+     * the part a sniper is reading.
+     *
+     * Rows written by the pricing pass rather than by a trade have no range to
+     * report, so their open, high and low fall back to the close and the
+     * candle is flat. That is the truth about them: nothing traded.
      */
-    const per = Math.max(1, Math.round(step / src.unit));
-    const closes = new Map<number, number>();
-    for (const h of hist) closes.set(Math.floor(h.bucket / per), h.price);
+    /*
+     * Which candle a stored bucket belongs to, in candle numbers since the
+     * epoch — the same unit the fill loop below counts in.
+     *
+     * Converting through milliseconds rather than dividing bucket by a ratio
+     * is not fussiness: the two are in different units otherwise, and the loop
+     * that fills gaps between them then runs from one to the other. With a
+     * 200ms step over 100ms buckets that was a billion iterations and a dead
+     * server, which is how this comment came to be written.
+     */
+    const key = (bucket: number) => Math.floor((bucket * src.unit) / step);
+    const groups = new Map<number, Candle>();
+    for (const r of hist) {
+      const k = key(r.bucket);
+      const o = r.o ?? r.price;
+      const h = r.h ?? r.price;
+      const l = r.l ?? r.price;
+      const at = groups.get(k);
+      if (!at) {
+        groups.set(k, { t: k * step, o, h, l, c: r.price });
+        continue;
+      }
+      if (h > at.h) at.h = h;
+      if (l < at.l) at.l = l;
+      at.c = r.price;
+    }
 
     /*
-     * Carried across quiet steps, for the same reason the sparkline carries
-     * its own: a second with no trade is not a price of zero, it is the price
-     * from before. Leading steps before the first trade stay absent rather
-     * than being back-filled with a price that did not exist.
+     * Gaps filled with a flat candle at the last close, for the same reason
+     * the sparkline carries its line: a step with no trade is not a price of
+     * zero, it is the price from before, and it has no range. Leading steps
+     * before the first trade stay absent rather than being back-filled with a
+     * price that did not exist yet.
      */
-    const last = Math.floor(now / per);
-    const first = hist.length ? Math.floor(hist[0].bucket / per) : last;
-    const points: { t: number; p: number }[] = [];
+    const last = Math.floor(Date.now() / step);
+    // Never further back than the window asked for, whatever is in the table.
+    // A cap belongs here rather than in a comment: it is the difference
+    // between a wrong answer and an unbounded loop.
+    const span = Math.ceil(wantMs / step) + 2;
+    const first = Math.max(last - span, hist.length ? key(hist[0].bucket) : last);
+    const candles: Candle[] = [];
     let carried = 0;
     for (let b = first; b <= last; b++) {
-      const v = closes.get(b);
-      if (v != null && v > 0) carried = v;
-      if (carried > 0) points.push({ t: b * step * 1000, p: carried });
+      const g = groups.get(b);
+      if (g) {
+        candles.push(g);
+        carried = g.c;
+      } else if (carried > 0) {
+        candles.push({ t: b * step, o: carried, h: carried, l: carried, c: carried });
+      }
     }
 
     // Trade counts come from the minute table whatever the price step: it is
@@ -106,8 +175,8 @@ export async function GET(req: Request) {
        * got a point. Everything after this is carried forward, so without it a
        * quiet coin and a broken chart draw exactly the same picture.
        */
-      lastAt: hist.length ? hist[hist.length - 1].bucket * src.unit * 1000 : null,
-      points,
+      lastAt: hist.length ? hist[hist.length - 1].bucket * src.unit : null,
+      candles,
       vol: vol.map((v) => ({ t: v.bucket * 60_000, q: v.quote, b: v.buys, s: v.sells })),
     });
   } catch (err) {

@@ -4,19 +4,22 @@
  * The price chart for the coin currently picked.
  *
  * Drawn by hand in SVG rather than pulling in a charting library, for the same
- * reason the feed's sparkline is: this needs a line, an area, volume bars and
- * a crosshair, all of which are a few dozen lines of geometry, and a library
- * would cost more in bundle than the whole rest of the panel.
+ * reason the feed's sparkline is: candles, wicks, volume bars and a crosshair
+ * are a few dozen lines of geometry, and a library would cost more in bundle
+ * than the whole rest of the panel.
  *
- * The data behind it is the feed sweep's own price history — five-second
- * closes for two hours, minute closes for twelve — so opening a chart costs
- * one query against a table we already keep, not a call to anybody.
+ * The data behind it is the feed sweep's own history, which records the price
+ * after every individual trade — so opening a chart costs one query against a
+ * table we already keep, not a call to anybody.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-interface Point {
+interface Candle {
   t: number;
-  p: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
 }
 interface Bar {
   t: number;
@@ -30,7 +33,7 @@ interface History {
   launchedAt?: string;
   /** When the price last actually moved. Everything after it is carried. */
   lastAt?: number | null;
-  points: Point[];
+  candles: Candle[];
   vol?: Bar[];
 }
 
@@ -38,16 +41,21 @@ interface History {
  * The steps on offer, and how far back each one looks.
  *
  * Written as intervals rather than windows because that is the choice being
- * made: at one second you are watching the launch tick, at a minute you are
- * looking at the shape of the day. The window follows from the step — three
- * minutes of one-second points is 180 of them, which is about as many as fit
- * across a sidebar, and twelve hours of them would be a smear.
+ * made: at a fifth of a second you are watching a launch land block by block,
+ * and at a minute the shape of the day. Each window is sized to
+ * put roughly a hundred candles on screen, which is as many as fit across a
+ * sidebar and still read as candles rather than a comb.
+ *
+ * Two hundred milliseconds is two blocks on this chain, and two whole storage
+ * buckets, which makes it the finest step with anything to say. Below that the
+ * buckets are emptier than they are informative.
  */
 const STEPS = [
-  { label: "1s", step: 1, minutes: 3 },
-  { label: "5s", step: 5, minutes: 15 },
-  { label: "30s", step: 30, minutes: 60 },
-  { label: "1m", step: 60, minutes: 720 },
+  { label: "0.2s", step: 200, minutes: 0.5 },
+  { label: "1s", step: 1_000, minutes: 2 },
+  { label: "5s", step: 5_000, minutes: 10 },
+  { label: "30s", step: 30_000, minutes: 60 },
+  { label: "1m", step: 60_000, minutes: 120 },
 ] as const;
 
 const W = 340;
@@ -115,41 +123,46 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
   /*
    * Reloaded on a timer rather than pushed. The feed's stream carries new
    * launches, not price ticks, and a coin whose chart is open is one coin —
-   * a three-second poll of one small query is cheaper than another stream.
+   * polling one small query is cheaper than another stream.
+   *
+   * The sub-second step polls faster than the rest: a thirty-second window
+   * refreshed every three seconds spends a tenth of itself out of date.
    */
   useEffect(() => {
     setHist(null);
-    // The crosshair is an index into the old series. Kept across a range
-    // change it would point at a different minute and read as a wrong price.
+    // The crosshair is an index into the old series. Kept across a step change
+    // it would point at a different moment and read as a wrong price.
     setHover(null);
     void load();
-    const t = setInterval(() => void load(), 3000);
+    const t = setInterval(() => void load(), pick.step < 1000 ? 1000 : 3000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, pick.step]);
 
-  const pts = useMemo(() => hist?.points ?? [], [hist]);
+  const cs = useMemo(() => hist?.candles ?? [], [hist]);
 
   const geom = useMemo(() => {
-    if (pts.length < 2) return null;
-    const lo = Math.min(...pts.map((p) => p.p));
-    const hi = Math.max(...pts.map((p) => p.p));
-    const t0 = pts[0].t;
-    const t1 = pts[pts.length - 1].t;
+    if (cs.length < 2) return null;
+    const lo = Math.min(...cs.map((k) => k.l));
+    const hi = Math.max(...cs.map((k) => k.h));
+    const t0 = cs[0].t;
+    const t1 = cs[cs.length - 1].t;
     const span = Math.max(1, t1 - t0);
-    // A flat line would divide by zero and then sit on the floor of the box.
+    // A flat series would divide by zero and then sit on the floor of the box.
     const pad = hi === lo ? Math.max(hi * 0.02, Number.MIN_VALUE) : (hi - lo) * 0.12;
     const top = hi + pad;
     const bot = Math.max(0, lo - pad);
     const x = (t: number) => ((t - t0) / span) * W;
     const y = (p: number) => PAD_T + PLOT_H - ((p - bot) / Math.max(top - bot, 1e-30)) * PLOT_H;
-    const line = pts
-      .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.t).toFixed(2)},${y(p.p).toFixed(2)}`)
-      .join(" ");
-    const area = `${line} L${W},${PAD_T + PLOT_H} L0,${PAD_T + PLOT_H} Z`;
-    return { lo, hi, t0, t1, x, y, line, area };
-  }, [pts]);
+    /*
+     * Candle width from the slot each one owns, less a hair of gap. At a
+     * hundred candles across 340px a body is about 2.4px — thin, but a body
+     * and a wick at 2px still say open, close and range, which a line cannot.
+     */
+    const body = Math.max(1, Math.min(9, W / Math.max(cs.length, 1) - 1));
+    return { lo, hi, t0, t1, x, y, body };
+  }, [cs]);
 
-  const change = pts.length >= 2 ? (pts[pts.length - 1].p / pts[0].p - 1) * 100 : 0;
+  const change = cs.length >= 2 ? (cs[cs.length - 1].c / cs[0].o - 1) * 100 : 0;
   const up = change >= 0;
 
   const bars = useMemo(() => {
@@ -176,31 +189,31 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
       }));
   }, [hist, geom]);
 
-  /** Nearest point to the pointer, in data terms rather than pixels. */
+  /** Nearest candle to the pointer, in data terms rather than pixels. */
   const onMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const el = svgRef.current;
-    if (!el || !geom || pts.length < 2) return;
+    if (!el || !geom || cs.length < 2) return;
     const r = el.getBoundingClientRect();
     const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     const t = geom.t0 + frac * (geom.t1 - geom.t0);
     let best = 0;
-    for (let i = 1; i < pts.length; i++) {
-      if (Math.abs(pts[i].t - t) < Math.abs(pts[best].t - t)) best = i;
+    for (let i = 1; i < cs.length; i++) {
+      if (Math.abs(cs[i].t - t) < Math.abs(cs[best].t - t)) best = i;
     }
     setHover(best);
   };
 
-  const cursor = hover != null && pts[hover] ? pts[hover] : null;
+  const cursor = hover != null && cs[hover] ? cs[hover] : null;
   /* Two steps of carried price is a pause; anything more is worth naming. */
   const stale =
-    hist?.lastAt != null && Date.now() - hist.lastAt > Math.max(15_000, pick.step * 2000);
+    hist?.lastAt != null && Date.now() - hist.lastAt > Math.max(15_000, pick.step * 2);
 
   return (
     <div className="ch">
       <div className="ch-head">
         <div className="ch-now">
-          <span className="ch-price mono">{tinyPrice(pts[pts.length - 1]?.p ?? 0)}</span>
-          {pts.length >= 2 && (
+          <span className="ch-price mono">{tinyPrice(cs[cs.length - 1]?.c ?? 0)}</span>
+          {cs.length >= 2 && (
             <span className={`ch-chg ${up ? "up" : "down"}`}>
               {up ? "+" : ""}
               {change.toFixed(change > 999 ? 0 : 1)}%
@@ -213,7 +226,9 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
               key={r.label}
               className={`ch-r${pick.step === r.step ? " on" : ""}`}
               onClick={() => setPick(r)}
-              title={`${r.label} steps, last ${r.minutes >= 60 ? `${r.minutes / 60}h` : `${r.minutes}m`}`}
+              title={`${r.label} candles, last ${
+                r.minutes >= 60 ? `${r.minutes / 60}h` : `${r.minutes}m`
+              }`}
             >
               {r.label}
             </button>
@@ -225,12 +240,12 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
         <div className="ch-box ch-empty">loading…</div>
       ) : err ? (
         <div className="ch-box ch-empty">history unavailable</div>
-      ) : pts.length < 2 ? (
+      ) : cs.length < 2 ? (
         /* Said plainly. Half of all launches never trade, and a chart with one
-           point is not a quiet chart, it is no chart. */
+           candle is not a quiet chart, it is no chart. */
         <div className="ch-box ch-empty">
           {hist.indexed
-            ? "Not enough trades yet to draw a line."
+            ? "Not enough trades yet to draw a candle."
             : "Older than the feed window — no history kept."}
         </div>
       ) : (
@@ -243,27 +258,45 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
             onPointerMove={onMove}
             onPointerLeave={() => setHover(null)}
           >
-            <defs>
-              <linearGradient id="chfill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={up ? "var(--up)" : "var(--down)"} stopOpacity="0.28" />
-                <stop offset="100%" stopColor={up ? "var(--up)" : "var(--down)"} stopOpacity="0" />
-              </linearGradient>
-            </defs>
-
-            {geom && (
-              <>
-                <path d={geom.area} fill="url(#chfill)" />
-                <path
-                  d={geom.line}
-                  fill="none"
-                  stroke={up ? "var(--up)" : "var(--down)"}
-                  strokeWidth="1.6"
-                  strokeLinejoin="round"
-                  strokeLinecap="round"
-                  vectorEffect="non-scaling-stroke"
-                />
-              </>
-            )}
+            {geom &&
+              cs.map((k) => {
+                const rising = k.c >= k.o;
+                const col = rising ? "var(--up)" : "var(--down)";
+                const cx = geom.x(k.t);
+                const yo = geom.y(k.o);
+                const yc = geom.y(k.c);
+                // A doji would otherwise be invisible: a body of zero height
+                // draws nothing at all, and a flat step is a real answer.
+                const top = Math.min(yo, yc);
+                const tall = Math.max(0.8, Math.abs(yc - yo));
+                return (
+                  <g key={k.t}>
+                    {/* The wick, drawn first so the body sits over it. Skipped
+                        when the candle has no range, which is most carried
+                        ones — a hairline there reads as noise. */}
+                    {k.h > k.l && (
+                      <line
+                        x1={cx}
+                        y1={geom.y(k.h)}
+                        x2={cx}
+                        y2={geom.y(k.l)}
+                        stroke={col}
+                        strokeWidth="1"
+                        vectorEffect="non-scaling-stroke"
+                        opacity="0.7"
+                      />
+                    )}
+                    <rect
+                      x={cx - geom.body / 2}
+                      y={top}
+                      width={geom.body}
+                      height={tall}
+                      fill={col}
+                      opacity={rising ? 0.9 : 0.85}
+                    />
+                  </g>
+                );
+              })}
 
             {bars.map((b, i) => (
               <rect
@@ -278,52 +311,46 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
             ))}
 
             {cursor && geom && (
-              <g>
-                <line
-                  x1={geom.x(cursor.t)}
-                  y1={0}
-                  x2={geom.x(cursor.t)}
-                  y2={H}
-                  stroke="var(--line-2)"
-                  strokeWidth="1"
-                  vectorEffect="non-scaling-stroke"
-                />
-                <circle
-                  cx={geom.x(cursor.t)}
-                  cy={geom.y(cursor.p)}
-                  r="2.5"
-                  fill={up ? "var(--up)" : "var(--down)"}
-                />
-              </g>
+              <line
+                x1={geom.x(cursor.t)}
+                y1={0}
+                x2={geom.x(cursor.t)}
+                y2={H}
+                stroke="var(--line-2)"
+                strokeWidth="1"
+                vectorEffect="non-scaling-stroke"
+              />
             )}
           </svg>
 
           <div className="ch-foot">
             {cursor ? (
+              /* Open, high, low and close, because that is what a candle is
+                 and reading it off four pixels of colour is not possible. */
               <>
-                <span className="mono">{tinyPrice(cursor.p)}</span>
-                <span>{clock(cursor.t)}</span>
+                <span className="mono">
+                  O {tinyPrice(cursor.o)} H {tinyPrice(cursor.h)}
+                </span>
+                <span className="mono">
+                  L {tinyPrice(cursor.l)} C {tinyPrice(cursor.c)}
+                </span>
               </>
             ) : (
               <>
                 <span>
-                  {symbol} · {pick.label} steps
+                  {symbol} · {pick.label} candles
                 </span>
                 {/*
-                  A coin nobody is trading draws a flat line to the right edge,
+                  A coin nobody is trading draws flat candles to the right edge,
                   which is indistinguishable from a chart that has stopped
                   updating. Saying when the price last moved is the difference
                   between "quiet" and "broken", and only one of them is worth
                   reloading the page over.
-
-                  Otherwise the window, which is no longer named on the button:
-                  a chart that does not say how far back it goes invites the
-                  reader to assume it goes as far as they want.
                 */}
                 {stale ? (
                   <span className="ch-stale">no trade for {ago(Date.now() - hist.lastAt!)}</span>
                 ) : (
-                  <span>{clock(pts[0].t)} → now</span>
+                  <span>{clock(cs[0].t)} → now</span>
                 )}
               </>
             )}
