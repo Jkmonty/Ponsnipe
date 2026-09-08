@@ -1,24 +1,30 @@
 "use client";
 
 /**
- * Snipe a coin you are already waiting for.
+ * The sniper, running in the trader's own browser.
  *
- * Not the sniper that buys every launch and hopes. That one was measured
- * across roughly 1,500 strategy variants and about 4.9 million simulated
- * trades, and buying indiscriminately lost money under every exit rule tested.
- * This is the other thing entirely: you know the ticker, you may know the
- * wallet, and you want to be in the moment it exists rather than whenever you
- * happen to be looking.
+ * Two modes, and the difference between them matters.
  *
- * There is no filter here on purpose. A watch is not a strategy — it is a
- * decision already made — so the only judgement this file makes is "is this
- * the coin you named", and the only limits it enforces are the ones the trader
- * set themselves.
+ * A WATCH is a coin you already named: a ticker, usually a deployer, and an
+ * amount. No filter is applied to it, because a watch is not a strategy — it
+ * is a decision already made. Judging it on holder counts would reject the
+ * launch you had been waiting a week for, four seconds after it appeared.
  *
- * What it cannot do is run with the tab closed. The key lives in this browser,
- * so the watch lives as long as the page does. Every place a watch is shown
- * says so, because a snipe you believe is armed and is not is worse than no
- * snipe at all.
+ * The RULES are the other thing: buy launches nobody named, if they pass a
+ * test. This is the mode that spends money on coins the trader has never seen,
+ * so it ships off, with restrictive defaults, an hourly ceiling, and a log
+ * that says why every skipped coin was skipped. That last part is not a nicety
+ * — a sniper that will not tell you why it passed is one you cannot tune.
+ *
+ * The defaults lean cautious because the research says to. Roughly 1,500
+ * strategy variants over about 4.9 million simulated trades: buying launches
+ * indiscriminately lost money under every exit rule tested, and only filters
+ * about who else had already bought ever flipped it positive.
+ *
+ * What none of it can do is run with the tab closed. The key lives in this
+ * browser, so the sniper lives as long as the page does. Every place it is
+ * shown says so, because a snipe you believe is armed and is not is worse than
+ * no snipe at all.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAddress, type Address } from "viem";
@@ -67,6 +73,62 @@ export interface SniperHit {
   detail: string;
 }
 
+/**
+ * Rules for buying launches nobody named in advance.
+ *
+ * Off by default and it stays off until someone turns it on, because this is
+ * the mode that spends money on coins the trader has never seen. Every field
+ * maps to something the feed already carries, so the whole decision is made
+ * in the browser from data that was going to be fetched anyway.
+ *
+ * The defaults are not neutral. Roughly 1,500 strategy variants over 4.9
+ * million simulated trades say buying launches indiscriminately loses money
+ * under every exit rule tested, and the only filters that flipped it positive
+ * were about who else had bought. So the stock settings are the restrictive
+ * ones — a trader who wants to buy everything has to take the guards off
+ * deliberately rather than arrive at it by leaving the form alone.
+ */
+export interface AutoConfig {
+  enabled: boolean;
+  /** ETH per snipe. */
+  eth: string;
+  /** Hard ceiling on how often this can fire, whatever the rules say. */
+  maxPerHour: number;
+  /** Skip a launch with fewer holders than this. */
+  minHolders: number;
+  /** Skip when the top 10 wallets hold more than this share, as a percent. */
+  maxTop10Pct: number;
+  /** Skip launches with a detected operator bundle. */
+  skipBundled: boolean;
+  /** Skip when the deployer has already sold any of their own. */
+  skipDevSold: boolean;
+  /** Only buy ETH-quoted coins, avoiding the swap a stock-quoted one needs. */
+  ethOnly: boolean;
+}
+
+export const DEFAULT_AUTO: AutoConfig = {
+  enabled: false,
+  eth: "0.01",
+  maxPerHour: 3,
+  minHolders: 3,
+  maxTop10Pct: 40,
+  skipBundled: true,
+  skipDevSold: true,
+  ethOnly: true,
+};
+
+/** One line in the log: what the sniper saw and what it did about it. */
+export interface LogEntry {
+  at: number;
+  symbol: string;
+  token: string;
+  decision: "bought" | "skipped" | "error";
+  reason: string;
+}
+
+/** Kept short. This is a record of what just happened, not an archive. */
+const LOG_MAX = 60;
+
 type Store = Record<string, Watch[]>;
 
 function readAll(): Store {
@@ -92,12 +154,87 @@ function writeWatches(owner: Address, list: Watch[]): void {
   }
 }
 
-/** A feed row, cut down to what a watch actually reads. */
+/** A feed row, cut down to what the sniper actually reads. */
 interface FeedRow {
   token: string;
   symbol: string;
   deployer: string;
   ageMinutes: number;
+  holders: number;
+  /** Share held by the top ten wallets, 0-1. */
+  top10Rate: number;
+  /** How many wallets of a detected operator cluster bought in. */
+  bundled: number;
+  devSold: boolean;
+  quoteSymbol: string;
+}
+
+const CFG_STORE = "ponsnipe.autosnipe.v1";
+const LOG_STORE = "ponsnipe.snipelog.v1";
+
+function readCfg(owner: Address | null): AutoConfig {
+  if (!owner) return DEFAULT_AUTO;
+  try {
+    const all = JSON.parse(localStorage.getItem(CFG_STORE) ?? "{}") as Record<string, AutoConfig>;
+    // Merged over the defaults rather than used raw, so a config saved before
+    // a field existed does not come back with that field undefined.
+    return { ...DEFAULT_AUTO, ...(all[owner.toLowerCase()] ?? {}) };
+  } catch {
+    return DEFAULT_AUTO;
+  }
+}
+
+function writeCfg(owner: Address, cfg: AutoConfig): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(CFG_STORE) ?? "{}") as Record<string, AutoConfig>;
+    all[owner.toLowerCase()] = cfg;
+    localStorage.setItem(CFG_STORE, JSON.stringify(all));
+  } catch {
+    /* private mode: the rules hold for this session and no longer */
+  }
+}
+
+function readLog(owner: Address | null): LogEntry[] {
+  if (!owner) return [];
+  try {
+    const all = JSON.parse(localStorage.getItem(LOG_STORE) ?? "{}") as Record<string, LogEntry[]>;
+    return all[owner.toLowerCase()] ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLog(owner: Address, list: LogEntry[]): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(LOG_STORE) ?? "{}") as Record<string, LogEntry[]>;
+    all[owner.toLowerCase()] = list.slice(0, LOG_MAX);
+    localStorage.setItem(LOG_STORE, JSON.stringify(all));
+  } catch {
+    /* private mode */
+  }
+}
+
+/**
+ * Why this launch is not being bought, or null if it is.
+ *
+ * Returns the reason rather than a boolean, so the log can say "top 10 hold
+ * 71%" instead of "skipped". A sniper that will not tell you why it passed on
+ * something is a sniper you cannot tune.
+ */
+function rejectReason(row: FeedRow, cfg: AutoConfig): string | null {
+  if (cfg.ethOnly && (row.quoteSymbol ?? "").toUpperCase() !== "ETH") {
+    return `priced in ${row.quoteSymbol || "?"}, not ETH`;
+  }
+  if (cfg.skipBundled && (row.bundled ?? 0) > 0) {
+    return `${row.bundled} wallets look like one operator`;
+  }
+  if (cfg.skipDevSold && row.devSold) return "the dev has already sold";
+  if ((row.holders ?? 0) < cfg.minHolders) {
+    return `only ${row.holders ?? 0} holder${row.holders === 1 ? "" : "s"}`;
+  }
+  const top10 = Math.round((row.top10Rate ?? 0) * 100);
+  if (top10 > cfg.maxTop10Pct) return `top 10 hold ${top10}%`;
+  return null;
 }
 
 export interface Sniper {
@@ -109,10 +246,18 @@ export interface Sniper {
   /** Token address currently being bought, if any. */
   firing: string | null;
   recent: SniperHit[];
+  cfg: AutoConfig;
+  setCfg: (next: AutoConfig) => void;
+  log: LogEntry[];
+  clearLog: () => void;
+  /** Buys in the last hour, against cfg.maxPerHour. */
+  firedThisHour: number;
+  /** True when anything at all is watching the feed. */
+  watching: boolean;
 }
 
 /**
- * Watch the feed and buy when a named coin appears.
+ * Watch the feed and buy: coins you named, and coins that match your rules.
  *
  * `buy` is the same routine the manual button uses, so a sniped entry and a
  * hand-pressed one cannot diverge — there is one buying path, not two.
@@ -124,13 +269,19 @@ export function useSniper(
   buy: (token: string, eth: string) => Promise<void>,
 ): Sniper {
   const [watches, setWatches] = useState<Watch[]>([]);
+  const [cfg, setCfgState] = useState<AutoConfig>(DEFAULT_AUTO);
+  const [log, setLog] = useState<LogEntry[]>([]);
   const [firing, setFiring] = useState<string | null>(null);
   const [recent, setRecent] = useState<SniperHit[]>([]);
-  /** Tokens already handled, so a slow buy is not started twice. */
+  /** Tokens already judged, so a slow buy is not started twice. */
   const seen = useRef<Set<string>>(new Set());
   const inFlight = useRef(false);
 
-  useEffect(() => setWatches(readWatches(owner)), [owner]);
+  useEffect(() => {
+    setWatches(readWatches(owner));
+    setCfgState(readCfg(owner));
+    setLog(readLog(owner));
+  }, [owner]);
 
   const persist = useCallback(
     (next: Watch[]) => {
@@ -140,6 +291,31 @@ export function useSniper(
     },
     [owner],
   );
+
+  const setCfg = useCallback(
+    (next: AutoConfig) => {
+      if (!owner) return;
+      writeCfg(owner, next);
+      setCfgState(next);
+    },
+    [owner],
+  );
+
+  const note = useCallback(
+    (e: LogEntry) => {
+      if (!owner) return;
+      const next = [e, ...readLog(owner)].slice(0, LOG_MAX);
+      writeLog(owner, next);
+      setLog(next);
+    },
+    [owner],
+  );
+
+  const clearLog = useCallback(() => {
+    if (!owner) return;
+    writeLog(owner, []);
+    setLog([]);
+  }, [owner]);
 
   const add = useCallback(
     (w: Omit<Watch, "id" | "bought" | "armedAt">) => {
@@ -160,21 +336,24 @@ export function useSniper(
     [owner, persist],
   );
 
-  const active = watches.filter(
+  const armed = watches.filter(
     (w) => w.bought < w.maxBuys && w.expiresAt > Date.now(),
-  );
-  const armed = active.length;
+  ).length;
+  const firedThisHour = log.filter(
+    (e) => e.decision === "bought" && e.at > Date.now() - 3600_000,
+  ).length;
+  const watching = unlocked && (armed > 0 || cfg.enabled);
 
   /*
-   * Poll only while something is armed.
+   * Poll only while something is watching.
    *
    * The feed page already holds a stream open; this deliberately does not open
-   * a second one. Two seconds is well inside the window that matters here —
-   * the coin is seconds old either way — and it costs nothing at all for the
-   * many traders who have no watch set.
+   * a second one. Two seconds is well inside the window that matters — the
+   * coin is seconds old either way — and it costs nothing at all for the many
+   * traders who have neither a watch nor the rules turned on.
    */
   useEffect(() => {
-    if (!unlocked || !owner || armed === 0) return;
+    if (!watching || !owner) return;
     let stop = false;
 
     const tick = async () => {
@@ -188,6 +367,8 @@ export function useSniper(
       }
 
       const current = readWatches(owner);
+      const rules = readCfg(owner);
+
       for (const row of rows) {
         const key = row.token.toLowerCase();
         if (seen.current.has(key)) continue;
@@ -197,62 +378,98 @@ export function useSniper(
           continue;
         }
 
+        /*
+         * A named watch beats the rules, and skips them.
+         *
+         * You asked for this exact coin. Applying "must already have three
+         * holders" to something four seconds old that you have been waiting a
+         * week for would reject it every time, which is not what arming a
+         * watch means.
+         */
         const w = current.find(
           (x) =>
             x.bought < x.maxBuys &&
             x.expiresAt > Date.now() &&
             x.ticker.trim().toLowerCase() === (row.symbol ?? "").trim().toLowerCase() &&
-            // Empty deployer means any maker; otherwise it must be theirs.
             (!x.deployer.trim() ||
               x.deployer.trim().toLowerCase() === (row.deployer ?? "").toLowerCase()),
         );
-        if (!w) continue;
+
+        let spendEth: string;
+        if (w) {
+          spendEth = w.eth;
+        } else if (rules.enabled) {
+          const why = rejectReason(row, rules);
+          if (why) {
+            seen.current.add(key);
+            note({ at: Date.now(), symbol: row.symbol, token: row.token, decision: "skipped", reason: why });
+            continue;
+          }
+          if (firedThisHour >= rules.maxPerHour) {
+            seen.current.add(key);
+            note({
+              at: Date.now(), symbol: row.symbol, token: row.token, decision: "skipped",
+              reason: `already bought ${rules.maxPerHour} this hour`,
+            });
+            continue;
+          }
+          spendEth = rules.eth;
+        } else {
+          continue;
+        }
 
         // Claim it before the await, so the next tick cannot buy it again.
         seen.current.add(key);
 
-        const amount = Number(w.eth) || 0;
-        const spent = readSpentToday();
+        const amount = Number(spendEth) || 0;
+        const spentSoFar = readSpentToday();
         if (amount > limits.perTrade) {
-          setRecent((r) => [
-            { ticker: w.ticker, token: row.token, at: Date.now(), ok: false,
-              detail: `over your ${limits.perTrade} ETH per-trade limit` },
-            ...r,
-          ].slice(0, 6));
+          note({
+            at: Date.now(), symbol: row.symbol, token: row.token, decision: "skipped",
+            reason: `over your ${limits.perTrade} ETH per-trade limit`,
+          });
           continue;
         }
-        if (spent + amount > limits.perDay) {
-          setRecent((r) => [
-            { ticker: w.ticker, token: row.token, at: Date.now(), ok: false,
-              detail: `would pass your ${limits.perDay} ETH daily limit` },
-            ...r,
-          ].slice(0, 6));
+        if (spentSoFar + amount > limits.perDay) {
+          note({
+            at: Date.now(), symbol: row.symbol, token: row.token, decision: "skipped",
+            reason: `would pass your ${limits.perDay} ETH daily limit`,
+          });
           continue;
         }
 
         inFlight.current = true;
         setFiring(row.token);
         try {
-          await buy(getAddress(row.token), w.eth);
+          await buy(getAddress(row.token), spendEth);
           addSpentToday(amount);
-          // Credit the watch so it disarms itself rather than firing again on
-          // the next coin of the same name.
-          persist(
-            readWatches(owner).map((x) =>
-              x.id === w.id ? { ...x, bought: x.bought + 1 } : x,
-            ),
-          );
-          setRecent((r) => [
-            { ticker: w.ticker, token: row.token, at: Date.now(), ok: true,
-              detail: `bought for ${w.eth} ETH` },
-            ...r,
-          ].slice(0, 6));
+          if (w) {
+            // Credit the watch so it disarms itself rather than firing again
+            // on the next coin of the same name.
+            persist(
+              readWatches(owner).map((x) =>
+                x.id === w.id ? { ...x, bought: x.bought + 1 } : x,
+              ),
+            );
+            setRecent((r) =>
+              [
+                { ticker: w.ticker, token: row.token, at: Date.now(), ok: true, detail: `bought for ${spendEth} ETH` },
+                ...r,
+              ].slice(0, 6),
+            );
+          }
+          note({
+            at: Date.now(), symbol: row.symbol, token: row.token, decision: "bought",
+            reason: w ? `matched your ${w.ticker} watch · ${spendEth} ETH` : `${spendEth} ETH`,
+          });
         } catch (e) {
-          setRecent((r) => [
-            { ticker: w.ticker, token: row.token, at: Date.now(), ok: false,
-              detail: (e instanceof Error ? e.message : "buy failed").split("\n")[0] },
-            ...r,
-          ].slice(0, 6));
+          const detail = (e instanceof Error ? e.message : "buy failed").split("\n")[0];
+          if (w) {
+            setRecent((r) =>
+              [{ ticker: w.ticker, token: row.token, at: Date.now(), ok: false, detail }, ...r].slice(0, 6),
+            );
+          }
+          note({ at: Date.now(), symbol: row.symbol, token: row.token, decision: "error", reason: detail });
         } finally {
           inFlight.current = false;
           setFiring(null);
@@ -268,7 +485,20 @@ export function useSniper(
       stop = true;
       clearInterval(iv);
     };
-  }, [unlocked, owner, armed, limits, buy, persist]);
+  }, [watching, owner, limits, buy, persist, note, firedThisHour]);
 
-  return { watches, armed, add, remove, firing, recent };
+  return {
+    watches,
+    armed,
+    add,
+    remove,
+    firing,
+    recent,
+    cfg,
+    setCfg,
+    log,
+    clearLog,
+    firedThisHour,
+    watching,
+  };
 }

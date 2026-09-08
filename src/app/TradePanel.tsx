@@ -25,6 +25,7 @@ import { addSpentToday } from "./limits";
 import { forgetPosition, recordBuy, usePositions, type Holding } from "./usePositions";
 import { useAutoSell, WATCH_INTERVAL_MS } from "./useAutoSell";
 import { useSniper, WATCH_POLL_MS } from "./useSniper";
+import SniperRules from "./SniperRules";
 
 interface Snap {
   address: string;
@@ -762,6 +763,8 @@ export default function TradePanel({
           </p>
         ))}
       </div>
+
+      <SniperRules sniper={sniper} locked={locked} onConnect={openMenu} />
 
     </aside>
   );
