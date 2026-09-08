@@ -1454,6 +1454,10 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   .cols, .cols-solo { grid-template-columns: minmax(0, 1fr) 380px; }
   .frow-item,
   .fhead { grid-template-columns: 40px minmax(0, 1fr) 84px 128px 112px 80px; }
+  /* Two columns to cover, not three: liquidity is gone at this width, so the
+     grid is six tracks and a span of three ran off the end of the row and
+     wrapped onto a line of its own. */
+  .fno-trades { grid-column: span 2; }
   /* Liquidity goes. The header spans carry no classes of their own, so its
      label is addressed by position — fifth of six: Coin, 20m, MC, Vol, Liq,
      Tx. Kept next to the rule that hides the cell so the two cannot drift. */

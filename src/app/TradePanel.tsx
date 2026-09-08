@@ -24,6 +24,7 @@ import { useWallet } from "./WalletContext";
 import { addSpentToday } from "./limits";
 import { forgetPosition, recordBuy, usePositions, type Holding } from "./usePositions";
 import { useAutoSell, WATCH_INTERVAL_MS } from "./useAutoSell";
+import { CollapseButton, useCollapsed } from "./Collapse";
 import { useSniper, WATCH_POLL_MS } from "./useSniper";
 import SniperRules from "./SniperRules";
 
@@ -86,6 +87,9 @@ export default function TradePanel({
   /* What share of the position the take-profit sells. Under 100 leaves a
      runner behind, which is why the stop-loss stays armed on it. */
   const [wTpPct, setWTpPct] = useState("70");
+  /* Open by default — the other sniper sections start folded, but this is the
+     one people came for. The control is there so it need not stay open. */
+  const snipeFold = useCollapsed("snipe", false);
   /** Set once sellHolding exists, so the watcher declared above can reach it. */
   const sellHoldingRef = useRef<((h: {
     address: string;
@@ -710,15 +714,22 @@ export default function TradePanel({
       )}
 
       {/* ── snipe a coin you already know is coming ── */}
-      <div className="snipe">
+      <div className={`snipe${snipeFold.collapsed ? " is-collapsed" : ""}`}>
         <div className="card-head">
           <h3 className="shead">Snipe a launch</h3>
-          {sniper.armed > 0 && (
-            <span className="chip chip-live">
-              <span className="dot" />
-              {sniper.armed} ARMED
-            </span>
-          )}
+          <div className="row" style={{ gap: 8 }}>
+            {sniper.armed > 0 && (
+              <span className="chip chip-live">
+                <span className="dot" />
+                {sniper.armed} ARMED
+              </span>
+            )}
+            <CollapseButton
+              collapsed={snipeFold.collapsed}
+              onToggle={snipeFold.toggle}
+              label="snipe a launch"
+            />
+          </div>
         </div>
         <p className="ssub">
           For when you already know the ticker. It buys the moment that coin exists, without
