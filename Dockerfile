@@ -60,10 +60,14 @@ RUN mkdir -p /data && chown -R node:node /data
 
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
-# No `public/` copy: this project does not have one. Its only static asset is
-# src/app/icon.svg, which is a Next file convention the framework compiles and
-# serves itself. A COPY of a directory that does not exist is a hard build
-# failure, not a no-op — it is what broke the first deploy.
+# public/ holds the brand artwork and is served from the site root. It is
+# copied separately because `output: "standalone"` traces server code and does
+# not carry static files with it.
+#
+# The directory must exist in the repo. A COPY of one that does not is a hard
+# build failure rather than a no-op, which is what broke the very first deploy
+# back when this line referred to a folder the project did not have.
+COPY --from=build --chown=node:node /app/public ./public
 
 USER node
 EXPOSE 3000
