@@ -1558,3 +1558,111 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .lc-a { width: 42%; }
 .lc-b { width: 72%; }
 .lc-c { height: 38px; width: 100%; border-radius: var(--r-ctl); }
+
+/* ── feed filters ───────────────────────────────────────────────────────
+ * Lives in the feed's own header, between the search row and the column
+ * labels, so filtering happens where the thing being filtered is. */
+.ff-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 14px;
+  flex: none;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--line);
+  background: var(--s2);
+  color: var(--t2);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--fast), border-color var(--fast), color var(--fast);
+}
+.ff-btn:hover { background: var(--s3); color: var(--t1); border-color: var(--line-2); }
+.ff-btn.open { border-color: var(--line-2); background: var(--s3); color: var(--t1); }
+/* A filter you forgot you set looks exactly like a quiet market, so the count
+   is the loudest thing on the button. */
+.ff-btn.on { color: var(--lime); border-color: var(--lime-line); background: var(--lime-dim); }
+.ff-btn b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--lime);
+  color: var(--lime-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ff {
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--s2);
+}
+.ff-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+.ff-count { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--t3); }
+
+.ff-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--hair);
+}
+.ff-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--s1);
+  font-size: 12.5px;
+  color: var(--t2);
+  cursor: pointer;
+  transition: border-color var(--fast), color var(--fast), background var(--fast);
+}
+.ff-toggle:hover { border-color: var(--line-2); color: var(--t1); }
+.ff-toggle input { accent-color: var(--lime); margin: 0; }
+.ff-toggle:has(input:checked) { border-color: var(--lime-line); background: var(--lime-dim); color: var(--lime); }
+
+/* Two or three columns of min/max pairs. Fourteen of them stacked in one
+   column would be a page of its own above the feed. */
+.ff-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 6px var(--sp-4);
+}
+.ff-row { display: grid; grid-template-columns: minmax(0, 1fr) 68px 68px; gap: 6px; align-items: center; }
+.ff-label { font-size: 12px; color: var(--t3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-label i { font-style: normal; color: var(--t4); margin-left: 4px; }
+.ff-in { height: 28px; font-size: 12.5px; padding: 0 8px; background: var(--s1); }
+.ff-in::placeholder { color: var(--t4); font-size: 11.5px; }
+/* Twenty-eight identical boxes, two of them holding a number: without this the
+   set ones are found by reading every box. The label lights with them so the
+   row scans as one thing. */
+.ff-in:not(:placeholder-shown) {
+  border-color: var(--lime-line);
+  color: var(--lime);
+  background: var(--lime-dim);
+}
+.ff-row:has(.ff-in:not(:placeholder-shown)) .ff-label { color: var(--t2); }
+
+.ff-note { margin: var(--sp-3) 0 0; font-size: 11.5px; line-height: 1.5; color: var(--t4); }
+
+@media (max-width: 940px) {
+  .ff-grid { grid-template-columns: 1fr; }
+  .ff-btn { height: 44px; }
+  .ff-in { height: 36px; }
+}

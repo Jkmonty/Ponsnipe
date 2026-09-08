@@ -1,6 +1,15 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import FeedFilters from "./FeedFilters";
+import {
+  DEFAULT_FILTERS,
+  activeCount,
+  passes,
+  readFilters,
+  writeFilters,
+  type Filters,
+} from "./filterRules";
 import { mediaUrl } from "@/lib/format";
 
 interface Row {
@@ -609,7 +618,23 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
     }, 900);
     return () => clearTimeout(t);
   }, [all]);
-  const rows = useMemo(() => {
+  /*
+   * Filters are read after mount, not during render: localStorage does not
+   * exist on the server, and reading it while rendering would make the first
+   * client paint disagree with the HTML it replaces.
+   */
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [showFilters, setShowFilters] = useState(false);
+  useEffect(() => setFilters(readFilters()), []);
+  const applyFilters = useCallback((f: Filters) => {
+    setFilters(f);
+    writeFilters(f);
+  }, []);
+  const filterCount = activeCount(filters);
+
+  /* Search first, then filters, so the count shown on the panel is "of what
+     you searched" rather than of the whole feed. */
+  const searched = useMemo(() => {
     const q = find.trim().toLowerCase();
     if (!q) return all;
     return all.filter(
@@ -619,6 +644,11 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
         r.token.toLowerCase().includes(q),
     );
   }, [all, find]);
+
+  const rows = useMemo(
+    () => (filterCount === 0 ? searched : searched.filter((r) => passes(r, filters))),
+    [searched, filters, filterCount],
+  );
 
   return (
     <aside className="feed card glow">
@@ -632,7 +662,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
           New coins{" "}
           <span className="muted" style={{ fontWeight: 400 }}>
             · {rows.length}
-            {find.trim() && all.length !== rows.length ? ` of ${all.length}` : ""}
+            {all.length !== rows.length ? ` of ${all.length}` : ""}
           </span>
         </h2>
         <span
@@ -664,6 +694,16 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
           {/* The shortcut is shown because it exists, not as decoration. */}
           <kbd className="findkbd">{isMac ? "⌘ K" : "Ctrl K"}</kbd>
         </div>
+        {/* The count on the button is the point of it: a filter you forgot you
+            set looks exactly like a quiet market. */}
+        <button
+          className={`ff-btn${showFilters ? " open" : ""}${filterCount ? " on" : ""}`}
+          onClick={() => setShowFilters((v) => !v)}
+          aria-expanded={showFilters}
+        >
+          Filters
+          {filterCount > 0 && <b>{filterCount}</b>}
+        </button>
         {data?.ethUsd ? (
           <span className="muted small num" style={{ flex: "none" }}>
             ETH ${Math.round(data.ethUsd).toLocaleString()}
@@ -674,6 +714,15 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       {err && <p className="neg small">{err}</p>}
       {!err && data && !data.status.running && (
         <p className="neg small">Feed is not running — restart the app.</p>
+      )}
+
+      {showFilters && (
+        <FeedFilters
+          filters={filters}
+          onChange={applyFilters}
+          matched={rows.length}
+          total={searched.length}
+        />
       )}
 
       <div
