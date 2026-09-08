@@ -540,16 +540,27 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 }
 .cols-solo { grid-template-columns: minmax(0, 1fr) 400px; }
 .colmain { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+/*
+ * The control panel scrolls with the page, and the feed stays put.
+ *
+ * It used to be sticky with max-height and its own overflow, which works right
+ * up until the contents are taller than the viewport — and then everything
+ * past the fold is unreachable, because a sticky box pins its top and the
+ * scrollbar inside it is invisible until you happen to put the cursor there.
+ * Activity sat below that line, so the only way to reach the log was to
+ * collapse a section above it to make room.
+ *
+ * Now it is a normal column. The feed keeps its own sticky frame and internal
+ * scroll, so scrolling the page moves the panel while the coins stay exactly
+ * where they were — which is the behaviour that was wanted from stickiness in
+ * the first place.
+ */
 .colside {
   min-width: 0;
-  position: sticky;
-  top: 76px;
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
-  max-height: calc(100vh - 96px);
-  overflow-y: auto;
-  padding-right: 2px;
+  align-self: start;
 }
 
 /* ══ PANELS ═══════════════════════════════════════════════════════════════
@@ -1467,7 +1478,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   .cols, .cols-solo { grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); }
   /* Controls above the feed, and neither of them sticky: two sticky panes on
      a short screen leaves nothing that actually scrolls. */
-  .colside { order: -1; position: static; max-height: none; overflow: visible; }
+  /* Controls first on a phone: someone on one is there to act. */
+  .colside { order: -1; }
   .feed { position: static; max-height: none; }
   .flist { max-height: 66vh; }
 
