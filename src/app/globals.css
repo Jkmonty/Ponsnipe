@@ -131,8 +131,8 @@ body {
   background-attachment: fixed;
   color: var(--t1);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -148,12 +148,12 @@ body {
  * Five levels and no more. The old interface had eleven font sizes between
  * 10 and 16px, which is why everything competed: nothing was clearly more
  * important than anything else. */
-h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
-h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
-h3 { font-size: 14px; font-weight: 600; margin: 0; }
+h1 { font-size: 21px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
 
 .muted { color: var(--t2); }
-.small { font-size: 12.5px; }
+.small { font-size: 13.5px; }
 .pos { color: var(--up); }
 .neg { color: var(--down); }
 .ta-c { text-align: center; }
@@ -179,7 +179,7 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  min-height: 58px;
+  min-height: 64px;
   background: linear-gradient(180deg, rgba(10, 12, 16, 0.92), rgba(6, 7, 10, 0.86));
   backdrop-filter: blur(20px) saturate(1.3);
   border-bottom: 1px solid var(--line);
@@ -214,7 +214,7 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
 .topbar > .row:last-child { flex: none; }
 
 .topbar h1 {
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 500;
   letter-spacing: 0.085em;
   margin-right: -0.085em;
@@ -232,9 +232,9 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
 .topbar .sub {
   margin: 0 0 0 var(--sp-4);
   padding-left: var(--sp-4);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.17em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #8fae98;
   border-left: 1px solid var(--line);
@@ -242,7 +242,7 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
 }
 
 .topbar-link {
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
   color: var(--t3);
   text-decoration: none;
@@ -257,14 +257,14 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
-  height: 38px;
+  height: 42px;
   padding: 0 var(--sp-4);
   border-radius: var(--r-ctl);
   border: 1px solid var(--line-2);
   background: var(--s3);
   color: var(--t1);
   font: inherit;
-  font-size: 13.5px;
+  font-size: 14.5px;
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -289,15 +289,15 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
 .btn-outline { background: transparent; border-color: var(--line-2); color: var(--t2); }
 .btn-outline:hover:not(:disabled) { background: var(--s3); color: var(--t1); }
 .btn-danger { background: var(--down-dim); border-color: rgba(255, 107, 107, 0.3); color: #ffb4b4; }
-.btn-sm { height: 30px; padding: 0 var(--sp-3); font-size: 12.5px; }
-.btn-lg { height: 44px; width: 100%; font-size: 14.5px; }
+.btn-sm { height: 34px; padding: 0 var(--sp-3); font-size: 13.5px; }
+.btn-lg { height: 50px; width: 100%; font-size: 15.5px; }
 
 .linkish {
   background: none;
   border: 0;
   padding: 0;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--t3);
   cursor: pointer;
   text-decoration: underline;
@@ -310,9 +310,9 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
 label.field { display: block; margin-bottom: var(--sp-3); }
 label.field > span {
   display: block;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--t3);
   margin-bottom: var(--sp-2);
@@ -321,14 +321,14 @@ label.field > span i { font-style: normal; text-transform: none; letter-spacing:
 
 .input {
   width: 100%;
-  height: 38px;
+  height: 42px;
   background: var(--s2);
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
   padding: 0 var(--sp-3);
   color: var(--t1);
   font: inherit;
-  font-size: 14px;
+  font-size: 15px;
   outline: none;
   transition: border-color var(--fast), background var(--fast), box-shadow var(--fast);
 }
@@ -350,16 +350,20 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  height: 22px;
-  padding: 0 var(--sp-2);
+  height: 24px;
+  padding: 0 9px;
   border-radius: var(--r-chip);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   white-space: nowrap;
 }
 .chip-live { background: var(--lime-dim); color: var(--lime); box-shadow: inset 0 0 0 1px var(--lime-line); }
-.chip-dry { background: var(--gold-dim); color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold-line); }
+/* Neutral, because it sits next to the lime wallet button and two accent
+   colours a few pixels apart both lose. This badge is a state label on a
+   developer's machine, not a call to action. */
+.chip-dry { background: var(--s3); color: var(--t2); box-shadow: inset 0 0 0 1px var(--line-2); }
+.chip-dry .dot { color: var(--gold); }
 .chip-off { background: var(--s3); color: var(--t3); box-shadow: inset 0 0 0 1px var(--line); }
 
 .dot {
@@ -379,7 +383,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   align-items: center;
   gap: 6px;
   flex: none;
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.05em;
   color: var(--lime);
@@ -404,10 +408,10 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .pill {
   display: inline-flex;
   align-items: center;
-  height: 17px;
-  padding: 0 6px;
+  height: 19px;
+  padding: 0 7px;
   border-radius: var(--r-chip);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   background: var(--s3);
@@ -418,14 +422,23 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .pill-hot { background: var(--down-dim); color: var(--down); box-shadow: inset 0 0 0 1px rgba(255, 107, 107, 0.22); }
 
 /* ── notes ── */
+/*
+ * A rule down the side rather than a filled block.
+ *
+ * A saturated orange panel is the loudest thing on the page, which for a note
+ * that is read once and then lived with is the wrong weight — and next to a
+ * lime primary button it fights for the same attention. The colour moves to a
+ * 2px edge and the fill drops to almost nothing.
+ */
 .note-warn {
   margin: var(--sp-3) 0;
-  padding: var(--sp-3);
-  border-radius: var(--r-ctl);
-  border: 1px solid rgba(255, 145, 66, 0.24);
-  background: var(--warn-dim);
-  font-size: 12.5px;
-  line-height: 1.5;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) 14px;
+  border: 0;
+  border-left: 2px solid var(--warn);
+  border-radius: 0 var(--r-ctl) var(--r-ctl) 0;
+  background: rgba(255, 145, 66, 0.05);
+  font-size: 13.5px;
+  line-height: 1.55;
   color: var(--t2);
 }
 .note-warn strong { color: var(--warn); font-weight: 600; }
@@ -439,7 +452,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   border-radius: var(--r-ctl);
   border: 1px solid rgba(47, 212, 143, 0.2);
   background: var(--up-dim);
-  font-size: 12.5px;
+  font-size: 13.5px;
   line-height: 1.5;
   color: var(--t2);
 }
@@ -458,7 +471,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 
 .fineprint { margin: var(--sp-2) 0 var(--sp-3); }
 .fineprint > summary {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--t3);
   cursor: pointer;
   list-style: none;
@@ -468,7 +481,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .fineprint > summary::before { content: "▸ "; color: var(--t4); }
 .fineprint[open] > summary::before { content: "▾ "; }
 .fineprint > summary:hover { color: var(--t1); }
-.fineprint p { font-size: 12px; line-height: 1.6; color: var(--t3); margin: var(--sp-2) 0 0; }
+.fineprint p { font-size: 13px; line-height: 1.6; color: var(--t3); margin: var(--sp-2) 0 0; }
 
 /* ── the live/dry switch (local install only) ── */
 .switch {
@@ -551,7 +564,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   align-items: center;
   gap: var(--sp-2);
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.11em;
   text-transform: uppercase;
@@ -569,8 +582,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 
 .ssub {
   margin: var(--sp-2) 0 var(--sp-3);
-  font-size: 12.5px;
-  line-height: 1.6;
+  font-size: 13.5px;
+  line-height: 1.65;
   color: var(--t3);
 }
 
@@ -614,7 +627,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 }
 .feedhead h2 {
   color: var(--t1);
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 600;
   letter-spacing: -0.005em;
   white-space: nowrap;
@@ -631,7 +644,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   color: var(--t4);
   pointer-events: none;
 }
-.feedfind { height: 34px; padding-left: 34px; padding-right: 46px; font-size: 13px; background: var(--s2); }
+.feedfind { height: 38px; padding-left: 38px; padding-right: 52px; font-size: 14px; background: var(--s2); }
 .findkbd {
   position: absolute;
   right: var(--sp-2);
@@ -654,8 +667,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
  */
 .frow-item {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 74px 96px 92px 92px 62px;
-  gap: var(--sp-3);
+  grid-template-columns: 44px minmax(0, 1fr) 96px 140px 124px 124px 88px;
+  gap: var(--sp-4);
   align-items: center;
 }
 /*
@@ -667,11 +680,11 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
  */
 .fhead {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 74px 96px 92px 92px 62px;
-  gap: var(--sp-3);
+  grid-template-columns: minmax(0, 1fr) 96px 140px 124px 124px 88px;
+  gap: var(--sp-4);
   align-items: center;
-  padding: var(--sp-2) var(--sp-4) var(--sp-2) 68px;
-  font-size: 9.5px;
+  padding: var(--sp-3) var(--sp-4) var(--sp-3) 76px;
+  font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -685,7 +698,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .frow-item {
   position: relative;
   width: 100%;
-  padding: var(--sp-2) var(--sp-4);
+  padding: 11px var(--sp-4);
   text-align: left;
   border: 0;
   border-bottom: 1px solid var(--hair);
@@ -708,7 +721,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   opacity: 0;
   transition: opacity var(--fast);
 }
-.frow-item:hover { background: var(--s2); }
+.frow-item:hover { background: linear-gradient(90deg, rgba(195, 245, 60, 0.045), var(--s2) 22%); }
 .frow-item:hover::before { opacity: 1; }
 .frow-item:focus-visible { outline-offset: -2px; }
 
@@ -731,8 +744,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
  */
 .savatar {
   position: relative;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   flex: none;
   display: flex;
   align-items: center;
@@ -740,7 +753,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   border-radius: var(--r-ctl);
   background: var(--s3);
   box-shadow: inset 0 0 0 1px var(--line);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.02em;
   color: var(--t3);
@@ -763,16 +776,16 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 /* Line one is the identity: ticker loud, name quiet. */
 .fline1 { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
 .fline1 > strong {
-  font-size: 14px;
+  font-size: 15.5px;
   font-weight: 700;
-  letter-spacing: -0.005em;
+  letter-spacing: -0.008em;
   color: var(--t1);
   flex: none;
-  max-width: 130px;
+  max-width: 150px;
 }
-.fname { font-size: 12px; color: var(--t3); font-weight: 400; }
+.fname { font-size: 13px; color: var(--t3); font-weight: 400; }
 .fsoc {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--t3);
   text-decoration: none;
   padding: 1px 6px;
@@ -788,17 +801,17 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .fline2 {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 10px;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--t3);
 }
-.faddr { font-family: var(--mono); font-size: 10.5px; color: var(--t4); flex: none; }
+.faddr { font-family: var(--mono); font-size: 11.5px; color: var(--t4); flex: none; }
 
 .fstat { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; flex: none; }
 .fstat .fi {
   font-style: normal;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--t4);
@@ -812,7 +825,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   padding: 1px 6px;
   border-radius: var(--r-chip);
   background: var(--s3);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.05em;
   color: var(--t2);
@@ -820,13 +833,21 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 
 /* Graduation progress. A track with a lime fill and the figure inside it, so
    the bar is a reading rather than a decoration. */
-.fbond-wrap { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; min-width: 0; }
+/*
+ * Sits with the metadata, not pushed away from it.
+ *
+ * margin-left:auto shoved this to the far edge of a wide column, so the bar
+ * floated in the middle of the row with empty space on both sides and read as
+ * something that had come loose. It now follows the pills it belongs with, and
+ * the gap that is left falls between columns where a gap belongs.
+ */
+.fbond-wrap { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
 .fbond {
   position: relative;
   display: inline-flex;
   align-items: center;
-  width: 92px;
-  height: 15px;
+  width: 118px;
+  height: 18px;
   flex: none;
   border-radius: var(--r-chip);
   background: var(--s3);
@@ -845,7 +866,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   position: relative;
   width: 100%;
   text-align: center;
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 700;
   color: var(--t2);
   mix-blend-mode: luminosity;
@@ -853,15 +874,19 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 
 /* Numeric columns. Right-aligned, tabular, and the market cap carries more
    weight than the rest because it is the number people scan by. */
+/* An em dash is not a figure. Three of the five numeric columns are empty on
+   a brand-new launch, and at full weight that is a wall of punctuation
+   competing with the numbers that are actually there. */
+.fnum.is-blank { color: var(--t4); font-weight: 400; }
 .fnum {
   text-align: right;
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 500;
   color: var(--t2);
   white-space: nowrap;
 }
-.fnum-mc { font-size: 13.5px; font-weight: 650; color: var(--t1); }
-.fnum-tx { font-size: 12px; color: var(--t3); }
+.fnum-mc { font-size: 15.5px; font-weight: 650; color: var(--t1); }
+.fnum-tx { font-size: 13px; color: var(--t3); }
 
 /* A value that just moved. One frame of colour, no movement — a number that
    jumps is a number you cannot read. */
@@ -871,7 +896,29 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .fnum.flash-down { animation: flashDown 780ms ease-out; }
 
 .spark { display: block; }
-.spark-empty { display: block; width: 54px; height: 18px; }
+/*
+ * A flat line, not a hole.
+ *
+ * Most rows here are seconds old and have no price history yet, so this column
+ * was blank on nearly every row — a whole column of nothing running down the
+ * table. A hairline at the vertical centre says "no movement recorded", which
+ * is the true reading and fills the space honestly.
+ */
+.spark-empty {
+  display: block;
+  width: 100%;
+  height: 18px;
+  position: relative;
+}
+.spark-empty::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 50%;
+  height: 1px;
+  background: var(--line);
+}
 
 .onlynarrow { display: none; }
 
@@ -903,7 +950,7 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   border: 1px solid var(--lime-line);
   background: var(--lime-dim);
 }
-.locked-bar p { margin: 0; flex: 1 1 170px; font-size: 12.5px; line-height: 1.45; color: var(--t1); }
+.locked-bar p { margin: 0; flex: 1 1 180px; font-size: 13.5px; line-height: 1.5; color: var(--t1); }
 .locked-bar .btn { flex: none; }
 .card.is-locked .field,
 .card.is-locked .presets,
@@ -922,16 +969,16 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
+  padding: 10px var(--sp-3);
   border-radius: var(--r-ctl);
   background: var(--s2);
   border: 1px solid var(--lime-line);
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 .watch.done { border-color: var(--line); opacity: 0.5; }
 .watch-tick { font-weight: 700; flex: none; }
-.watch > .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
-.watch-state { margin-left: auto; color: var(--lime); font-size: 11px; font-weight: 600; flex: none; }
+.watch > .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.watch-state { margin-left: auto; color: var(--lime); font-size: 12px; font-weight: 600; flex: none; }
 .watch.done .watch-state { color: var(--t4); }
 
 .rule-toggle, .rule-check {
@@ -950,8 +997,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .rule-toggle { border-color: var(--lime-line); background: var(--lime-dim); }
 .rule-toggle input, .rule-check input { margin-top: 3px; accent-color: var(--lime); flex: none; }
 .rule-toggle span, .rule-check span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.rule-toggle strong, .rule-check strong { font-size: 13px; font-weight: 600; }
-.rule-toggle i, .rule-check i { font-style: normal; font-size: 11.5px; color: var(--t3); line-height: 1.45; }
+.rule-toggle strong, .rule-check strong { font-size: 14px; font-weight: 600; }
+.rule-toggle i, .rule-check i { font-style: normal; font-size: 12.5px; color: var(--t3); line-height: 1.5; }
 .rule-check.off { opacity: 0.5; cursor: default; }
 
 .rule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); margin: var(--sp-3) 0 var(--sp-1); }
@@ -960,13 +1007,13 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .snipelog { display: flex; flex-direction: column; gap: 1px; max-height: 240px; overflow-y: auto; }
 .slog {
   display: grid;
-  grid-template-columns: 58px 62px minmax(0, 1fr);
+  grid-template-columns: 66px 70px minmax(0, 1fr);
   gap: var(--sp-2);
-  padding: 4px 6px;
+  padding: 6px 8px;
   border-radius: var(--r-chip);
-  font-size: 12px;
+  font-size: 13px;
 }
-.slog-time { color: var(--t4); font-family: var(--mono); font-size: 10.5px; }
+.slog-time { color: var(--t4); font-family: var(--mono); font-size: 11.5px; }
 .slog-sym { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slog-why { color: var(--t3); min-width: 0; }
 .slog-bought { background: var(--up-dim); }
@@ -992,10 +1039,10 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   transition: background var(--fast);
 }
 .holding:hover { background: var(--s3); }
-.holding-sym { font-weight: 700; font-size: 13px; }
-.holding-val { font-size: 12.5px; color: var(--t2); }
+.holding-sym { font-weight: 700; font-size: 14px; }
+.holding-val { font-size: 13.5px; color: var(--t2); }
 .holding-val i { font-style: normal; font-size: 10px; color: var(--t4); }
-.holding-pnl { font-size: 12.5px; font-weight: 650; }
+.holding-pnl { font-size: 13.5px; font-weight: 650; }
 .holding-rule {
   display: flex;
   align-items: flex-end;
@@ -1022,14 +1069,14 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  height: 36px;
+  height: 40px;
   padding: 0 var(--sp-4);
   border-radius: var(--r-ctl);
   border: 1px solid var(--line-2);
   background: var(--s3);
   color: var(--t1);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 550;
   cursor: pointer;
   transition: background var(--fast), border-color var(--fast), transform var(--fast);
@@ -1047,8 +1094,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .wb-cta:hover { background: #d0ff52; border-color: transparent; }
 .wb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--lime); flex: none; }
 .wb-dot.locked { background: var(--t4); }
-.wb-bal { font-weight: 650; font-size: 13px; }
-.wb-addr { color: var(--t3); font-size: 12px; font-family: var(--mono); }
+.wb-bal { font-weight: 650; font-size: 14px; }
+.wb-addr { color: var(--t3); font-size: 13px; font-family: var(--mono); }
 
 .wb-menu {
   position: absolute;
@@ -1069,16 +1116,16 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 }
 @keyframes menuIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 .wb-menu h3 { margin: 0 0 var(--sp-2); font-size: 14px; }
-.wb-lead { margin: 0 0 var(--sp-2); font-size: 13px; line-height: 1.55; color: var(--t2); }
-.wb-fine { margin: 0 0 var(--sp-3); font-size: 12px; line-height: 1.5; color: var(--t3); }
+.wb-lead { margin: 0 0 var(--sp-2); font-size: 14px; line-height: 1.55; color: var(--t2); }
+.wb-fine { margin: 0 0 var(--sp-3); font-size: 13px; line-height: 1.5; color: var(--t3); }
 .wb-note { margin-top: var(--sp-3); }
 .wb-note-local {
   margin: 0 0 var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-3);
   border-radius: var(--r-ctl);
   border: 1px solid var(--gold-line);
   background: var(--gold-dim);
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.5;
   color: var(--t2);
 }
@@ -1206,6 +1253,15 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .toast.err { border-color: rgba(255, 107, 107, 0.35); }
 
 .meta { font-size: 11.5px; color: var(--t3); }
+
+/* Facts, set as a list rather than prose. Each has a bright lead-in and a
+   quiet explanation, so the panel can be skimmed in three glances instead of
+   read as a paragraph. No borders between them — the spacing separates them,
+   which is one fewer line on a page that already has enough. */
+.facts { margin: 0; display: flex; flex-direction: column; gap: 14px; }
+.facts > div { display: flex; flex-direction: column; gap: 3px; }
+.facts dt { font-size: 13.5px; font-weight: 600; color: var(--t1); }
+.facts dd { margin: 0; font-size: 13px; line-height: 1.6; color: var(--t3); }
 
 /*
  * The feed is the primary surface, and this is how it says so.

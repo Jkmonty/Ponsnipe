@@ -361,17 +361,29 @@ export default function Dashboard() {
                   label="what this is"
                 />
               </div>
-              <p className="ssub" style={{ marginLeft: 13 }}>
-                Every pons launch as it happens, with price charts, holder counts and how much
-                of each crowd is one operator wearing several wallets.
-              </p>
-              <p className="muted small" style={{ marginLeft: 13, marginBottom: 0 }}>
-                This site holds no wallet and no keys. Connect one and it is made in your
-                browser, encrypted with your passphrase, and never sent here. Take-profit and
-                stop-loss run for as long as this tab is open — for exits that keep working
-                after you close it, run your own copy, because that needs a key on your
-                machine and no website can have one.
-              </p>
+              {/*
+                Three facts, not two paragraphs.
+
+                This was a wall of grey prose in a card that looked like every
+                other card, so the one thing a stranger needs to know — that
+                the site never sees their key — was buried mid-sentence. As a
+                short list each fact can be read on its own, and the reader can
+                stop after the one they cared about.
+              */}
+              <dl className="facts">
+                <div>
+                  <dt>Every launch, instantly</dt>
+                  <dd>Price charts, holder counts, and how much of a crowd is one operator wearing several wallets.</dd>
+                </div>
+                <div>
+                  <dt>No wallet, no keys, no custody</dt>
+                  <dd>Connect one and it is made in your browser, encrypted with your passphrase, and never sent here.</dd>
+                </div>
+                <div>
+                  <dt>Exits run while the tab is open</dt>
+                  <dd>For take-profit and stop-loss that survive closing it, run your own copy — that needs a key on your machine, and no website can have one.</dd>
+                </div>
+              </dl>
             </aside>
           </div>
         </div>

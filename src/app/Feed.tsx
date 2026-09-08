@@ -386,13 +386,19 @@ const FeedRow = memo(function FeedRow({
 
       <SparkLine points={r.spark} />
 
-      <span className={`fnum fnum-mc num${mcFlash}`} title="market cap">
+      {/* `is-blank` dims a cell with no figure in it. On a launch seconds old
+          three of these five columns are an em dash, and at full weight that
+          is a wall of punctuation competing with the numbers that are real. */}
+      <span className={`fnum fnum-mc num${mcFlash}${r.mcapUsd == null ? " is-blank" : ""}`} title="market cap">
         {money(r.mcapUsd)}
       </span>
-      <span className={`fnum fnum-vol num${volFlash}`} title="volume">
+      <span className={`fnum fnum-vol num${volFlash}${r.volumeUsd == null ? " is-blank" : ""}`} title="volume">
         {money(r.volumeUsd)}
       </span>
-      <span className="fnum fnum-liq num" title="liquidity in the curve">
+      <span
+        className={`fnum fnum-liq num${r.liquidityUsd == null ? " is-blank" : ""}`}
+        title="liquidity in the curve"
+      >
         {money(r.liquidityUsd)}
       </span>
       <span className="fnum fnum-tx num" title="trades">
