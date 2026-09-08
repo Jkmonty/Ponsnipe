@@ -20,6 +20,12 @@ services:
       # No wallet, no trading routes, no sniper. This is the shop window.
       PUBLIC_MODE: "1"
       DATABASE_PATH: /data/positions.sqlite
+      # Halved from the 2000ms default so the price history behind the chart is
+      # written every second rather than every other one. 1000 is the floor the
+      # code clamps to. Watch status.rpc after changing this: the failure rate
+      # was already near 10% at 2000ms, and the last time the interval was
+      # shortened without spreading the calls it went to 13%.
+      FEED_POLL_MS: "1000"
     volumes:
       # The index lives here. Without it every rebuild starts from an empty
       # database, which for this app means losing the price history the charts
