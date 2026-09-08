@@ -1,0 +1,58 @@
+# Ponsnipe, as it runs on the server.
+#
+# Two containers: the app, and Caddy in front of it doing TLS. Caddy is here
+# rather than a hand-written nginx config because it gets a certificate on its
+# own and renews it on its own — the single most common way a small deploy dies
+# is a certificate nobody remembered to renew.
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        # Inlined into the browser bundle at BUILD time. A runtime variable
+        # cannot do this job; see the note in the Dockerfile.
+        NEXT_PUBLIC_REPO_URL: "https://github.com/Jkmonty/Ponsnipe"
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      # No wallet, no trading routes, no sniper. This is the shop window.
+      PUBLIC_MODE: "1"
+      DATABASE_PATH: /data/positions.sqlite
+    volumes:
+      # The index lives here. Without it every rebuild starts from an empty
+      # database, which for this app means losing the price history the charts
+      # are drawn from — it only ever accumulates while the process runs.
+      - ponsnipe-data:/data
+    # Not published to the host: only Caddy can reach it, so there is no way to
+    # hit the app on :3000 and bypass TLS.
+    expose:
+      - "3000"
+    healthcheck:
+      # A path that only answers once the feed has initialised, so a container
+      # that booted but cannot reach the chain is marked unhealthy instead of
+      # sitting there green and empty.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/feed?limit=1').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  ponsnipe-data:
+  caddy-data:
+  caddy-config:

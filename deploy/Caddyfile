@@ -1,0 +1,15 @@
+# Overwritten by setup.sh with your domain (or :80 if you have not got one yet).
+# Committed so `docker compose up` cannot silently create a DIRECTORY here —
+# a bind mount to a missing file does exactly that, and Caddy then starts with
+# no configuration at all.
+:80 {
+	encode zstd gzip
+	reverse_proxy app:3000 {
+		# The feed holds a Server-Sent Events connection open per viewer, which
+		# the default idle timeout would cut every two minutes.
+		flush_interval -1
+		transport http {
+			read_timeout 24h
+		}
+	}
+}

@@ -38,3 +38,6 @@ scripts/
 README.md
 AGENTS.md
 CLAUDE.md
+
+# ── deployment scaffolding: the image does not need its own deploy files ──
+deploy/
