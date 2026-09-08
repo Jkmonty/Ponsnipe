@@ -10,6 +10,7 @@
  * hand by the time anyone looks at it.
  */
 import sharp from "sharp";
+import { db } from "@/lib/db";
 /*
  * Gateways, measured on a cold CID rather than chosen by reputation:
  *
@@ -172,9 +173,92 @@ export function candidates(raw: string): string[] {
   return urls;
 }
 
+/*
+ * A second cache, on disk, behind the one in memory.
+ *
+ * The memory cache dies with the process, and this app is redeployed by
+ * rebuilding its container — so every deploy threw away every logo and left
+ * the next few hundred visitors waiting on IPFS gateways that take seconds on
+ * a cold CID. That is exactly what "the images stopped loading again" looks
+ * like from outside, and it had nothing to do with the image code.
+ *
+ * Cheap now in a way it was not before: since logos are resized to 96px WebP
+ * they are two or three kilobytes each, so the whole 800-entry cache is a
+ * couple of megabytes on the volume that already holds the index.
+ */
+function ensureTable(): void {
+  db().exec(`
+    CREATE TABLE IF NOT EXISTS img_cache (
+      url  TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      body BLOB NOT NULL,
+      at   INTEGER NOT NULL
+    )
+  `);
+}
+
+let tableReady = false;
+function store(): ReturnType<typeof db> | null {
+  try {
+    if (!tableReady) {
+      ensureTable();
+      tableReady = true;
+    }
+    return db();
+  } catch {
+    // No database is survivable: the memory cache still works, the site is
+    // just slower after a restart. It is not worth failing an image over.
+    return null;
+  }
+}
+
+/** Read one logo back off the volume, or null. */
+function fromDisk(raw: string): CachedImage | null {
+  const d = store();
+  if (!d) return null;
+  try {
+    const row = d
+      .prepare(`SELECT type, body, at FROM img_cache WHERE url = ?`)
+      .get(raw) as { type?: string; body?: Uint8Array; at?: number } | undefined;
+    if (!row?.body || !row.type || !row.at) return null;
+    const copy = new ArrayBuffer(row.body.byteLength);
+    new Uint8Array(copy).set(row.body);
+    return { at: row.at, type: row.type, body: copy };
+  } catch {
+    return null;
+  }
+}
+
+function toDisk(raw: string, e: CachedImage): void {
+  const d = store();
+  if (!d) return;
+  try {
+    d.prepare(
+      `INSERT INTO img_cache (url, type, body, at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(url) DO UPDATE SET type = excluded.type, body = excluded.body, at = excluded.at`,
+    ).run(raw, e.type, new Uint8Array(e.body), e.at);
+  } catch {
+    /* a cache that cannot write is still a cache that can read */
+  }
+}
+
 export function cached(raw: string): CachedImage | null {
   const hit = cache().get(raw);
-  return hit && Date.now() - hit.at < TTL_MS ? hit : null;
+  if (hit && Date.now() - hit.at < TTL_MS) return hit;
+  /*
+   * Disk is checked on a memory miss, and a disk hit is promoted back into
+   * memory. No TTL on the way back: a token's artwork does not change, and
+   * re-fetching a logo we already hold to prove it is still the same picture
+   * is the whole cost this cache exists to avoid.
+   */
+  const onDisk = fromDisk(raw);
+  if (onDisk) {
+    const c = cache();
+    if (c.size >= MAX_ENTRIES) c.delete(c.keys().next().value as string);
+    c.set(raw, { ...onDisk, at: Date.now() });
+    return onDisk;
+  }
+  return null;
 }
 
 /** Fetch and cache one logo. Resolves to null when nothing serves it. */
@@ -237,6 +321,7 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
     const c = cache();
     if (c.size >= MAX_ENTRIES) c.delete(c.keys().next().value as string);
     c.set(raw, entry);
+    toDisk(raw, entry);
     return entry;
   } finally {
     inFlight().delete(raw);
