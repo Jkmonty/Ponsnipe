@@ -1,13 +1,22 @@
 /**
- * Ponsnipe mark: a bow, and an arrow that is also the chart.
+ * Ponsnipe mark: a P with a scope in it.
  *
- * The arrow's shaft is a price line — it starts red and falling at the nock,
- * turns through amber, and leaves the bow green and climbing. That is the
- * whole product in one shape: Robin Hood's weapon, aimed at a trend.
+ * Drawn rather than dropped in as an image, for two reasons. It has to stay
+ * sharp at 32px in the header and at whatever size a favicon or a share card
+ * asks for, and the glass needs to sit on this app's near-black surface — a
+ * PNG with a baked white edge shows its own rectangle the moment the ground
+ * behind it is not white.
  *
- * The bow is drawn as two limbs meeting at a riser rather than as one even
- * arc, because a symmetrical crescent reads as a moon at small sizes. The
- * string is a hairline: at 16px anything thicker merges with the limbs.
+ * The glass is three passes, which is what stops it reading as flat grey: a
+ * body gradient dark at the foot and bright at the shoulder, a green-tinted
+ * rim that only shows where the light rakes across an edge, and one specular
+ * highlight across the top-left. Robin Hood's green appears in the rim only —
+ * green and red belong to profit and loss everywhere else in this interface,
+ * and a mark that borrows them competes with the numbers.
+ *
+ * The reticle is deliberately coarse. A real scope has fine hairs and every
+ * one of them disappears below about 24px, leaving a smudge; these are wide
+ * enough to survive the header and the browser tab.
  *
  * `id` namespaces the gradients. Two of these on one page sharing ids would
  * have the second silently reuse the first one's defs.
@@ -24,45 +33,65 @@ export default function Logo({ size = 30, id = "pn" }: { size?: number; id?: str
       style={{ display: "block", flex: "none" }}
     >
       <defs>
-        {/* Loss to profit, along the direction the arrow travels. */}
-        <linearGradient id={`${id}-line`} x1="3" y1="28" x2="29" y2="4" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#ff4d4d" />
-          <stop offset="34%" stopColor="#ff8a3d" />
-          <stop offset="62%" stopColor="#8ad42f" />
-          <stop offset="100%" stopColor="#5ee02a" />
+        {/* The body: heavy at the foot, lit at the shoulder. */}
+        <linearGradient id={`${id}-body`} x1="6" y1="30" x2="26" y2="2" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#5f6a72" />
+          <stop offset="38%" stopColor="#9aa6ac" />
+          <stop offset="70%" stopColor="#dfe6e6" />
+          <stop offset="100%" stopColor="#ffffff" />
         </linearGradient>
-        {/* Polished steel, lit from the upper left. */}
-        <linearGradient id={`${id}-bow`} x1="10" y1="4" x2="24" y2="28" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#ffffff" />
-          <stop offset="45%" stopColor="#c8cedb" />
-          <stop offset="100%" stopColor="#8a93a5" />
+        {/* The rim. Green only where an edge catches the light. */}
+        <linearGradient id={`${id}-rim`} x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#eef6ef" />
+          <stop offset="45%" stopColor="#9dc4a6" />
+          <stop offset="100%" stopColor="#6f9c7c" />
+        </linearGradient>
+        {/* One highlight, fading out before it reaches the middle. */}
+        <linearGradient id={`${id}-gloss`} x1="8" y1="3" x2="18" y2="15" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.85" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
         </linearGradient>
       </defs>
 
-      {/* Bowstring, behind everything. */}
-      <path d="M11.2 4.6 L20.4 27.6" stroke="#6f7688" strokeWidth="0.7" strokeLinecap="round" />
-
-      {/* Upper limb, riser, lower limb — one stroke, recurved at each tip. */}
+      {/*
+        The P as one closed shape: a rounded head, and a leg dropping from its
+        bottom-left. No counter — the bowl is solid because the reticle lives
+        there, and a hole would leave nothing to cut it into.
+      */}
       <path
-        d="M11.2 4.6 C15.6 6.2 19.4 9.4 21.2 13.6 C23.4 18.4 23.2 23.6 20.4 27.6"
-        stroke={`url(#${id}-bow)`}
-        strokeWidth="2.6"
-        strokeLinecap="round"
-        fill="none"
-      />
-
-      {/* The shaft: a price line, not a straight rod. */}
-      <path
-        d="M2.6 27.4 L7 22.6 L10 25.2 L15.4 16.4 L18.6 18.6 L26.4 7.2"
-        stroke={`url(#${id}-line)`}
-        strokeWidth="2.9"
-        strokeLinecap="round"
+        d="M4.6 29.4 V8.2
+           A5.6 5.6 0 0 1 10.2 2.6
+           H21.6
+           A5.6 5.6 0 0 1 27.2 8.2
+           V14.6
+           A5.6 5.6 0 0 1 21.6 20.2
+           H12.6
+           V29.4
+           A0 0 0 0 1 12.6 29.4
+           H4.6 Z"
+        fill={`url(#${id}-body)`}
+        stroke={`url(#${id}-rim)`}
+        strokeWidth="1.5"
         strokeLinejoin="round"
-        fill="none"
       />
 
-      {/* Broadhead, leaving the bow. */}
-      <path d="M29.6 3.4 L21.6 5.6 L27.2 10.4 Z" fill="#5ee02a" />
+      {/* Specular pass, clipped to the top-left shoulder. */}
+      <path
+        d="M6.1 14.6 V8.4 A4.3 4.3 0 0 1 10.4 4.1 H20 A4.3 4.3 0 0 1 22 4.6 Z"
+        fill={`url(#${id}-gloss)`}
+      />
+
+      {/* The scope, sitting in the bowl. Ticks stop a clear 1.3 units short of the body on every side. Drawn
+          any longer they touch the rim, and the reticle stops reading as
+          something sitting inside the letter and starts reading as a crack. */}
+      <g stroke="#f4f8f5" strokeWidth="1.5" strokeLinecap="round" fill="none">
+        <circle cx="18.8" cy="11.3" r="4.5" strokeWidth="1.6" />
+        <path d="M18.8 4.7 V8.3" />
+        <path d="M18.8 14.3 V17.9" />
+        <path d="M12.2 11.3 H15.8" />
+        <path d="M21.8 11.3 H25.4" />
+      </g>
+      <circle cx="18.8" cy="11.3" r="1.2" fill="#f4f8f5" />
     </svg>
   );
 }

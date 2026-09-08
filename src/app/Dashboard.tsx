@@ -223,7 +223,7 @@ export default function Dashboard() {
             <Logo size={32} />
             <h1>Ponsnipe</h1>
           </div>
-          <p className="sub">Pick your target. Take the shot. Walk away.</p>
+          <p className="sub">Precision sniping. Maximum edge.</p>
         </div>
         <div className="row" style={{ gap: 10 }}>
           {/* A read-only instance has nothing to switch, and offering the
