@@ -14,6 +14,12 @@ FROM node:24-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 # `npm ci` needs the dev dependencies: next build runs TypeScript.
+#
+# This also picks sharp's binary for THIS platform, which is why the install
+# happens in the container rather than being copied in from the host — a
+# node_modules built on Windows carries @img/sharp-win32-x64 and nothing that
+# Linux can load. The lockfile lists all 26 platform packages, so x64 and
+# arm64 hosts both resolve correctly.
 RUN npm ci
 
 # ── build ───────────────────────────────────────────────────────────────

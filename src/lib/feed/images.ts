@@ -9,6 +9,7 @@
  * Fetching them the moment a launch is indexed means the picture is already in
  * hand by the time anyone looks at it.
  */
+import sharp from "sharp";
 /*
  * Gateways, measured on a cold CID rather than chosen by reputation:
  *
@@ -40,6 +41,50 @@ const GATEWAYS = [
 const FETCH_TIMEOUT_MS = 15_000;
 
 const MAX_BYTES = 3 * 1024 * 1024;
+
+/**
+ * What a logo is shrunk to before it is cached or served.
+ *
+ * The feed draws these at 38 CSS pixels. It was serving whatever the creator
+ * uploaded — 400x400 and up, one of them 2.87MB — so a single page load pulled
+ * 19.6MB of artwork to fill 53 thumbnails. That is the slowest thing on a page
+ * whose entire pitch is being fast, and on a metered host it is also the whole
+ * bandwidth bill.
+ *
+ * 96px covers a 2x display with room to spare. WebP because every browser that
+ * can reach this app supports it, and it is a fraction of the equivalent PNG.
+ */
+const THUMB_PX = 96;
+const THUMB_QUALITY = 80;
+
+/**
+ * Shrink one logo, or hand back the original if it cannot be read.
+ *
+ * Never throws. A logo sharp cannot decode is still a logo, and serving one
+ * awkward image at full size beats a hole where a coin should be.
+ */
+async function shrink(
+  body: ArrayBuffer,
+  type: string,
+): Promise<{ body: ArrayBuffer; type: string }> {
+  try {
+    const out = await sharp(Buffer.from(body), { animated: false })
+      // EXIF orientation applied before the resize, or a rotated source comes
+      // out sideways in a square crop.
+      .rotate()
+      .resize(THUMB_PX, THUMB_PX, { fit: "cover", position: "centre", withoutEnlargement: true })
+      .webp({ quality: THUMB_QUALITY })
+      .toBuffer();
+    // A "shrink" that grew the file is not one: tiny icons and already-small
+    // WebP can come back larger than they went in.
+    if (out.byteLength >= body.byteLength) return { body, type };
+    const copy = new ArrayBuffer(out.byteLength);
+    new Uint8Array(copy).set(out);
+    return { body: copy, type: "image/webp" };
+  } catch {
+    return { body, type };
+  }
+}
 const TTL_MS = 30 * 60_000;
 const MAX_ENTRIES = 800;
 
@@ -171,7 +216,11 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
       if (Number(r.headers.get("content-length") ?? 0) > MAX_BYTES) throw new Error("too big");
       const body = await r.arrayBuffer();
       if (body.byteLength > MAX_BYTES) throw new Error("too big");
-      return { at: Date.now(), type, body };
+      // Shrunk before it is cached rather than on the way out: the cache then
+      // holds kilobytes per logo instead of megabytes, and the work happens
+      // once per image instead of once per viewer.
+      const small = await shrink(body, type);
+      return { at: Date.now(), type: small.type, body: small.body };
     };
 
     let entry: CachedImage;
