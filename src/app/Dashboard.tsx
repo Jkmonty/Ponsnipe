@@ -330,7 +330,21 @@ export default function Dashboard() {
         card, a buy form and a sniper switch that all 401 on touch reads as a
         failure rather than as a deliberate shop window.
       */}
-      {wallet?.publicMode ? (
+      {/*
+        Nothing until the wallet read lands.
+
+        `wallet` starts null and the branch below treats null as "not public",
+        so a hosted instance mounted the whole local dashboard for one frame —
+        sniper card and all — then threw it away when the fetch resolved. That
+        was a visible flash of the wrong layout and a burst of requests to
+        routes a public instance answers with 404.
+      */}
+      {wallet === null ? (
+        <div className="cols cols-solo">
+          <div className="card feed-skeleton" aria-busy="true" />
+          <div className="card feed-skeleton" aria-busy="true" />
+        </div>
+      ) : wallet.publicMode ? (
         <div className="cols cols-solo">
           <Feed onPick={(address) => setPicked({ address, n: Date.now() })} />
           <div className="colside">

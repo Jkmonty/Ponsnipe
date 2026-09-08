@@ -447,9 +447,25 @@ export default function TradePanel({
       )}
 
       {!snap ? (
-        <p className="ssub" style={{ marginTop: 8 }}>
-          Pick a coin from the feed to buy it — one click, no popup to confirm.
-        </p>
+        picked && !msg ? (
+          /*
+            Loading, and it says so.
+
+            The lookup takes a beat — a token read plus, for a stock-quoted
+            coin, a check that a swap route exists. Until now the panel showed
+            "pick a coin from the feed" the entire time, so clicking a row
+            looked like it had done nothing and people clicked again.
+          */
+          <div className="loading-coin" aria-busy="true">
+            <span className="lc-bar lc-a" />
+            <span className="lc-bar lc-b" />
+            <span className="lc-bar lc-c" />
+          </div>
+        ) : (
+          <p className="ssub" style={{ marginTop: 8 }}>
+            Pick a coin from the feed to buy it — one click, no popup to confirm.
+          </p>
+        )
       ) : !snap.tradeable ? (
         <p className="note-warn">
           <strong>{snap.symbol} cannot be traded.</strong> {snap.reason ?? "The curve is closed."}

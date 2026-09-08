@@ -1,922 +1,755 @@
 @import "tailwindcss";
 
-/*
- * Palette. Deeper and cooler than the old one, with a single saturated accent
- * doing all the emphasis — a dashboard that shouts in four colours reads as
- * noise, and the numbers are the thing that should catch the eye.
+/* ══════════════════════════════════════════════════════════════════════════
+ * PONSNIPE — design system
  *
- * Surfaces step up rather than down: the page is near-black, cards sit slightly
- * above it, and controls above those. That ordering is what makes depth read
- * without borders everywhere.
- */
+ * Rewritten from a stylesheet that had grown by accretion: six rules for
+ * .frow-item, three for .feed, each appended below the last and quietly
+ * overriding it. Nothing was wrong individually; together there was no system,
+ * so every new component invented its own spacing and its own grey.
+ *
+ * The rules this file follows:
+ *
+ *   Space on a 4px grid. Every gap, pad and margin is a step, never a number
+ *   picked because it looked right in one place.
+ *
+ *   Radius by role, not by taste. Pills are pills, panels are panels, and a
+ *   control is 8px whatever it contains.
+ *
+ *   Colour carries meaning. Lime is "you can act on this". Gold is the brand
+ *   and secondary emphasis. Green and red are profit and loss and are used for
+ *   nothing else — a button that borrows profit-green makes a P&L column
+ *   harder to read, which is the only thing on screen that must never be
+ *   ambiguous.
+ *
+ *   Depth from surface steps and hairlines, not from glow. Four background
+ *   levels, borders under 10% white, shadows that sit under the element rather
+ *   than radiating from it.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
 :root {
   color-scheme: dark;
-  /*
-   * Four steps of depth, spaced far enough apart to be seen.
-   *
-   * The old set ran #07080c / #0b0d13 / #101219 / #171a24 — the page, a card
-   * and a row inside it were within nine values of each other, so nothing sat
-   * on top of anything and the interface read as one flat grey field. Each
-   * step is now a clear lift, and the lines are light enough to actually draw.
-   */
-  --bg: #05060a;
-  --bg-2: #0a0c13;
-  --card: #12151f;
-  --card-2: #1b2030;
-  --line: #262c3a;
-  --line-2: #374054;
-  --text: #f4f6fa;
-  /* Lifted from #8b93a6: at 11px on these surfaces the old value sat under
-     4.5:1 and the row metadata was genuinely hard to read. */
-  --muted: #99a1b5;
-  --muted-2: #6e7689;
-  /* Robin Hood: Lincoln green and the gold he took. Gold leads because green
-     and red are already spoken for by profit and loss, and a brand colour that
-     doubles as a P&L signal makes both harder to read. */
-  --accent: #f0b429;
-  --accent-2: #1f9d5c;
-  --accent-press: #d69c17;
-  --accent-glow: rgba(240, 180, 41, 0.32);
-  /* Gold and Lincoln green are both too light for white text to sit on. */
-  --on-accent: #12100a;
-  --green: #2fd48f;
-  --green-bg: #08281d;
-  --red: #ff6b6b;
-  --red-bg: #2a1116;
-  /* Pushed orange so a warning never reads as the gold brand accent. */
-  --amber: #ff9142;
-  --amber-bg: #2e1a0d;
-  --radius: 12px;
-  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+
+  /* ── surfaces: four steps, far enough apart to be seen ── */
+  --bg: #06070a;
+  --s1: #0c0e13;   /* panels sitting on the page */
+  --s2: #12151c;   /* raised: rows, headers */
+  --s3: #191d26;   /* controls: inputs, secondary buttons */
+  --s4: #222733;   /* hover on a control */
+
+  /* ── lines: three weights, all under 10% white ── */
+  --hair: rgba(255, 255, 255, 0.045);
+  --line: rgba(255, 255, 255, 0.075);
+  --line-2: rgba(255, 255, 255, 0.13);
+
+  /* ── text: four levels, each a clear step down ── */
+  --t1: #eef1f5;
+  --t2: #a8b0bd;
+  --t3: #6d7684;
+  --t4: #4d5563;
+
+  /* ── accents ──
+   * Lime acts. Gold brands. Green and red are money and nothing else — kept
+   * far enough from lime in hue that a live dot never reads as a gain. */
+  --lime: #c3f53c;
+  --lime-dim: rgba(195, 245, 60, 0.12);
+  --lime-line: rgba(195, 245, 60, 0.32);
+  --lime-ink: #101504;
+
+  --gold: #f0b429;
+  --gold-dim: rgba(240, 180, 41, 0.11);
+  --gold-line: rgba(240, 180, 41, 0.3);
+  --gold-ink: #17120a;
+
+  --up: #2fd48f;
+  --up-dim: rgba(47, 212, 143, 0.11);
+  --down: #ff6b6b;
+  --down-dim: rgba(255, 107, 107, 0.1);
+  --warn: #ff9142;
+  --warn-dim: rgba(255, 145, 66, 0.1);
+
+  /* ── space: 4px grid ── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+
+  /* ── radius by role ── */
+  --r-chip: 4px;
+  --r-ctl: 8px;
+  --r-panel: 12px;
+  --r-pill: 999px;
+
+  /* ── depth: below the element, never around it ── */
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px -12px rgba(0, 0, 0, 0.8);
+  --sh-3: 0 4px 8px rgba(0, 0, 0, 0.35), 0 20px 44px -24px rgba(0, 0, 0, 0.9);
+
+  /* ── motion: fast, and the same everywhere ── */
+  --fast: 110ms cubic-bezier(0.2, 0, 0.2, 1);
+  --med: 180ms cubic-bezier(0.2, 0, 0.2, 1);
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 }
 
-* {
-  box-sizing: border-box;
+* { box-sizing: border-box; }
+
+::selection { background: var(--lime-dim); color: var(--t1); }
+
+/* One focus treatment for the whole app. Visible, on-brand, never a browser
+   default blue that belongs to no design. */
+:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+  border-radius: var(--r-chip);
 }
 
-/*
- * Every figure in this app sits in a column under another figure, and the
- * default proportional digits made those columns ragged — a 1 is half the
- * width of a 0, so $1.1k and $8.8k did not align at the decimal.
- */
-.num,
-.mono,
-.fnum,
-input.input {
+html { scrollbar-color: var(--s4) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--s4);
+  border-radius: var(--r-pill);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: #2e3542; }
+
+body {
+  margin: 0;
+  /* Two very low radials and a flat ground. A wall of small numbers cannot
+     compete with a textured background, so every pixel behind text is
+     effectively flat — these only stop the page reading as unfinished. */
+  background:
+    radial-gradient(1200px 560px at 8% -10%, rgba(195, 245, 60, 0.035), transparent 60%),
+    radial-gradient(900px 460px at 98% -6%, rgba(240, 180, 41, 0.03), transparent 58%),
+    var(--bg);
+  background-attachment: fixed;
+  color: var(--t1);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Every column of figures aligns at the decimal. */
+.num, .mono, .fnum, input.input, .slog-time, .watch-state, .fbond-txt {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
 }
+.mono { font-family: var(--mono); }
 
-body {
-  /*
-   * Three fixed washes over the base, not a picture.
-   *
-   * A flat #07080c reads as unfinished on a big screen, but this app is a wall
-   * of small numbers and any background with texture in it competes with them.
-   * Large, very low-opacity radials give the page a lit corner and a horizon
-   * while leaving every pixel behind the text effectively flat. Fixed, so they
-   * do not slide around as the feed scrolls.
-   */
-  background:
-    radial-gradient(1100px 620px at 12% -12%, rgba(47, 212, 143, .085), transparent 62%),
-    radial-gradient(900px 520px at 96% -6%, rgba(240, 180, 41, .06), transparent 58%),
-    radial-gradient(1400px 800px at 50% 108%, rgba(60, 90, 200, .05), transparent 65%),
-    var(--bg);
-  background-attachment: fixed;
-  color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 15px;
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
-}
+/* ── typography scale ─────────────────────────────────────────────────────
+ * Five levels and no more. The old interface had eleven font sizes between
+ * 10 and 16px, which is why everything competed: nothing was clearly more
+ * important than anything else. */
+h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.005em; }
+h3 { font-size: 14px; font-weight: 600; margin: 0; }
 
-/*
- * Wide enough for the feeds to flank the controls. The middle column keeps the
- * original 780px reading width via the grid, so the parts you actually read
- * never get wider than they were.
- */
+.muted { color: var(--t2); }
+.small { font-size: 12.5px; }
+.pos { color: var(--up); }
+.neg { color: var(--down); }
+.ta-c { text-align: center; }
+.ta-r { text-align: right; }
+.ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
 .wrap {
-  max-width: 1460px;
+  max-width: 1640px;
   margin: 0 auto;
-  padding: 0 18px 80px;
+  padding: 0 var(--sp-6) var(--sp-8);
 }
 
-/*
- * The top bar. This was a heading and a paragraph sitting loose on the page
- * with the live/dry switch drifting off to the right, which gave the app no
- * edge to start at. A full-width bar with a rule under it anchors both.
- */
+/* ══ HEADER ═══════════════════════════════════════════════════════════════
+ * Deliberately short. A trading terminal gives its height to the data; a tall
+ * header is a landing page's idea of importance. */
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 20;
-  margin: 0 -18px 18px;
-  padding: 14px 26px;
+  z-index: 40;
+  margin: 0 calc(var(--sp-6) * -1) var(--sp-5);
+  padding: var(--sp-3) var(--sp-6);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  /* Frosted, so the feed scrolling underneath is visible but never legible
-     enough to compete with the bar's own contents. */
-  background: linear-gradient(180deg, rgba(18, 22, 33, 0.78), rgba(10, 12, 19, 0.62));
-  backdrop-filter: blur(18px) saturate(1.5);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 8px 28px -20px #000;
+  gap: var(--sp-4);
+  min-height: 58px;
+  background: linear-gradient(180deg, rgba(10, 12, 16, 0.92), rgba(6, 7, 10, 0.86));
+  backdrop-filter: blur(20px) saturate(1.3);
+  border-bottom: 1px solid var(--line);
 }
-.topbar .lockup { gap: 12px; }
+/* A single lime hairline under the bar, fading out at both ends. The only
+   brand colour in the chrome, and it is one pixel tall. */
+.topbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(195, 245, 60, 0.35) 18%, rgba(240, 180, 41, 0.22) 55%, transparent);
+  pointer-events: none;
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .topbar { background: #0a0c10; }
+}
 
+.lockup { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+.lockup svg { flex: none; }
 /*
- * The wordmark, matched to the mark instead of fighting it.
+ * The bar never wraps.
  *
- * This was 19px, weight 700, tracking -0.015em — heavy and tight, which is the
- * opposite of the brand's own lettering: light strokes, wide spacing, brushed
- * metal. Beside a pale glass P it read as two logos that had never met.
- *
- * The chrome is a gradient clipped to the glyphs, with a solid colour
- * underneath. If background-clip:text is unsupported the fallback shows and
- * the name is still legible; without it the text would be transparent, which
- * is a blank header rather than a plain one.
+ * .row wraps by design, and the header uses it for both groups — so at phone
+ * width the right-hand group broke onto a second line inside a bar with a
+ * fixed min-height, and the wallet button landed on top of the wordmark. The
+ * header shrinks its parts instead of stacking them.
  */
+.topbar > .row { flex-wrap: nowrap; min-width: 0; }
+.topbar > .row:last-child { flex: none; }
+
 .topbar h1 {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 500;
   letter-spacing: 0.085em;
-  /* The last letter's tracking pushes a gap before the divider that is not
-     there optically; pulling it back re-centres the lockup. */
   margin-right: -0.085em;
   color: #e9eef2;
+  white-space: nowrap;
 }
 @supports (background-clip: text) {
   .topbar h1 {
-    background: linear-gradient(
-      178deg,
-      #ffffff 0%,
-      #eef3f4 26%,
-      #a9b4b9 52%,
-      #7d888e 63%,
-      #dfe7e8 88%,
-      #ffffff 100%
-    );
+    background: linear-gradient(178deg, #fff 0%, #eef3f4 26%, #a9b4b9 52%, #7d888e 63%, #dfe7e8 88%, #fff 100%);
     background-clip: text;
     color: transparent;
   }
 }
-/* Set the way the brand sets it: small caps-height, widely tracked, and the
-   pale green that only ever appears in the mark's rim. */
+
 .topbar .sub {
-  margin: 0;
-  font-size: 10.5px;
+  margin: 0 0 0 var(--sp-4);
+  padding-left: var(--sp-4);
+  font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.17em;
   text-transform: uppercase;
-  color: #93b39c;
-  border-left: 1px solid var(--line-2);
-  padding-left: 14px;
-  margin-left: 4px;
-}
-@media (max-width: 780px) {
-  .topbar { padding: 12px 16px; }
-  .topbar .sub { display: none; }
+  color: #8fae98;
+  border-left: 1px solid var(--line);
+  white-space: nowrap;
 }
 
-h1 {
-  font-size: 22px;
-  font-weight: 700;
-  margin: 0;
-  letter-spacing: -0.01em;
-}
-
-.sub {
-  color: var(--muted);
-  font-size: 14px;
-  margin: 4px 0 0;
-}
-
-.card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 22px;
-  margin-bottom: 16px;
-}
-
-.card h2 {
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  margin: 0 0 14px;
-}
-
-/*
- * Section headings, made to actually head something.
- *
- * "Sniper" and "Buy a ticker on sight" were the same weight and colour as the
- * body around them with a grey clause trailing off the end, so the eye read
- * straight past the thing that tells you what the controls below it do. The
- * accent rule gives each block a visible start; the subtitle drops to its own
- * line so the title is a title rather than the front of a sentence.
- */
-.card h2.shead,
-.card h3.shead,
-.shead {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  font-size: 15.5px;
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  color: var(--text);
-}
-.shead::before {
-  content: "";
-  flex: none;
-  width: 3px;
-  align-self: stretch;
-  min-height: 17px;
-  border-radius: 2px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
-}
-.ssub {
-  margin: 3px 0 13px 13px;
+.topbar-link {
   font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--muted);
+  font-weight: 500;
+  color: var(--t3);
+  text-decoration: none;
+  padding: var(--sp-2) var(--sp-1);
+  transition: color var(--fast);
 }
+.topbar-link:hover { color: var(--t1); }
 
-.row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.spread {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.muted {
-  color: var(--muted);
-}
-.small {
-  font-size: 13px;
-}
-.mono {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-}
-.pos {
-  color: var(--green);
-}
-.neg {
-  color: var(--red);
-}
-
-label.field {
-  display: block;
-  margin-bottom: 14px;
-}
-label.field > span {
-  display: block;
-  font-size: 13px;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
-.input {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--line-2);
-  border-radius: 999px;
-  padding: 11px 16px;
-  color: var(--text);
-  font-size: 15px;
-  outline: none;
-}
-.input:focus {
-  border-color: var(--accent);
-}
-
+/* ══ CONTROLS ═════════════════════════════════════════════════════════════ */
 .btn {
-  border-radius: 10px;
-  padding: 11px 18px;
-  font-weight: 600;
-  font-size: 15px;
-  cursor: pointer;
-  border: 1px solid transparent;
-  background: var(--card-2);
-  color: var(--text);
-  transition: filter 0.12s ease, background 0.12s ease;
-}
-.btn:hover:not(:disabled) {
-  filter: brightness(1.15);
-}
-.btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.btn-primary {
-  background: var(--accent);
-  color: var(--on-accent);
-  border-color: transparent;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, .18) inset, 0 6px 18px -8px var(--accent-glow);
-}
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-press);
-  filter: none;
-}
-.btn-lg {
-  padding: 13px 22px;
-  font-size: 16px;
-  width: 100%;
-}
-/* Anything multi-line has to stay a rounded rectangle — a pill round a
-   textarea bows its own corners into the text. */
-textarea.input,
-.input[rows] { border-radius: 14px; }
-
-.btn-sm {
-  padding: 7px 12px;
-  font-size: 13px;
-}
-.btn-danger {
-  background: var(--red-bg);
-  color: #ffb4b4;
-  border-color: #5c2b2b;
-}
-.btn-outline {
-  background: transparent;
-  border-color: var(--line-2);
-  color: var(--muted);
-}
-
-.chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  padding: 4px 10px;
-  border-radius: 999px;
-}
-.chip-live {
-  background: var(--green-bg);
-  color: var(--green);
-}
-.chip-dry {
-  background: var(--amber-bg);
-  color: var(--amber);
-}
-.chip-off {
-  background: var(--red-bg);
-  color: var(--red);
-}
-
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: currentColor;
-  display: inline-block;
-}
-
-/* toggle switch */
-.switch {
-  --w: 46px;
-  --h: 26px;
-  position: relative;
-  width: var(--w);
-  height: var(--h);
-  border-radius: 999px;
-  border: none;
-  cursor: pointer;
-  background: var(--line-2);
-  transition: background 0.15s ease;
-  flex: none;
-}
-.switch[data-on="true"] {
-  background: var(--green);
-}
-.switch::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: #fff;
-  transition: transform 0.15s ease;
-}
-.switch[data-on="true"]::after {
-  transform: translateX(20px);
-}
-
-.preset {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.preset .btn {
-  flex: 1;
-  min-width: 120px;
-  text-align: center;
-}
-.preset .btn[data-sel="true"] {
-  border-color: var(--accent);
-  color: #fff;
-}
-
-.bar {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--line);
-  overflow: hidden;
-  margin-top: 6px;
-}
-.bar > i {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
-
-.plist {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.pcard {
-  background: var(--card-2);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 14px 16px;
-}
-.pcard .top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-}
-.pnl-big {
-  font-size: 20px;
-  font-weight: 700;
-}
-.pcard .meta {
-  color: var(--muted);
-  font-size: 13px;
-  margin-top: 4px;
-}
-
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: 22px;
-  transform: translateX(-50%);
-  max-width: 620px;
-  width: calc(100% - 36px);
-  padding: 13px 16px;
-  border-radius: 12px;
-  font-size: 14px;
-  border: 1px solid var(--line-2);
-  background: var(--card);
-  z-index: 50;
-}
-.toast.ok {
-  border-color: #2f6b52;
-  color: var(--green);
-}
-.toast.err {
-  border-color: #6b2f2f;
-  color: #ffb4b4;
-}
-
-details.log summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 14px;
-  list-style: none;
-}
-details.log summary::-webkit-details-marker {
-  display: none;
-}
-details.log[open] summary {
-  margin-bottom: 10px;
-}
-.logbody {
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.7;
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-a {
-  color: var(--accent);
-  text-decoration: none;
-}
-a:hover {
-  text-decoration: underline;
-}
-
-/* ── live feeds ───────────────────────────────────────────────────────────── */
-/*
- * Three columns: the feeds flank the controls so nothing important needs
- * scrolling. Below 1200px they fall under the main column rather than being
- * squeezed, because a 3-across layout stops being readable well before it
- * stops fitting.
- */
-.cols3 {
-  display: grid;
-  grid-template-columns: minmax(0, 320px) minmax(0, 780px) minmax(0, 300px);
   justify-content: center;
-  gap: 14px;
-  align-items: start;
+  gap: var(--sp-2);
+  height: 38px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--line-2);
+  background: var(--s3);
+  color: var(--t1);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--fast), border-color var(--fast), color var(--fast), transform var(--fast);
 }
-/* Read-only instance: the feed takes the room the workflow column used. */
-/* Public instance: feed on the left, the trader's own wallet on the right. */
-.cols-solo { grid-template-columns: minmax(0, 1fr) 380px; }
-.colside {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-  position: sticky;
-  top: 74px;
-}
-@media (max-width: 1100px) {
-  .cols-solo { grid-template-columns: minmax(0, 1fr); }
-  .colside { position: static; }
-}
+.btn:hover:not(:disabled) { background: var(--s4); border-color: rgba(255, 255, 255, 0.2); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* A button that reads as a link, for a minor action inside a sentence. */
+/* The primary action. Lime, solid, dark ink — the one thing on a panel that
+   is unambiguously "do it". Exactly one of these per panel. */
+.btn-primary {
+  background: var(--lime);
+  border-color: transparent;
+  color: var(--lime-ink);
+  font-weight: 650;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.35) inset, var(--sh-1);
+}
+.btn-primary:hover:not(:disabled) { background: #d0ff52; border-color: transparent; }
+.btn-primary:disabled { background: var(--s3); color: var(--t3); box-shadow: none; }
+
+.btn-outline { background: transparent; border-color: var(--line-2); color: var(--t2); }
+.btn-outline:hover:not(:disabled) { background: var(--s3); color: var(--t1); }
+.btn-danger { background: var(--down-dim); border-color: rgba(255, 107, 107, 0.3); color: #ffb4b4; }
+.btn-sm { height: 30px; padding: 0 var(--sp-3); font-size: 12.5px; }
+.btn-lg { height: 44px; width: 100%; font-size: 14.5px; }
+
 .linkish {
   background: none;
   border: 0;
   padding: 0;
-  color: var(--muted);
   font: inherit;
-  text-decoration: underline;
+  font-size: 12.5px;
+  color: var(--t3);
   cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-2);
+  transition: color var(--fast), text-decoration-color var(--fast);
 }
-.linkish:hover { color: var(--text); }
+.linkish:hover { color: var(--lime); text-decoration-color: var(--lime-line); }
 
-.colmain { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.colside { min-width: 0; position: sticky; top: 12px; }
-@media (max-width: 1200px) {
-  .cols3 { grid-template-columns: 1fr; }
-  .colside { position: static; }
-}
-
-.feed {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  max-height: 68vh;
-  overflow-y: auto;
-}
-/*
- * Rows STACK rather than sitting in columns. The panel is narrow, and a
- * side-by-side grid made the symbol, stats and verdict overlap each other.
- */
-.feedrow {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 7px 9px;
-  border-radius: 7px;
-  border-left: 3px solid transparent;
-  min-width: 0;
-}
-.feedrow:nth-child(odd) { background: rgba(255, 255, 255, 0.025); }
-.feedrow.want {
-  border-left-color: var(--good, #35c46b);
-  background: rgba(53, 196, 107, 0.09);
-}
-.feedrow.grad { border-left-color: #7c9cff; background: rgba(124, 156, 255, 0.08); }
-
-.feedmain { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.fsym {
-  font-weight: 650;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 46%;
-}
-.feedstats {
-  display: flex;
-  gap: 10px;
-  color: var(--muted, #8b93a7);
+label.field { display: block; margin-bottom: var(--sp-3); }
+label.field > span {
+  display: block;
   font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.feedverdict {
-  font-size: 11px;
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.feedverdict.warn { color: #e8b339; font-weight: 600; }
-
-.qchip {
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 5px;
-  border-radius: 999px;
-  border: 1px solid currentColor;
-  opacity: 0.85;
-  flex: 0 0 auto;
-}
-.q-eth { color: #7c9cff; }
-.q-usdg { color: #35c46b; }
-
-.ticon {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  object-fit: cover;
-  flex: 0 0 auto;
-  background: rgba(255, 255, 255, 0.06);
-}
-.ticon-fallback {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--muted, #8b93a7);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-/* ── terminal-style feeds ──────────────────────────────────────────────────── */
-/*
- * A faint mesh behind the page. Two large, very low-opacity radial gradients
- * rather than an image: it survives any window size, costs nothing to load,
- * and cannot end up looking like clip art.
- */
-body {
-  background-image:
-    radial-gradient(900px 600px at 12% -8%, rgba(90, 120, 255, 0.10), transparent 60%),
-    radial-gradient(760px 520px at 92% 4%, rgba(53, 196, 107, 0.07), transparent 62%),
-    radial-gradient(680px 680px at 50% 108%, rgba(124, 156, 255, 0.06), transparent 60%);
-  background-attachment: fixed;
-}
-.feedcard {
-  backdrop-filter: blur(6px);
-  background: rgba(20, 22, 30, 0.72);
-}
-
-/* One migrated row: identity left, numbers right, move pinned to the edge. */
-.grow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: "left right" "left move";
-  gap: 2px 10px;
-  align-items: center;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border-left: 3px solid #7c9cff;
-  background: rgba(124, 156, 255, 0.06);
-  margin-bottom: 3px;
-}
-.growleft { grid-area: left; display: flex; gap: 8px; align-items: center; min-width: 0; }
-.growname { min-width: 0; }
-.growsub {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-  line-height: 1.25;
-}
-.growright { grid-area: right; text-align: right; white-space: nowrap; }
-.growmc { font-size: 13px; font-weight: 620; font-variant-numeric: tabular-nums; }
-.growmove {
-  grid-area: move;
-  text-align: right;
-  font-size: 12px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── visual polish ─────────────────────────────────────────────────────────── */
-/*
- * Everything below refines what already exists rather than restyling it, so a
- * component keeps working if a rule here is deleted.
- */
-
-body {
-  /* A cool wash top-left and a warm one far right: enough to stop a large dark
-     page reading as flat, faint enough that no text sits on a gradient edge. */
-  background-image:
-    radial-gradient(1100px 700px at 8% -10%, rgba(109, 139, 255, 0.13), transparent 58%),
-    radial-gradient(820px 560px at 96% 2%, rgba(143, 109, 255, 0.09), transparent 60%),
-    radial-gradient(900px 900px at 50% 112%, rgba(47, 212, 143, 0.05), transparent 58%);
-  background-attachment: fixed;
-}
-
-h1 {
-  letter-spacing: -0.02em;
-  background: linear-gradient(100deg, var(--text) 30%, var(--accent) 130%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-h2 {
-  letter-spacing: -0.01em;
-  font-size: 15px;
-}
-
-/*
- * Glass surfaces.
- *
- * The page carries three coloured washes; letting the cards sit slightly
- * translucent over them means each one picks up whatever it is in front of
- * instead of being the same flat rectangle everywhere. The blur is what keeps
- * that from turning into noise — without it the washes read through as muddy
- * banding behind the text.
- *
- * Applied to the CARDS and the bars, never to a feed row: backdrop-filter is
- * composited per element, and 250 of them would hand the GPU a blur pass per
- * row on every two-second repaint.
- */
-.card {
-  border-radius: var(--radius);
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  box-shadow: var(--shadow);
-  background-color: rgba(20, 24, 35, 0.72);
-  backdrop-filter: blur(20px) saturate(1.4);
-  /* A hairline of light along the top edge — the cheapest way to make a flat
-     surface look lit rather than pasted on. */
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 46%);
-}
-
-/*
- * Backdrop blur needs something behind it to be worth anything, and it is the
- * one property here that silently does nothing when unsupported. Where it is
- * missing the cards fall back to an opaque surface rather than a washed-out
- * translucent one that would leave text sitting on the page gradients.
- *
- * Note there is no hand-written -webkit- prefix anywhere above. The build adds
- * prefixes itself, and writing both made it emit ONLY the prefixed property —
- * so the blur was silently absent while the translucency stayed, which is the
- * exact muddy result this was meant to avoid.
- */
-@supports not (backdrop-filter: blur(1px)) {
-  .card { background-color: var(--card); }
-  .topbar { background: rgba(10, 12, 19, 0.97); }
-}
-
-/*
- * Pills, not rounded rectangles.
- *
- * A dark fill barely above the surface with a light hairline around it, so the
- * edge does the work rather than the fill — the button reads as cut out of the
- * page instead of pasted onto it.
- */
-.btn {
-  border-radius: 999px;
   font-weight: 600;
-  letter-spacing: -0.005em;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  background: #14161d;
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
-  transition: transform 0.12s ease, box-shadow 0.16s ease, background 0.16s ease,
-    border-color 0.16s ease;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: var(--sp-2);
 }
-.btn:hover:not(:disabled) {
-  background: #1b1e28;
-  border-color: rgba(255, 255, 255, 0.2);
-}
-.btn:hover:not(:disabled) { transform: translateY(-1px); }
-.btn:active:not(:disabled) { transform: translateY(0); }
-
-.btn-primary {
-  background: linear-gradient(135deg, var(--accent-2), var(--accent));
-  border-color: transparent;
-  color: var(--on-accent);
-  font-weight: 650;
-  box-shadow: 0 4px 16px -6px var(--accent-glow);
-}
-.btn-primary:hover:not(:disabled) {
-  box-shadow: 0 8px 22px -8px var(--accent-glow);
-}
+label.field > span i { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 400; }
 
 .input {
-  /* Pill, like the buttons. This block sits after the base .input rule and
-     was quietly putting 9px back on every field, the search bar included. */
-  border-radius: 999px;
-  background: var(--bg-2);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.input:focus {
+  width: 100%;
+  height: 38px;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  padding: 0 var(--sp-3);
+  color: var(--t1);
+  font: inherit;
+  font-size: 14px;
   outline: none;
-  border-color: var(--accent);
-  /* The ring was blue while the border it surrounds is gold — two different
-     accents on one focused field. */
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  transition: border-color var(--fast), background var(--fast), box-shadow var(--fast);
 }
-textarea.input,
-.input[rows] { border-radius: 14px; }
-
-/* Numbers line up when they change, which matters on a page that ticks. */
-.pnl-big, .mono, .growmc, .growmove { font-variant-numeric: tabular-nums; }
-
-.pos { color: var(--green); }
-.neg { color: var(--red); }
-
-/* Status chips read at a glance from across the room. */
-.chip { border-radius: 999px; font-weight: 700; letter-spacing: 0.04em; }
-.chip-live {
-  background: var(--green-bg);
-  color: var(--green);
-  box-shadow: 0 0 0 1px rgba(47, 212, 143, 0.25), 0 0 14px -4px rgba(47, 212, 143, 0.5);
+.input::placeholder { color: var(--t4); }
+.input:hover:not(:disabled) { border-color: var(--line-2); }
+.input:focus {
+  border-color: var(--lime-line);
+  background: var(--s1);
+  box-shadow: 0 0 0 3px var(--lime-dim);
 }
-.chip-dry { background: var(--amber-bg); color: var(--amber); box-shadow: 0 0 0 1px rgba(255,194,71,.2); }
+.input:disabled { opacity: 0.5; cursor: not-allowed; }
+textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-height: 1.55; }
 
-/* The live dot should pulse only while something is actually running, so a
-   stopped engine is obvious without reading the label. */
-.dot { box-shadow: 0 0 0 0 currentColor; }
-.chip-live .dot { animation: pulse 2.4s ease-out infinite; }
-@keyframes pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(47, 212, 143, 0.55); }
-  70%  { box-shadow: 0 0 0 7px rgba(47, 212, 143, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(47, 212, 143, 0); }
+.row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.spread { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+
+/* ── chips & pills ── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 22px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-chip);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
 }
-@media (prefers-reduced-motion: reduce) {
-  .chip-live .dot { animation: none; }
-  .btn:hover:not(:disabled) { transform: none; }
+.chip-live { background: var(--lime-dim); color: var(--lime); box-shadow: inset 0 0 0 1px var(--lime-line); }
+.chip-dry { background: var(--gold-dim); color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold-line); }
+.chip-off { background: var(--s3); color: var(--t3); box-shadow: inset 0 0 0 1px var(--line); }
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
 }
 
-.pcard {
-  border-radius: var(--radius);
-  transition: border-color 0.15s ease;
-}
-.pcard:hover { border-color: var(--line-2); }
-
-
-/* ── suggestions ──────────────────────────────────────────────────────
-   A dense list rather than cards: the point is to scan several at once and
-   decide none of them are worth it, which is the usual answer. */
-.shead {
-  font-size: 12px;
+/*
+ * A label, not a dot. The markup is a span holding an <i> and the word, so
+ * styling .livedot itself as a 6px circle collapsed the text into it.
+ */
+.livedot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin: 18px 0 8px;
+  letter-spacing: 0.05em;
+  color: var(--lime);
 }
-.shead:first-of-type { margin-top: 10px; }
+.livedot > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+  animation: pulse 2.6s ease-out infinite;
+}
+.livedot-held { color: var(--t3); }
+.livedot-held > i { animation: none; }
+.chip-live .dot { animation: pulse 2.6s ease-out infinite; }
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(195, 245, 60, 0.5); }
+  70%  { box-shadow: 0 0 0 5px rgba(195, 245, 60, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(195, 245, 60, 0); }
+}
 
-.slist { display: grid; gap: 6px; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: var(--r-chip);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--s3);
+  color: var(--t2);
+  white-space: nowrap;
+}
+.pill-cold { background: var(--s3); color: var(--t3); }
+.pill-hot { background: var(--down-dim); color: var(--down); box-shadow: inset 0 0 0 1px rgba(255, 107, 107, 0.22); }
 
-.srow {
+/* ── notes ── */
+.note-warn {
+  margin: var(--sp-3) 0;
+  padding: var(--sp-3);
+  border-radius: var(--r-ctl);
+  border: 1px solid rgba(255, 145, 66, 0.24);
+  background: var(--warn-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--t2);
+}
+.note-warn strong { color: var(--warn); font-weight: 600; }
+
+.soon-note {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  margin: var(--sp-3) 0 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-ctl);
+  border: 1px solid rgba(47, 212, 143, 0.2);
+  background: var(--up-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--t2);
+}
+.soon-badge {
+  flex: none;
+  margin-top: 1px;
+  padding: 2px 7px;
+  border-radius: var(--r-chip);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--up);
+  background: rgba(47, 212, 143, 0.14);
+}
+
+.fineprint { margin: var(--sp-2) 0 var(--sp-3); }
+.fineprint > summary {
+  font-size: 12px;
+  color: var(--t3);
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--fast);
+}
+.fineprint > summary::-webkit-details-marker { display: none; }
+.fineprint > summary::before { content: "▸ "; color: var(--t4); }
+.fineprint[open] > summary::before { content: "▾ "; }
+.fineprint > summary:hover { color: var(--t1); }
+.fineprint p { font-size: 12px; line-height: 1.6; color: var(--t3); margin: var(--sp-2) 0 0; }
+
+/* ── the live/dry switch (local install only) ── */
+.switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex: none;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-2);
+  background: var(--s3);
+  cursor: pointer;
+  transition: background var(--fast), border-color var(--fast);
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--t2);
+  transition: transform var(--med), background var(--fast);
+}
+.switch[data-on="true"] { background: var(--lime-dim); border-color: var(--lime-line); }
+.switch[data-on="true"]::after { transform: translateX(18px); background: var(--lime); }
+.switch:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ══ LAYOUT ═══════════════════════════════════════════════════════════════
+ * Feed left, control centre right. The feed gets the room because it is what
+ * you watch; the panel is fixed-width because a control centre that reflows
+ * as the window changes is one you have to re-learn each time. */
+.cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  gap: var(--sp-5);
+  align-items: start;
+}
+.cols-solo { grid-template-columns: minmax(0, 1fr) 400px; }
+.colmain { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.colside {
+  min-width: 0;
+  position: sticky;
+  top: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* ══ PANELS ═══════════════════════════════════════════════════════════════
+ * One surface treatment, used everywhere. Not a "card" in the SaaS sense —
+ * a flat panel with a hairline and a barely-there lift. */
+.card {
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  padding: var(--sp-4);
+  box-shadow: var(--sh-1);
+}
+.colmain > .card { margin: 0; }
+
+.card-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--card-2);
-  transition: border-color .14s ease, transform .14s ease;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-height: 24px;
 }
-/* Still legible, plainly not a candidate: graduated, drained, or unreadable. */
-.srow-dim { opacity: .5; }
+.card:not(.is-collapsed) > .card-head { margin-bottom: var(--sp-3); }
+.is-collapsed > *:not(.card-head) { display: none; }
+.card.is-collapsed { padding-bottom: var(--sp-4); }
 
-.srow:hover {
-  border-color: var(--line-2);
-  transform: translateY(-1px);
-}
-
-.savatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  object-fit: cover;
-  flex: none;
-  background: var(--card);
-  border: 1px solid var(--line);
-}
-.savatar-blank {
-  position: relative;
-  display: grid;
-  place-items: center;
+/* Section headings: small, uppercase, tracked, with a short accent rule. The
+   rule is 2px and 12px tall — enough to mark a start, not enough to decorate. */
+.shead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
   font-size: 11px;
   font-weight: 700;
-  color: var(--muted);
-  letter-spacing: .03em;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--t2);
+}
+.shead::before {
+  content: "";
+  width: 2px;
+  height: 12px;
+  flex: none;
+  border-radius: 1px;
+  background: var(--lime);
+}
+.card h2:not(.shead) { font-size: 14px; font-weight: 600; }
+
+.ssub {
+  margin: var(--sp-2) 0 var(--sp-3);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--t3);
+}
+
+.collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-chip);
+  background: transparent;
+  color: var(--t4);
+  cursor: pointer;
+  transition: color var(--fast), background var(--fast);
+}
+.collapse-btn:hover { color: var(--t1); background: var(--s3); }
+.collapse-btn svg { transition: transform var(--med); }
+.collapse-btn[aria-expanded="false"] svg { transform: rotate(-90deg); }
+
+/* ══ FEED ═════════════════════════════════════════════════════════════════ */
+.feed {
+  position: sticky;
+  top: 76px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 96px);
+  padding: 0;
   overflow: hidden;
 }
 
-/* Paints over the initials once the gateway actually delivers. */
+.feedhead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line);
+}
+.feedhead h2 {
+  color: var(--t1);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+}
+
+.findwrap { position: relative; flex: 1 1 200px; min-width: 0; }
+.findicon {
+  position: absolute;
+  left: var(--sp-3);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  color: var(--t4);
+  pointer-events: none;
+}
+.feedfind { height: 34px; padding-left: 34px; padding-right: 46px; font-size: 13px; background: var(--s2); }
+.findkbd {
+  position: absolute;
+  right: var(--sp-2);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 2px 6px;
+  border-radius: var(--r-chip);
+  border: 1px solid var(--line);
+  background: var(--s3);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--t4);
+  pointer-events: none;
+}
+
+/*
+ * Column grid, shared by the header and every row so they cannot drift.
+ * Wider numeric columns than before: money was being squeezed into 82px and
+ * wrapping, which is the one thing a trading table must never do.
+ */
+.frow-item {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 74px 96px 92px 92px 62px;
+  gap: var(--sp-3);
+  align-items: center;
+}
+/*
+ * The header carries six labels where a row has seven cells: there is no
+ * label for the avatar. Rather than adding an empty span to the markup, it
+ * gets the same six trailing tracks and a left pad equal to the avatar plus
+ * its gap plus the row's own padding — 16 + 40 + 12 — so every label lands
+ * over its column.
+ */
+.fhead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px 96px 92px 92px 62px;
+  gap: var(--sp-3);
+  align-items: center;
+  padding: var(--sp-2) var(--sp-4) var(--sp-2) 68px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t4);
+  border-bottom: 1px solid var(--line);
+  background: var(--s1);
+}
+
+.flist { overflow-y: auto; min-height: 0; padding-bottom: var(--sp-2); }
+
+.frow-item {
+  position: relative;
+  width: 100%;
+  padding: var(--sp-2) var(--sp-4);
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  background: none;
+  color: var(--t1);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--fast);
+}
+/* Hover: a lift in surface plus a lime edge on the left. The edge is what
+   makes it read as selectable rather than merely highlighted. */
+.frow-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--lime);
+  opacity: 0;
+  transition: opacity var(--fast);
+}
+.frow-item:hover { background: var(--s2); }
+.frow-item:hover::before { opacity: 1; }
+.frow-item:focus-visible { outline-offset: -2px; }
+
+/* A new launch arrives with one short sweep of lime and then behaves like
+   every other row. Anything longer turns a feed that moves constantly into a
+   light show. */
+@keyframes rowIn {
+  from { background: rgba(195, 245, 60, 0.09); }
+  to { background: transparent; }
+}
+.frow-new { animation: rowIn 1.1s ease-out; }
+
+/*
+ * The initials are the tile, and the logo is laid over them.
+ *
+ * The markup is one box holding the two letters plus an <img> that only
+ * appears once it loads, so the image has to be positioned over the text
+ * rather than beside it — otherwise a row shows its initials AND its logo
+ * side by side, which is what happened when this was flattened.
+ */
+.savatar {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-ctl);
+  background: var(--s3);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--t3);
+  overflow: hidden;
+}
+/* No background of its own. The image sits over the initials, so painting a
+   fill behind it hides them for the whole time it is loading — and for good
+   on the ones that never arrive. Transparent means the letters show until a
+   picture actually covers them. */
 .savatar-img {
   position: absolute;
   inset: 0;
@@ -925,1277 +758,576 @@ textarea.input,
   object-fit: cover;
 }
 
-.srow-meta {
-  text-align: right;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
+.fmain { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 
-.pill {
-  display: inline-block;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.6;
-  color: var(--muted);
-  background: var(--card);
-  border: 1px solid var(--line-2);
-}
-/*
- * A warning you can actually read. A block of amber body copy is a wall the
- * eye slides off; a rule down the left and a calmer body colour keeps the
- * emphasis on the fact that this is a caution without shouting the content.
- */
-/* A checkbox with a sentence under it, rather than a bare label that makes
-   you guess what turning it on will cost. */
-.toggle-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.18);
-  cursor: pointer;
-}
-.toggle-row input { margin-top: 2px; accent-color: var(--accent); flex: none; }
-.toggle-row strong { display: block; font-size: 13px; font-weight: 650; }
-.toggle-row em {
-  display: block;
-  margin-top: 2px;
-  font-style: normal;
-  font-size: 11.5px;
-  color: var(--muted);
-  line-height: 1.45;
-}
-
-.note-warn {
-  margin: 10px 0 0;
-  padding: 9px 12px;
-  border-left: 2px solid var(--amber);
-  border-radius: 0 8px 8px 0;
-  background: var(--amber-bg);
-  color: #f0d3b6;
-  font-size: 12px;
-  line-height: 1.55;
-}
-.note-warn strong { color: var(--amber); }
-
-/*
- * Detail that should be available without being shouted.
- *
- * The hot-wallet explanation used to be a block of amber, which reads as a
- * hazard sign and therefore gets skipped by the people who most need it. A
- * summary they can open puts the same words one click away in a register that
- * does not look like a warning label.
- */
-/* ── what the trader is holding ─────────────────────────────────────── */
-.holdings {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-  display: grid;
-  gap: 4px;
-}
-.holding {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 62px;
-  gap: 10px;
-  align-items: baseline;
-  width: 100%;
-  padding: 7px 9px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, .18);
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.holding:hover { border-color: var(--line-2); background: var(--card-2); }
-.holding-sym { font-weight: 650; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
-.holding-val { font-size: 12px; color: var(--muted); }
-.holding-val i { font-style: normal; font-size: 10px; color: var(--muted-2); }
-.holding-pnl { text-align: right; font-size: 12.5px; font-weight: 650; }
-
-.holding-wrap {
-  border: 1px solid transparent;
-  border-radius: 10px;
-  padding-bottom: 2px;
-}
-/* An armed position is marked, so "is my stop-loss on?" is answered by
-   looking rather than by opening each row. */
-.holding-wrap.armed {
-  border-color: rgba(47, 212, 143, .28);
-  background: rgba(47, 212, 143, .05);
-}
-.holding-rule {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 9px 7px;
-  font-size: 11px;
-  margin: 0;
-}
-.holding-rule label { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; }
-.holding-rule label span { color: var(--muted-2); white-space: nowrap; }
-.holding-rule .input {
-  padding: 3px 9px;
-  font-size: 11.5px;
-  width: 100%;
-  min-width: 0;
-}
-
-.fineprint { margin: 4px 0 12px; }
-.fineprint > summary {
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--muted);
-  list-style: none;
-}
-.fineprint > summary::-webkit-details-marker { display: none; }
-.fineprint > summary::before { content: "▸ "; color: var(--muted-2); }
-.fineprint[open] > summary::before { content: "▾ "; }
-.fineprint > summary:hover { color: var(--text); }
-.fineprint p {
-  font-size: 11.5px;
-  line-height: 1.55;
-  color: var(--muted);
-  margin: 8px 0 0;
-  padding-left: 12px;
-  border-left: 1px solid var(--line);
-}
-
-.pill-hot {
-  color: var(--green);
-  background: var(--green-bg);
-  border-color: transparent;
-}
-.pill-cold {
-  color: var(--red);
-  background: var(--red-bg);
-  border-color: transparent;
-}
-
-.ellip {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.num { font-variant-numeric: tabular-nums; }
-
-/* The base rates ride along with the list, so the numbers are never separated
-   from the thing they qualify. */
-.caveat {
-  margin: 14px 0 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-  line-height: 1.5;
-}
-
-@media (max-width: 620px) {
-  .srow { flex-wrap: wrap; }
-  .srow-meta { margin-left: auto; }
-}
-
-/* Wordmark sits on the mark's optical centre, not its box centre — the arrow
-   runs corner to corner, so the glyph reads slightly high without the nudge. */
-.lockup {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.lockup h1 { line-height: 1.05; }
-.lockup svg { color: #7b8496; margin-top: 1px; }
-
-/* Segmented control: picks a view, never performs the action. */
-.seg {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg-2);
-  /* In a grid parent this would otherwise stretch the full card width. */
-  justify-self: start;
-  align-self: start;
-}
-.seg-btn {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 13px;
-  padding: 7px 13px;
-  border-radius: 7px;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.seg-btn:hover:not(:disabled) { color: var(--text); }
-.seg-btn[aria-selected="true"] {
-  background: var(--card-2);
-  color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--line-2);
-}
-.seg-btn:disabled { opacity: 0.5; cursor: default; }
-
-/* First-run stepper. */
-.steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  list-style: none;
-  margin: 0 0 14px;
-  padding: 0;
-  font-size: 13px;
-}
-.step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-}
-.step[data-state="now"] { color: var(--text); font-weight: 600; }
-.step[data-state="done"] { color: var(--green); }
-.step-num {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  border: 1px solid var(--line-2);
-  font-size: 11px;
+/* Line one is the identity: ticker loud, name quiet. */
+.fline1 { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
+.fline1 > strong {
+  font-size: 14px;
   font-weight: 700;
+  letter-spacing: -0.005em;
+  color: var(--t1);
   flex: none;
+  max-width: 130px;
 }
-.step[data-state="now"] .step-num {
-  background: var(--accent);
-  border-color: transparent;
-  color: var(--on-accent);
-}
-.step[data-state="done"] .step-num {
-  border-color: var(--green);
-  color: var(--green);
-}
-
-/*
- * A coin has just been loaded into this card. The ring fades out on its own —
- * it is there to answer "did my click do anything", not to stay lit.
- */
-.card-arrived {
-  animation: arrive 1.1s ease-out;
-}
-.card { transition: border-color .18s ease, box-shadow .18s ease; }
-@keyframes arrive {
-  0%   { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
-  70%  { box-shadow: 0 0 0 2px var(--accent-glow), var(--shadow); }
-  100% { box-shadow: var(--shadow); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .card-arrived { animation: none; }
-}
-
-/* ── two-column shell ────────────────────────────────────────────────
-   The feed IS the page: it takes the flexible column and the panel you act
-   on is the fixed sidebar. It was the other way round, and at 436px the row
-   could not hold an address, a buy/sell split and its numbers at once — the
-   density this is modelled on comes from width more than from styling.
-   Below 1100px the feed moves above the workflow rather than shrinking. */
-.cols {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 440px;
-  gap: 16px;
-  align-items: start;
-}
-/* Read-only instance: the feed takes the room the workflow column used. */
-/* Public instance: feed on the left, the trader's own wallet on the right. */
-.cols-solo { grid-template-columns: minmax(0, 1fr) 380px; }
-.colside {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-  position: sticky;
-  top: 74px;
-}
-@media (max-width: 1100px) {
-  .cols-solo { grid-template-columns: minmax(0, 1fr); }
-  .colside { position: static; }
-}
-
-/* A button that reads as a link, for a minor action inside a sentence. */
-.linkish {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--muted);
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
-.linkish:hover { color: var(--text); }
-
-.colmain {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-}
-@media (max-width: 1100px) {
-  .cols { grid-template-columns: minmax(0, 1fr); }
-}
-
-/*
- * A lit edge on the panel that matters.
- *
- * A ring drawn as a gradient rather than a flat border, so it is brightest at
- * the top-left and fades round — a flat accent border of the same colour just
- * reads as a coloured box. Painted into a pseudo-element and masked to the
- * 1px band, because a real border cannot hold a gradient, and kept behind the
- * content with a negative z-index so it never sits over a row.
- *
- * The outer glow is deliberately wide and weak. Enough to lift the panel off
- * the page, not enough to compete with anything inside it.
- */
-.glow {
-  position: relative;
-  box-shadow: 0 0 60px -22px rgba(94, 224, 42, 0.4), var(--shadow);
-}
-.glow::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(
-    145deg,
-    rgba(122, 214, 74, 0.62),
-    rgba(47, 212, 143, 0.2) 28%,
-    rgba(255, 255, 255, 0.05) 55%,
-    rgba(94, 224, 42, 0.34)
-  );
-  /* Punch the middle out so only the 1px band survives. No -webkit- twin:
-     the build adds prefixes, and writing both made it emit only the prefixed
-     property when this was done for backdrop-filter. */
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-}
-/* Content sits above the ring. */
-.glow > * { position: relative; z-index: 1; }
-
-/* ── feed ───────────────────────────────────────────────────────────── */
-.feed {
-  position: sticky;
-  top: 74px;
-  max-height: calc(100vh - 90px);
-  display: flex;
-  flex-direction: column;
-  padding: 16px 16px 6px;
-}
-.feed h2 { margin-bottom: 0; flex: none; }
-
-.feedhead {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.fhead {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: linear-gradient(180deg, rgba(20, 24, 35, 0.94), rgba(20, 24, 35, 0.72));
-  backdrop-filter: blur(10px);
-}
-.findwrap {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-}
-.feedfind {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 7px 52px 7px 34px;
-  font-size: 12.5px;
-  background: rgba(0, 0, 0, 0.28);
-  border-color: rgba(255, 255, 255, 0.09);
-}
-.feedfind:focus { border-color: rgba(94, 224, 42, 0.45); }
-.findicon {
-  position: absolute;
-  left: 12px;
-  width: 13px;
-  height: 13px;
-  color: var(--muted-2);
-  pointer-events: none;
-}
-.findkbd {
-  position: absolute;
-  right: 8px;
+.fname { font-size: 12px; color: var(--t3); font-weight: 400; }
+.fsoc {
+  font-size: 11px;
+  color: var(--t3);
+  text-decoration: none;
   padding: 1px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--muted-2);
-  font-size: 10px;
-  font-family: inherit;
-  pointer-events: none;
-}
-
-/* Live/paused, as a state light rather than a word that appears and vanishes
-   and shifts the row beside it. */
-.livedot {
+  border-radius: var(--r-chip);
+  background: var(--s3);
+  transition: color var(--fast), background var(--fast);
   flex: none;
-  display: inline-flex;
+  max-width: 120px;
+}
+.fsoc:hover { color: var(--lime); background: var(--lime-dim); }
+
+/* Line two is metadata and is deliberately quieter than line one. */
+.fline2 {
+  display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-2);
+  min-width: 0;
   font-size: 11px;
-  color: var(--green);
-  letter-spacing: .04em;
+  color: var(--t3);
 }
-.livedot i {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: currentColor;
-  box-shadow: 0 0 0 3px rgba(47, 212, 143, .16);
-}
-.livedot-held { color: var(--amber); }
-.livedot-held i { box-shadow: 0 0 0 3px rgba(255, 145, 66, .16); }
-@media (max-width: 1100px) {
-  .feed { position: static; max-height: none; }
-}
+.faddr { font-family: var(--mono); font-size: 10.5px; color: var(--t4); flex: none; }
 
-.linkish {
-  appearance: none;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  padding: 0;
-}
-.linkish:hover { text-decoration: underline; }
-
-.filters {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  margin-bottom: 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg-2);
-}
-.f { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
-.f .input { padding: 7px 10px; font-size: 13px; }
-.f.frow { display: flex; align-items: flex-start; gap: 8px; }
-.f.frow input { margin-top: 2px; flex: none; }
-
-/*
- * The row carries its numbers inline rather than in shared columns.
- *
- * Fixed MC/VOL/GRAD columns cost ~160px of a 320px panel and still could not
- * fit a third line, so the money moved onto the lines it belongs to and the
- * panel got wider. There is no column header to line up with any more.
- */
-.frow-item,
-.fhead {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 54px 82px 82px 82px 58px;
-  gap: 10px;
-  align-items: center;
-}
-/* Header skips the avatar column, so it is indented by that column plus the
-   gap to sit over the numbers it labels. */
-.fhead {
-  grid-template-columns: minmax(0, 1fr) 54px 82px 82px 82px 58px;
-  align-items: baseline;
-  padding: 0 9px 7px 59px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--muted-2);
-  border-bottom: 1px solid var(--line);
-}
-.ta-r { text-align: right; }
-.ta-c { text-align: center; }
-
-.spark { display: block; overflow: visible; }
-.spark-empty {
-  width: 54px;
-  height: 16px;
-  border-bottom: 1px solid var(--line);
-  opacity: .55;
-}
-
-/*
- * Scrollbars. The default Windows bar is a wide light-grey slab that sits
- * inside a dark panel looking like something failed to load — and the feed has
- * a permanent one, so it was the brightest object on the page.
- */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-2) transparent;
-}
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: var(--line-2);
-  border-radius: 999px;
-  /* Inset by a transparent border so the thumb reads as a slim pill rather
-     than filling the gutter edge to edge. */
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:hover { background: #47526b; background-clip: padding-box; }
-
-.flist {
-  overflow-y: auto;
-  margin: 0 -6px;
-  padding: 4px 6px 0;
-  min-height: 0;
-}
-
-.frow-item {
-  width: 100%;
-  text-align: left;
-  appearance: none;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: none;
-  color: var(--text);
-  font: inherit;
-  padding: 6px 9px;
-  cursor: pointer;
-  transition: background .12s ease, border-color .12s ease;
-}
-/*
- * Rows need a floor and a clearer hover.
- *
- * With no rule between them 250 near-identical rows ran together into one
- * field, and the hover only lifted the background a few values so it was easy
- * to lose which row the cursor was on — the thing you are about to click and
- * spend money on.
- */
-.frow-item {
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-}
-.frow-item:last-child { border-bottom: 0; }
-.frow-item:hover {
-  background: var(--card-2);
-  border-color: var(--line);
-  border-bottom-color: var(--line);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-.frow-item:focus-visible {
-  outline: none;
-  background: var(--card-2);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-.fmain { min-width: 0; display: grid; gap: 2px; }
-/* The ticker is the thing you are looking for; everything else on the row is
-   support. It was 13px against 11.5px metadata, which is not a step. */
-.fmain strong {
-  font-size: 14.5px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--text);
-}
-.fname { color: var(--muted-2); font-size: 11.5px; }
-
-/* The row, in three lines: identity, activity, and what to make of it. */
-.fline1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.fname { flex: 0 1 auto; min-width: 0; }
-.fmc { flex: none; font-size: 12px; font-weight: 600; }
-
-
-.fline2 { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted-2); }
-.fvol { flex: 1 0 auto; margin-left: auto; text-align: right; font-size: 11.5px; }
-.fquote { font-size: 10.5px; }
-/* Pills and the bar sit at the right of line two, which is what fills the gap
-   the old three-line row left across the middle of a 700px column. */
-.fline2 .pill {
-  border: 1px solid var(--line); flex: none; margin-left: 0; }
-.fbond-wrap { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
-.fstat { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
-/* A one-letter glyph rather than an icon font: it needs no network request and
-   stays legible at 9px, which a scaled-down SVG does not. */
-.fi {
+.fstat { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; flex: none; }
+.fstat .fi {
   font-style: normal;
   font-size: 9px;
-  letter-spacing: .04em;
-  opacity: .65;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--t4);
 }
-/*
- * Colour on a row is a reading, never decoration.
- *
- * This screen is a wall of small numbers, and tinting things because they look
- * nice would make every genuine signal harder to find. So there are exactly
- * three: a coin under a minute old, a crowd already holding it, and a sniper
- * count high enough to mean bots were waiting.
- */
-.fstat.warn { color: var(--amber); }
-.fstat.good { color: var(--green); }
-/* Duplicates a column that exists on wide screens, so it is hidden until the
-   narrow breakpoint drops that column. Declared after .fstat deliberately:
-   sitting before it, the display:none lost and the value showed twice. */
-.frow-item .onlynarrow { display: none; }
-.fstat.hot {
-  color: var(--accent);
-  font-weight: 650;
+.fstat.hot { color: var(--lime); font-weight: 600; }
+.fstat.good { color: var(--t2); }
+.fstat.warn { color: var(--warn); }
+
+.fquote {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--r-chip);
+  background: var(--s3);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--t2);
 }
 
-/* ── motion ──────────────────────────────────────────────────────────────
-   The feed repaints every two seconds. Without any of this a coin launching
-   and a coin sitting still look identical: the list is simply different the
-   next time you glance at it. */
-
-@keyframes rowIn {
-  0% {
-    opacity: 0;
-    transform: translateY(-9px);
-    background: rgba(240, 180, 41, .10);
-  }
-  60% { opacity: 1; transform: none; }
-  100% { background: transparent; }
-}
-.frow-new { animation: rowIn .62s cubic-bezier(.22, 1, .36, 1); }
-
-@keyframes flashUp {
-  0% { color: var(--green); transform: translateY(2px); }
-  100% { transform: none; }
-}
-@keyframes flashDown {
-  0% { color: var(--red); transform: translateY(-2px); }
-  100% { transform: none; }
-}
-.flash-up { animation: flashUp .78s ease-out; }
-.flash-down { animation: flashDown .78s ease-out; }
-
-/* Someone who gets motion sickness from a list that never stops moving still
-   needs to be able to use this. */
-@media (prefers-reduced-motion: reduce) {
-  .frow-new,
-  .flash-up,
-  .flash-down { animation: none; }
-}
-
-
-
-
-/* Progress to graduation. The bar is the field, the text sits on top of it. */
+/* Graduation progress. A track with a lime fill and the figure inside it, so
+   the bar is a reading rather than a decoration. */
+.fbond-wrap { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; min-width: 0; }
 .fbond {
   position: relative;
-  border: 1px solid var(--line);
-  /* Fixed, not flexible. Left to grow it spanned the whole of the main
-     column, which made a 3% bar look like the most important thing there. */
+  display: inline-flex;
+  align-items: center;
+  width: 92px;
+  height: 15px;
   flex: none;
-  width: 132px;
-  height: 13px;
-  border-radius: 7px;
-  background: var(--card-2);
+  border-radius: var(--r-chip);
+  background: var(--s3);
   overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--hair);
 }
 .fbond-fill {
   position: absolute;
-  inset: 0 auto 0 0;
-  /* Green while it is climbing, gold as it nears graduation — the point at
-     which the curve stops accepting sells and the exit matters. */
-  background: linear-gradient(90deg, #1d6d47 0%, #3ecb8d 62%, var(--accent) 100%);
-  background-size: 132px 100%;
-  transition: width .35s cubic-bezier(.22, 1, .36, 1);
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, rgba(195, 245, 60, 0.55), var(--lime));
+  transition: width 600ms cubic-bezier(0.2, 0, 0.2, 1);
 }
 .fbond-txt {
   position: relative;
-  display: block;
+  width: 100%;
   text-align: center;
   font-size: 9.5px;
-  line-height: 13px;
-  color: var(--text);
+  font-weight: 700;
+  color: var(--t2);
+  mix-blend-mode: luminosity;
 }
 
-/*
- * The one link a pons token carries. Sits above the row button rather than
- * inside it, since an anchor cannot be nested in a button.
- */
-.fsoc {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin-left: 2px;
-  font-size: 10.5px;
-  color: var(--muted);
-  text-decoration: none;
-  padding: 1px 6px;
-  border-radius: 5px;
-  background: var(--card-2);
-}
-.fsoc:hover { color: var(--text); text-decoration: underline; }
-.frow-item .small { font-size: 11.5px; }
-/* Bigger than the 32px the sniper list uses — this is the main column now. */
-.frow-item .savatar { width: 40px; height: 40px; font-size: 12px; }
-
-/* The numeric columns. Aligned to the first line, not centred on the row. */
-/* Market cap leads; volume and liquidity support it. All three were the same
-   weight and colour, so the eye had nowhere to land. */
+/* Numeric columns. Right-aligned, tabular, and the market cap carries more
+   weight than the rest because it is the number people scan by. */
 .fnum {
   text-align: right;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--t2);
+  white-space: nowrap;
+}
+.fnum-mc { font-size: 13.5px; font-weight: 650; color: var(--t1); }
+.fnum-tx { font-size: 12px; color: var(--t3); }
+
+/* A value that just moved. One frame of colour, no movement — a number that
+   jumps is a number you cannot read. */
+@keyframes flashUp { from { color: var(--up); } to { color: inherit; } }
+@keyframes flashDown { from { color: var(--down); } to { color: inherit; } }
+.fnum.flash-up { animation: flashUp 780ms ease-out; }
+.fnum.flash-down { animation: flashDown 780ms ease-out; }
+
+.spark { display: block; }
+.spark-empty { display: block; width: 54px; height: 18px; }
+
+.onlynarrow { display: none; }
+
+/* ══ TRADING PANEL ════════════════════════════════════════════════════════
+ * One control centre, not a stack of boxes. The sections inside it are
+ * separated by hairlines rather than by gaps and borders of their own. */
+.colside > .card { padding: 0; overflow: hidden; }
+.colside > .card > * { padding-left: var(--sp-4); padding-right: var(--sp-4); }
+.colside > .card > .shead,
+.colside > .card > .card-head { padding-top: var(--sp-4); }
+.colside > .card > *:last-child { padding-bottom: var(--sp-4); }
+
+.snipe {
+  padding-top: var(--sp-4);
+  margin-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+}
+.snipe .card-head { margin-bottom: var(--sp-2); }
+.snipe .ssub { margin-bottom: var(--sp-3); }
+
+.locked-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin: var(--sp-3) 0;
+  padding: var(--sp-3);
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--lime-line);
+  background: var(--lime-dim);
+}
+.locked-bar p { margin: 0; flex: 1 1 170px; font-size: 12.5px; line-height: 1.45; color: var(--t1); }
+.locked-bar .btn { flex: none; }
+.card.is-locked .field,
+.card.is-locked .presets,
+.card.is-locked .snipe-form,
+.card.is-locked .rule-grid { opacity: 0.55; }
+
+.presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); margin-top: var(--sp-2); }
+.presets .btn { height: 30px; padding: 0; font-size: 12px; }
+.presets .btn.on { color: var(--lime); border-color: var(--lime-line); background: var(--lime-dim); }
+
+.snipe-form { display: grid; grid-template-columns: 1fr 108px; gap: var(--sp-3); }
+.snipe-form .field { margin-bottom: var(--sp-3); }
+
+.watches { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-3); }
+.watch {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-ctl);
+  background: var(--s2);
+  border: 1px solid var(--lime-line);
   font-size: 12.5px;
-  font-weight: 600;
-  color: var(--muted);
 }
-.fnum-mc { color: var(--text); font-weight: 700; }
-.fnum small { display: block; font-weight: 400; font-size: 10px; color: var(--muted-2); }
-.faddr {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
-  opacity: .8;
-}
+.watch.done { border-color: var(--line); opacity: 0.5; }
+.watch-tick { font-weight: 700; flex: none; }
+.watch > .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.watch-state { margin-left: auto; color: var(--lime); font-size: 11px; font-weight: 600; flex: none; }
+.watch.done .watch-state { color: var(--t4); }
 
-/* Group heading inside the feed list. Sticky so the label stays readable while
-   scrolling a section that is longer than the pane. */
-.fsec {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: linear-gradient(var(--card) 70%, transparent);
-  padding: 10px 8px 5px;
+.rule-toggle, .rule-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-2);
+  border-radius: var(--r-ctl);
+  background: var(--s2);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: border-color var(--fast), background var(--fast);
+}
+.rule-toggle:hover, .rule-check:not(.off):hover { border-color: var(--line-2); }
+.rule-toggle { border-color: var(--lime-line); background: var(--lime-dim); }
+.rule-toggle input, .rule-check input { margin-top: 3px; accent-color: var(--lime); flex: none; }
+.rule-toggle span, .rule-check span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.rule-toggle strong, .rule-check strong { font-size: 13px; font-weight: 600; }
+.rule-toggle i, .rule-check i { font-style: normal; font-size: 11.5px; color: var(--t3); line-height: 1.45; }
+.rule-check.off { opacity: 0.5; cursor: default; }
+
+.rule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); margin: var(--sp-3) 0 var(--sp-1); }
+.rule-grid .field { margin-bottom: 0; }
+
+.snipelog { display: flex; flex-direction: column; gap: 1px; max-height: 240px; overflow-y: auto; }
+.slog {
+  display: grid;
+  grid-template-columns: 58px 62px minmax(0, 1fr);
+  gap: var(--sp-2);
+  padding: 4px 6px;
+  border-radius: var(--r-chip);
+  font-size: 12px;
+}
+.slog-time { color: var(--t4); font-family: var(--mono); font-size: 10.5px; }
+.slog-sym { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slog-why { color: var(--t3); min-width: 0; }
+.slog-bought { background: var(--up-dim); }
+.slog-bought .slog-sym { color: var(--up); }
+.slog-error .slog-sym { color: var(--down); }
+
+.holdings { margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+.holding-wrap { border-radius: var(--r-ctl); background: var(--s2); margin-top: var(--sp-2); overflow: hidden; }
+.holding-wrap.armed { box-shadow: inset 0 0 0 1px var(--lime-line); }
+.holding {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: var(--sp-3);
+  align-items: baseline;
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  background: none;
+  color: var(--t1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--fast);
+}
+.holding:hover { background: var(--s3); }
+.holding-sym { font-weight: 700; font-size: 13px; }
+.holding-val { font-size: 12.5px; color: var(--t2); }
+.holding-val i { font-style: normal; font-size: 10px; color: var(--t4); }
+.holding-pnl { font-size: 12.5px; font-weight: 650; }
+.holding-rule {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3) var(--sp-2);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .06em;
+}
+.holding-rule label { flex: 1; }
+.holding-rule label span {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--t4);
+  margin-bottom: 3px;
 }
-.fsec:first-child { padding-top: 2px; }
+.holding-rule .input { height: 28px; font-size: 12px; padding: 0 var(--sp-2); }
 
-
-/* ── narrow screens ──────────────────────────────────────────────────────
-   A phone cannot hold seven columns. On desktop the row is a table; here it
-   collapses to a card — image, identity and market cap on the first line,
-   everything else wrapping underneath — because a table that overflows its
-   viewport is worse than no table at all, and this feed is going to be read
-   on a phone more often than not. */
-@media (max-width: 760px) {
-  .wrap { padding: 0 10px 60px; }
-
-  .topbar { padding: 10px 14px; margin: 0 -10px 12px; }
-  .topbar h1 { font-size: 17px; }
-
-  /* Column headings label columns that no longer exist. */
-  .fhead { display: none; }
-
-  .feed {
-    position: static;
-    max-height: none;
-    padding: 12px 12px 4px;
-  }
-  .flist { max-height: none; overflow: visible; }
-
-  /* Title, live dot, search and the ETH price stop competing for one line. */
-  .feedhead { flex-wrap: wrap; gap: 8px; }
-  .findwrap { order: 3; flex: 1 0 100%; }
-
-  .frow-item,
-  .fhead {
-    grid-template-columns: 40px minmax(0, 1fr) auto;
-    gap: 9px;
-    padding: 9px 6px;
-    /* Top-aligned here: a wrapped row is three lines tall, and centring the
-       image against that leaves it floating beside the middle of the text. */
-    align-items: start;
-  }
-  /* The sparkline and the trailing numeric columns are the first things to
-     go: they are the least legible at this width and the most expensive in
-     horizontal space. Volume and liquidity move into line two as text. */
-  /*
-     Addressed by name, not by position. nth-of-type counts among sibling
-     elements of the same TAG, and the sparkline is an <svg> when it has data
-     and a <span> placeholder when it does not — so the indices shifted by one
-     from row to row, and the phone was showing the trade count where the
-     market cap should have been.
-  */
-  .frow-item .spark,
-  .frow-item .spark-empty,
-  .frow-item .fnum-vol,
-  .frow-item .fnum-liq,
-  .frow-item .fnum-tx { display: none; }
-  .frow-item .fnum-mc { font-size: 14px; align-self: start; }
-
-  .fline2 { flex-wrap: wrap; row-gap: 3px; }
-  .frow-item .onlynarrow { display: inline-flex; }
-  /* The graduation bar goes full width under the stats rather than being
-     squeezed to nothing at the end of a wrapped flex line. */
-  .fbond-wrap { margin-left: 0; flex: 1 0 100%; margin-top: 3px; }
-  .fbond { flex: 1 1 auto; width: auto; }
-
-  /* One column, and the panel you act on below the feed rather than beside it. */
-  .cols { grid-template-columns: minmax(0, 1fr); }
-  .card { padding: 16px; }
-  .row { flex-wrap: wrap; }
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
- * The wallet, in the top-right corner.
- *
- * One pill and one menu, in the place every exchange puts them. This replaced
- * a sidebar card that opened with three paragraphs of explanation — which meant
- * the trading panel could not be seen until they had been read, and someone
- * only there to look at the feed was asked to make a decision first.
- * ══════════════════════════════════════════════════════════════════════════ */
+/* ══ WALLET BUTTON ════════════════════════════════════════════════════════
+ * The strongest control in the chrome. Not connected, it is solid lime and
+ * the only filled element in the header. */
 .wb { position: relative; }
-
 .wb-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  border-radius: 999px;
-  padding: 8px 15px;
-  font-size: 13.5px;
-  font-weight: 600;
+  gap: var(--sp-2);
+  height: 36px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--line-2);
+  background: var(--s3);
+  color: var(--t1);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
   cursor: pointer;
-  color: var(--text);
-  background: rgba(24, 28, 40, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
-  transition: transform 0.12s ease, border-color 0.16s ease, background 0.16s ease,
-    box-shadow 0.16s ease;
+  transition: background var(--fast), border-color var(--fast), transform var(--fast);
 }
-.wb-pill:hover {
-  background: rgba(32, 37, 52, 0.85);
-  border-color: rgba(255, 255, 255, 0.24);
-  transform: translateY(-1px);
-}
-.wb-pill.open {
-  border-color: rgba(240, 180, 41, 0.45);
-  box-shadow: 0 0 0 3px rgba(240, 180, 41, 0.12);
-}
-
-/* Not connected is the one state that should pull the eye, so it is the only
-   one wearing the brand colour. Once there is a wallet the pill goes quiet —
-   an address and a balance are information, not a call to action. */
+.wb-pill:hover { background: var(--s4); border-color: rgba(255, 255, 255, 0.22); }
+.wb-pill:active { transform: translateY(1px); }
+.wb-pill.open { border-color: var(--lime-line); box-shadow: 0 0 0 3px var(--lime-dim); }
 .wb-cta {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--lime);
   border-color: transparent;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 6px 18px -8px var(--accent-glow);
+  color: var(--lime-ink);
+  font-weight: 650;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.35) inset, var(--sh-1);
 }
-.wb-cta:hover { background: var(--accent-press); border-color: transparent; }
+.wb-cta:hover { background: #d0ff52; border-color: transparent; }
+.wb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--lime); flex: none; }
+.wb-dot.locked { background: var(--t4); }
+.wb-bal { font-weight: 650; font-size: 13px; }
+.wb-addr { color: var(--t3); font-size: 12px; font-family: var(--mono); }
 
-.wb-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--green);
-  box-shadow: 0 0 0 3px rgba(47, 212, 143, 0.16);
-  flex: none;
-}
-.wb-dot.locked { background: var(--muted-2); box-shadow: none; }
-
-.wb-bal { font-weight: 700; font-size: 13px; }
-.wb-addr { color: var(--muted); font-size: 12px; }
-
-/* ── the menu ──────────────────────────────────────────────────────────── */
 .wb-menu {
   position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + var(--sp-2));
   right: 0;
-  width: 336px;
-  max-width: calc(100vw - 24px);
+  width: 340px;
+  max-width: calc(100vw - var(--sp-6));
   z-index: 60;
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  /*
-   * Opaque, and not for taste. This started as frosted glass like the cards
-   * and came out see-through: the header already has a backdrop-filter, which
-   * makes it the backdrop root for anything inside it, so a menu hanging below
-   * the bar has nothing to blur where it overlaps the page. The result was a
-   * passphrase field with the card behind it legible straight through.
-   */
-  background-color: #161a26;
-  /* Same lit top edge the cards use, so a panel that floats above the bar
-     still belongs to the same interface. */
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 44%);
-  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(0, 0, 0, 0.4);
-  animation: wb-in 0.14s ease-out;
+  padding: var(--sp-4);
+  border-radius: var(--r-panel);
+  border: 1px solid var(--line-2);
+  /* Opaque: the header's own backdrop-filter makes it the backdrop root, so a
+     translucent menu hanging below the bar has nothing to blur and the panel
+     behind it reads straight through. */
+  background: #12151c;
+  box-shadow: var(--sh-3);
+  animation: menuIn 140ms cubic-bezier(0.2, 0, 0.2, 1);
 }
-@keyframes wb-in {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .wb-menu { animation: none; }
-  .wb-pill:hover { transform: none; }
-}
-
-.wb-menu h3 {
-  margin: 0 0 6px;
-  font-size: 15.5px;
-  letter-spacing: -0.01em;
-}
-.wb-lead {
-  margin: 0 0 8px;
-  font-size: 13.5px;
+@keyframes menuIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.wb-menu h3 { margin: 0 0 var(--sp-2); font-size: 14px; }
+.wb-lead { margin: 0 0 var(--sp-2); font-size: 13px; line-height: 1.55; color: var(--t2); }
+.wb-fine { margin: 0 0 var(--sp-3); font-size: 12px; line-height: 1.5; color: var(--t3); }
+.wb-note { margin-top: var(--sp-3); }
+.wb-note-local {
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--gold-line);
+  background: var(--gold-dim);
+  font-size: 11.5px;
   line-height: 1.5;
-  color: var(--muted);
+  color: var(--t2);
 }
-.wb-fine {
-  margin: 0 0 10px;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--muted-2);
-}
-.wb-note { margin: 10px 0 0; color: var(--muted); }
-.wb-menu .field { margin-bottom: 10px; }
-.wb-menu .btn-lg { width: 100%; }
-.wb-alt {
-  display: block;
-  margin: 8px auto 0;
-  font-size: 12.5px;
-}
-.wb-wide { width: 100%; justify-content: center; }
-
+.wb-alt { display: block; margin: var(--sp-2) auto 0; }
+.wb-wide { width: 100%; }
 .wb-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-3);
+  margin-bottom: var(--sp-3);
   border-bottom: 1px solid var(--line);
-  font-size: 13px;
 }
-.wb-head .mono { color: var(--muted); }
-.wb-head strong { font-size: 15px; }
-
-.wb-limits { gap: 10px; margin-top: 12px; }
-.wb-limits .field { flex: 1; min-width: 0; margin-bottom: 6px; }
-
-.wb-foot {
-  display: flex;
-  gap: 16px;
-  padding-top: 10px;
-  margin-top: 4px;
-  border-top: 1px solid var(--line);
-}
-.wb-secret { word-break: break-all; font-size: 12px; margin-top: 10px; }
-
-/* A plain text link in the bar. The repo used to be a red READ-ONLY chip,
-   which read as a fault light rather than as an invitation. */
-.topbar-link {
-  font-size: 13px;
-  color: var(--muted);
-  text-decoration: none;
-}
-.topbar-link:hover { color: var(--text); }
-
-@media (max-width: 560px) {
-  /* Anchored to the viewport instead of the pill, so a 336px menu cannot hang
-     off the right edge of a 390px phone. */
-  .wb-menu {
-    position: fixed;
-    top: 62px;
-    right: 12px;
-    left: 12px;
-    width: auto;
-  }
-  .wb-addr { display: none; }
-}
-
-/* The address is a control, not a label — it is the thing you send funds to. */
+.wb-head strong { font-size: 15px; font-weight: 650; }
 .wb-copy {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   padding: 0;
-  background: none;
   border: 0;
-  cursor: pointer;
+  background: none;
   font: inherit;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--t2);
+  cursor: pointer;
+  transition: color var(--fast);
 }
-.wb-copy:hover { color: var(--text); }
+.wb-copy:hover { color: var(--t1); }
 .wb-copy-hint {
   font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted-2);
+  color: var(--t4);
   border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 1px 7px;
+  border-radius: var(--r-chip);
+  padding: 1px 6px;
 }
-.wb-copy:hover .wb-copy-hint { border-color: var(--line-2); color: var(--muted); }
+.wb-copy:hover .wb-copy-hint { color: var(--lime); border-color: var(--lime-line); }
+.wb-limits { gap: var(--sp-3); margin-top: var(--sp-3); }
+.wb-limits .field { flex: 1; min-width: 0; margin-bottom: var(--sp-2); }
+.wb-foot { display: flex; gap: var(--sp-4); padding-top: var(--sp-3); margin-top: var(--sp-2); border-top: 1px solid var(--line); }
+.wb-secret { word-break: break-all; font-size: 11.5px; margin-top: var(--sp-3); }
 
-/* Four equal amount presets. A flex row let them wrap to a second line in the
-   sidebar; a four-column grid cannot. */
-.presets {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 8px;
+/* ══ LOCAL-INSTALL SURFACES ═══════════════════════════════════════════════
+ * Same system, less attention: only the operator sees these. */
+.steps { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-4); }
+.step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-pill);
+  background: var(--s2);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--t3);
 }
-.presets .btn { padding: 6px 0; font-size: 12.5px; }
-/* The amount actually loaded, so the chosen size is visible at a glance. */
-.presets .btn.on {
-  color: var(--accent);
-  border-color: rgba(240, 180, 41, 0.45);
-  background: rgba(240, 180, 41, 0.08);
-}
-
-/* Said in the menu, not in a banner: it only matters to whoever is running
-   their own copy, and only at the moment they are deciding to make a wallet. */
-.wb-note-local {
-  margin: 0 0 12px;
-  padding: 9px 11px;
-  border-radius: 10px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--muted);
-  background: rgba(240, 180, 41, 0.07);
-  border: 1px solid rgba(240, 180, 41, 0.2);
-}
-
-/* The fold control. Sits in header rows that often already carry a chip and a
-   switch, so it is a chevron rather than a fourth piece of text. */
-.collapse-btn {
+.step.done { color: var(--up); border-color: rgba(47, 212, 143, 0.25); background: var(--up-dim); }
+.step.now { color: var(--t1); border-color: var(--lime-line); background: var(--lime-dim); }
+.step-num {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  flex: none;
-  padding: 0;
-  border-radius: 999px;
-  cursor: pointer;
-  color: var(--muted-2);
-  background: transparent;
-  border: 1px solid transparent;
-  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease;
-}
-.collapse-btn:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-.collapse-btn svg { transition: transform 0.18s ease; }
-/* Pointing right when there is something hidden behind it, down when open. */
-.collapse-btn[aria-expanded="false"] svg { transform: rotate(-90deg); }
-@media (prefers-reduced-motion: reduce) {
-  .collapse-btn svg { transition: none; }
-}
-
-/* A folded card keeps its heading and loses its padding, so a column of
-   collapsed sections reads as a list rather than a stack of empty boxes. */
-.card.is-collapsed { padding-bottom: 14px; }
-.card.is-collapsed .shead,
-.card.is-collapsed h2 { margin-bottom: 0; }
-
-/* Folding by class rather than by unmounting the body.
- *
- * The alternative was wrapping several hundred lines of each card in a
- * conditional, which is a lot of JSX surgery for a chevron and a good way to
- * lose a closing brace. display:none also takes the contents out of the
- * accessibility tree and out of the tab order, which is what a folded section
- * should do. */
-.is-collapsed > *:not(.card-head) { display: none; }
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-/* The h2 inside carries the card's bottom margin on its own, so the row does
-   not add a second one. */
-.card-head > h2,
-.card-head > h3 { margin-bottom: 0; }
-.card:not(.is-collapsed) > .card-head { margin-bottom: 14px; }
-
-/* "Coming soon" — its own colour, so a limit that is temporary does not read
-   like a warning that something is broken. Green rather than amber: this is a
-   promise, not a hazard. */
-.soon-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  margin: 10px 0 0;
-  padding: 9px 12px;
-  border-radius: 10px;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--muted);
-  background: rgba(47, 212, 143, 0.07);
-  border: 1px solid rgba(47, 212, 143, 0.22);
-}
-.soon-badge {
-  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--s3);
   font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--green);
-  background: rgba(47, 212, 143, 0.14);
-  border-radius: 999px;
-  padding: 3px 9px;
-  margin-top: 1px;
+  font-weight: 700;
 }
 
-/* ── snipe a launch ─────────────────────────────────────────────────────
- * Its own block inside the trade card rather than a separate card: it is the
- * same wallet, the same limits and the same buying routine as the button
- * above it, and splitting it out would imply otherwise. */
-.snipe {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.snipe .card-head { margin-bottom: 4px; }
-.snipe .ssub { margin-bottom: 12px; }
-.snipe .btn-lg { margin-top: 4px; }
-.snipe-form {
-  display: grid;
-  grid-template-columns: 1fr 110px;
-  gap: 10px;
-}
-.snipe-form .field { margin-bottom: 10px; }
-.snipe .field > span i { font-style: normal; font-size: 12px; }
+.plist { display: flex; flex-direction: column; gap: var(--sp-2); }
+.pcard { padding: var(--sp-3); border-radius: var(--r-ctl); background: var(--s2); border: 1px solid var(--line); }
+.pnl-big { font-size: 18px; font-weight: 650; }
+.bar { height: 5px; border-radius: var(--r-pill); background: var(--s3); overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--lime); transition: width var(--med); }
 
-.watches {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
-}
-.watch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--card-2);
-  border: 1px solid rgba(47, 212, 143, 0.28);
-  font-size: 13px;
-}
-/* A watch that has fired or expired is history, not a live rule — it should
-   not keep drawing the eye as though it were still armed. */
-.watch.done { border-color: var(--line); opacity: 0.55; }
-.watch-tick { font-weight: 700; letter-spacing: 0.01em; flex: none; }
-/* The truncated address wrapped mid-word onto a second line, which read as a
-   broken row rather than a shortened one. It scrolls or clips instead. */
-.watch > .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.watch-state {
-  margin-left: auto;
-  color: var(--green);
-  font-variant-numeric: tabular-nums;
-}
-.watch.done .watch-state { color: var(--muted-2); }
-
-@media (max-width: 560px) {
-  .snipe-form { grid-template-columns: 1fr; }
-}
-
-/* ── locked, but visible ────────────────────────────────────────────────
- * The panel used to vanish behind a connect button, which hid the buy form
- * and the sniper — the two things that would make someone want a wallet. The
- * interface stays; only the controls go inert. */
-.locked-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin: 12px 0 4px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: rgba(240, 180, 41, 0.08);
-  border: 1px solid rgba(240, 180, 41, 0.28);
-}
-.locked-bar p {
-  margin: 0;
-  flex: 1 1 180px;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text);
-}
-.locked-bar .btn { flex: none; }
-
-/* Dimmed enough to read as unavailable, not so much it cannot be read. The
-   bar above keeps full contrast, because it is the one thing to act on. */
-.card.is-locked .field,
-.card.is-locked .presets,
-.card.is-locked .snipe-form,
-.card.is-locked .btn-lg { opacity: 0.62; }
-.card.is-locked .locked-bar,
-.card.is-locked .locked-bar .btn { opacity: 1; }
-
-/* ── sniper rules and log ───────────────────────────────────────────────
- * The rules are a form people will read carefully once and then leave alone,
- * so the labels carry the explanation and the inputs stay small. */
-.rule-toggle,
-.rule-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  border-radius: 10px;
-  background: var(--card-2);
-  border: 1px solid var(--line);
-  cursor: pointer;
-}
-.rule-toggle { border-color: rgba(240, 180, 41, 0.28); }
-.rule-toggle input,
-.rule-check input { margin-top: 3px; accent-color: var(--accent); flex: none; }
-.rule-toggle span,
-.rule-check span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.rule-toggle strong,
-.rule-check strong { font-size: 13.5px; font-weight: 600; }
-.rule-toggle i,
-.rule-check i { font-style: normal; font-size: 12px; color: var(--muted); line-height: 1.4; }
-.rule-check.off { opacity: 0.55; cursor: default; }
-
-.rule-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin: 12px 0 4px;
-}
-.rule-grid .field { margin-bottom: 0; }
-.rule-grid .field > span i { font-style: normal; }
-
-/* One line per decision. Monospaced time and a fixed symbol column so the
-   reasons line up and the column can be read straight down. */
-.snipelog {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 260px;
-  overflow-y: auto;
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-.slog {
-  display: grid;
-  grid-template-columns: 62px 68px minmax(0, 1fr);
-  gap: 8px;
-  padding: 4px 6px;
+.seg { display: inline-flex; padding: 2px; border-radius: var(--r-ctl); background: var(--s2); border: 1px solid var(--line); gap: 2px; }
+.seg-btn {
+  padding: var(--sp-1) var(--sp-3);
+  border: 0;
   border-radius: 6px;
+  background: none;
+  color: var(--t3);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background var(--fast), color var(--fast);
 }
-.slog-time { color: var(--muted-2); font-size: 11px; }
-.slog-sym { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.slog-why { color: var(--muted); min-width: 0; }
-.slog-bought { background: rgba(47, 212, 143, 0.09); }
-.slog-bought .slog-sym { color: var(--green); }
-.slog-error .slog-sym { color: var(--red); }
+.seg-btn[aria-pressed="true"], .seg-btn.on { background: var(--s4); color: var(--t1); }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-2) 0; }
+
+.log > summary { cursor: pointer; font-size: 12.5px; color: var(--t3); list-style: none; }
+.log > summary::-webkit-details-marker { display: none; }
+.log > summary::before { content: "▸ "; color: var(--t4); }
+.log[open] > summary::before { content: "▾ "; }
+.logbody {
+  margin-top: var(--sp-3);
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--t3);
+}
+
+.toast {
+  position: fixed;
+  right: var(--sp-5);
+  bottom: var(--sp-5);
+  z-index: 80;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-ctl);
+  background: #12151c;
+  border: 1px solid var(--line-2);
+  box-shadow: var(--sh-3);
+  font-size: 13px;
+  max-width: 360px;
+  animation: menuIn 160ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+.toast.ok { border-color: rgba(47, 212, 143, 0.35); }
+.toast.err { border-color: rgba(255, 107, 107, 0.35); }
+
+.meta { font-size: 11.5px; color: var(--t3); }
+
+/*
+ * The feed is the primary surface, and this is how it says so.
+ *
+ * It used to be a 60px green halo around the panel plus a gradient border —
+ * the "gaming site" look. Now it is a hairline of lime along the top edge and
+ * a fractionally warmer border. Enough to mark the panel that matters; not
+ * enough to notice as an effect.
+ *
+ * It was briefly `color: var(--lime)`, which is a different mistake: the class
+ * sits on the panel, so that turned everything inside it lime by inheritance.
+ */
+.glow { position: relative; border-color: rgba(195, 245, 60, 0.16); }
+.glow::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(195, 245, 60, 0.45) 30%, rgba(195, 245, 60, 0.45) 70%, transparent);
+  pointer-events: none;
+}
+.expired { opacity: 0.5; }
+.want { color: var(--warn); }
+.top, .v { min-width: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* ══ RESPONSIVE ═══════════════════════════════════════════════════════════
+ * Not the desktop layout stacked. On a phone the numeric columns go, the row
+ * becomes two readable lines, and the trading panel comes first — a trader on
+ * a phone is there to act, not to browse a spreadsheet. */
+@media (max-width: 1180px) {
+  .cols, .cols-solo { grid-template-columns: minmax(0, 1fr) 360px; }
+}
+
+@media (max-width: 940px) {
+  .wrap { padding: 0 var(--sp-3) var(--sp-7); }
+  .topbar { margin: 0 calc(var(--sp-3) * -1) var(--sp-4); padding: var(--sp-2) var(--sp-3); min-height: 52px; gap: var(--sp-2); }
+  .topbar .sub { display: none; }
+  .topbar h1 { font-size: 16px; letter-spacing: 0.05em; margin-right: -0.05em; }
+  .lockup { gap: var(--sp-2); }
+  /* A localhost-only badge is not worth a phone's header width. */
+  .topbar .chip-dry { display: none; }
+  .topbar-link { display: none; }
+
+  .cols, .cols-solo { grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); }
+  /* Controls above the feed, and neither of them sticky: two sticky panes on
+     a short screen leaves nothing that actually scrolls. */
+  .colside { order: -1; position: static; max-height: none; overflow: visible; }
+  .feed { position: static; max-height: none; }
+  .flist { max-height: 66vh; }
+
+  .fhead { display: none; }
+  .savatar { width: 38px; height: 38px; }
+  .frow-item {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-3);
+    align-items: center;
+  }
+  /* Volume, liquidity and trade count go; market cap stays, because it is the
+     one figure that decides whether a row is worth opening. */
+  .fnum-vol, .fnum-liq, .fnum-tx, .spark, .spark-empty { display: none; }
+  .fnum-mc { font-size: 15px; }
+  .fline1 > strong { font-size: 15px; }
+  .fline2 { flex-wrap: wrap; row-gap: 3px; }
+  .onlynarrow { display: inline-flex; }
+  .fbond-wrap { margin-left: 0; flex: 1 0 100%; }
+  .fbond { flex: 1 1 auto; width: auto; }
+
+  .snipe-form, .rule-grid { grid-template-columns: 1fr; }
+  .wb-menu { position: fixed; top: 60px; left: var(--sp-3); right: var(--sp-3); width: auto; }
+  .wb-addr { display: none; }
+  /* Comfortable targets: 44px is the smallest thing a thumb reliably hits. */
+  .btn, .input, .wb-pill { height: 44px; }
+  .btn-sm { height: 36px; }
+  .presets .btn { height: 38px; }
+  .toast { left: var(--sp-3); right: var(--sp-3); bottom: var(--sp-3); max-width: none; }
+}
 
 @media (max-width: 560px) {
-  .rule-grid { grid-template-columns: 1fr; }
-  .slog { grid-template-columns: 54px 60px minmax(0, 1fr); }
+  .slog { grid-template-columns: 52px 56px minmax(0, 1fr); }
+  .holding { grid-template-columns: 1fr auto; row-gap: 2px; }
+  .feedhead { padding: var(--sp-3); }
+  .frow-item { padding: var(--sp-3) var(--sp-2); }
+  .colside > .card > * { padding-left: var(--sp-3); padding-right: var(--sp-3); }
 }
+
+/* Held while the first wallet read decides which layout this instance gets.
+   A quiet panel rather than a spinner: it is one network round trip, and a
+   spinner for 80ms reads as something going wrong. */
+.feed-skeleton {
+  min-height: 320px;
+  background: linear-gradient(100deg, var(--s1) 40%, var(--s2) 50%, var(--s1) 60%);
+  background-size: 300% 100%;
+  animation: skeleton 1.4s ease-in-out infinite;
+}
+@keyframes skeleton {
+  from { background-position: 130% 0; }
+  to { background-position: -30% 0; }
+}
+
+/* Three bars standing in for the coin header, price row and button while the
+   lookup runs. Shaped like what is about to arrive, so the panel does not
+   jump when it does. */
+.loading-coin { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-3) 0; }
+.lc-bar {
+  display: block;
+  height: 12px;
+  border-radius: var(--r-chip);
+  background: linear-gradient(100deg, var(--s2) 40%, var(--s3) 50%, var(--s2) 60%);
+  background-size: 300% 100%;
+  animation: skeleton 1.3s ease-in-out infinite;
+}
+.lc-a { width: 42%; }
+.lc-b { width: 72%; }
+.lc-c { height: 38px; width: 100%; border-radius: var(--r-ctl); }
