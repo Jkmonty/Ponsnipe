@@ -75,6 +75,8 @@ export default function TradePanel({
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string; tx?: string } | null>(null);
   const [held, setHeld] = useState<bigint | null>(null);
   const [routeOk, setRouteOk] = useState<boolean | null>(null);
+  /** The coin was put down by hand, rather than never having loaded. */
+  const [closed, setClosed] = useState(false);
   /* The snipe form. Kept here rather than inside useSniper: a half-typed
      ticker is not a watch, and should not be persisted as one. */
   const [wTicker, setWTicker] = useState("");
@@ -134,12 +136,29 @@ export default function TradePanel({
   );
   useEffect(() => setAutoTick(auto.tick), [auto.tick]);
 
+  /**
+   * Put the picked coin down.
+   *
+   * `picked` deliberately is not cleared: it carries a timestamp, so clicking
+   * the same row again still counts as a new pick and loads it back.
+   */
+  const closeCoin = useCallback(() => {
+    setSnap(null);
+    setMsg(null);
+    setRouteOk(null);
+    // Without this the panel cannot tell "closed" from "still loading", and
+    // falls back to the loading bars forever — the skeleton is shown whenever
+    // there is a pick and no snapshot yet.
+    setClosed(true);
+  }, []);
+
   /** Load whichever coin the feed handed over. */
   useEffect(() => {
     if (!picked) return;
     setSnap(null);
     setMsg(null);
     setRouteOk(null);
+    setClosed(false);
     void (async () => {
       try {
         const r = await fetch(`/api/token?address=${picked.address}`);
@@ -475,7 +494,7 @@ export default function TradePanel({
       )}
 
       {!snap ? (
-        picked && !msg ? (
+        picked && !msg && !closed ? (
           /*
             Loading, and it says so.
 
@@ -502,10 +521,31 @@ export default function TradePanel({
         <>
           <div className="spread" style={{ marginTop: 10 }}>
             <strong>{snap.symbol}</strong>
-            <span className="muted small">
-              {snap.quoteIsNative ? "ETH" : `via ${snap.quoteSymbol}`} ·{" "}
-              {snap.graduation.progressPct.toFixed(1)}%
-            </span>
+            <div className="row" style={{ gap: 8 }}>
+              <span className="muted small">
+                {snap.quoteIsNative ? "ETH" : `via ${snap.quoteSymbol}`} ·{" "}
+                {snap.graduation.progressPct.toFixed(1)}%
+              </span>
+              {/* A way back out. Picking a coin replaced the panel with that
+                  coin and there was no way to put it down again short of
+                  picking a different one — so a chart you opened to glance at
+                  stayed open, polling, over the buy box. */}
+              <button
+                className="ch-x"
+                onClick={closeCoin}
+                aria-label={`Close ${snap.symbol}`}
+                title="Close"
+              >
+                <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+                  <path
+                    d="M3 3 L11 11 M11 3 L3 11"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* Above the buy box, not below it: the chart is what you look at

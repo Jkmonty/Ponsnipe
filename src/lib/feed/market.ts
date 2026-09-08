@@ -109,20 +109,25 @@ const KEEP_MINUTES = 180;
  */
 const PRICE_KEEP_MINUTES = 720;
 /*
- * The same history at five-second resolution, kept for two hours.
+ * The same history at one-second resolution, kept for an hour.
  *
  * A minute bar is the wrong unit for this market. The median pons coin lives
  * three minutes, so a chart of minute closes draws three points for the
  * typical launch — and the whole decision a sniper makes happens inside those
- * three points. Five seconds is roughly the sweep cadence, so it is as fine as
- * the data honestly goes; anything finer would be drawing the poll interval
- * rather than the market.
+ * three points.
  *
- * Only curves that actually trade write rows, so this costs far less than
- * 1,440 rows per curve per two hours in practice.
+ * One second is the finest bucket the sweep can fill. It does not mean a
+ * point every second: the sweep runs on FEED_POLL_MS, two seconds by default,
+ * so in practice a busy curve lands in every other bucket and the chart
+ * carries the price across the gap. Storing at one second rather than at the
+ * poll interval means the coarser views are exact multiples of it, and means
+ * a faster poll needs no migration.
+ *
+ * Coarser steps are aggregated from this table when drawn, so there is one
+ * fine table rather than one table per zoom level.
  */
-const TICK_SECONDS = 5;
-const TICK_KEEP_HOURS = 2;
+const TICK_SECONDS = 1;
+const TICK_KEEP_MINUTES = 60;
 /** Curves re-priced per pass. Each costs two calls inside one multicall. */
 const PRICE_BATCH = 90;
 
@@ -940,7 +945,7 @@ function prune(): void {
   db().prepare(`DELETE FROM feed_prices WHERE bucket < ?`).run(nowBucket() - PRICE_KEEP_MINUTES);
   db()
     .prepare(`DELETE FROM feed_ticks WHERE bucket < ?`)
-    .run(nowTick() - (TICK_KEEP_HOURS * 3600) / TICK_SECONDS);
+    .run(nowTick() - (TICK_KEEP_MINUTES * 60) / TICK_SECONDS);
   /*
    * Orphans go too. Price rows outlive the feed window on purpose, but a curve
    * that has dropped out of feed_tokens entirely is never drawn again, so its

@@ -1719,3 +1719,21 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   font-size: 11.5px;
   color: var(--t4);
 }
+
+/* The way out of a picked coin. Quiet until reached for — it sits next to the
+   coin's own numbers and must not compete with them. */
+.ch-x {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--t4);
+  cursor: pointer;
+}
+.ch-x:hover { color: var(--t1); background: var(--s3); border-color: var(--line-2); }
+.ch-x:focus-visible { outline: 2px solid var(--lime); outline-offset: 1px; }

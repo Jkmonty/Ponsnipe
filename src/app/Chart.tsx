@@ -25,7 +25,6 @@ interface Bar {
   s: number;
 }
 interface History {
-  res: string;
   step: number;
   indexed: boolean;
   launchedAt?: string;
@@ -33,12 +32,20 @@ interface History {
   vol?: Bar[];
 }
 
-/** The windows on offer, and how far back each looks. */
-const RANGES = [
-  { label: "5m", minutes: 5 },
-  { label: "15m", minutes: 15 },
-  { label: "1h", minutes: 60 },
-  { label: "12h", minutes: 720 },
+/*
+ * The steps on offer, and how far back each one looks.
+ *
+ * Written as intervals rather than windows because that is the choice being
+ * made: at one second you are watching the launch tick, at a minute you are
+ * looking at the shape of the day. The window follows from the step — three
+ * minutes of one-second points is 180 of them, which is about as many as fit
+ * across a sidebar, and twelve hours of them would be a smear.
+ */
+const STEPS = [
+  { label: "1s", step: 1, minutes: 3 },
+  { label: "5s", step: 5, minutes: 15 },
+  { label: "30s", step: 30, minutes: 60 },
+  { label: "1m", step: 60, minutes: 720 },
 ] as const;
 
 const W = 340;
@@ -75,7 +82,7 @@ function clock(ms: number): string {
 }
 
 export default function Chart({ address, symbol }: { address: string; symbol: string }) {
-  const [minutes, setMinutes] = useState<number>(15);
+  const [pick, setPick] = useState<(typeof STEPS)[number]>(STEPS[1]);
   const [hist, setHist] = useState<History | null>(null);
   const [err, setErr] = useState(false);
   const [hover, setHover] = useState<number | null>(null);
@@ -83,7 +90,9 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch(`/api/token/history?address=${address}&minutes=${minutes}`);
+      const r = await fetch(
+        `/api/token/history?address=${address}&minutes=${pick.minutes}&step=${pick.step}`,
+      );
       const j = (await r.json()) as History;
       if (!r.ok) throw new Error("history failed");
       setHist(j);
@@ -91,7 +100,7 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
     } catch {
       setErr(true);
     }
-  }, [address, minutes]);
+  }, [address, pick]);
 
   /*
    * Reloaded on a timer rather than pushed. The feed's stream carries new
@@ -186,11 +195,12 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
           )}
         </div>
         <div className="ch-ranges">
-          {RANGES.map((r) => (
+          {STEPS.map((r) => (
             <button
               key={r.label}
-              className={`ch-r${minutes === r.minutes ? " on" : ""}`}
-              onClick={() => setMinutes(r.minutes)}
+              className={`ch-r${pick.step === r.step ? " on" : ""}`}
+              onClick={() => setPick(r)}
+              title={`${r.label} steps, last ${r.minutes >= 60 ? `${r.minutes / 60}h` : `${r.minutes}m`}`}
             >
               {r.label}
             </button>
@@ -284,8 +294,11 @@ export default function Chart({ address, symbol }: { address: string; symbol: st
             ) : (
               <>
                 <span>
-                  {symbol} · {hist.res === "5s" ? "5s" : "1m"} steps
+                  {symbol} · {pick.label} steps
                 </span>
+                {/* The window is no longer on the button, so it is said here.
+                    A chart that does not say how far back it goes invites the
+                    reader to assume it goes as far as they want. */}
                 <span>{clock(pts[0].t)} → now</span>
               </>
             )}
