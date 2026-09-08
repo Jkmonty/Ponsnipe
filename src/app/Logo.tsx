@@ -35,9 +35,9 @@ export default function Logo({ size = 30, id = "pn" }: { size?: number; id?: str
       <defs>
         {/* The body: heavy at the foot, lit at the shoulder. */}
         <linearGradient id={`${id}-body`} x1="6" y1="30" x2="26" y2="2" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#5f6a72" />
-          <stop offset="38%" stopColor="#9aa6ac" />
-          <stop offset="70%" stopColor="#dfe6e6" />
+          <stop offset="0%" stopColor="#454e55" />
+          <stop offset="34%" stopColor="#8b979e" />
+          <stop offset="66%" stopColor="#dde5e5" />
           <stop offset="100%" stopColor="#ffffff" />
         </linearGradient>
         {/* The rim. Green only where an edge catches the light. */}
@@ -59,39 +59,38 @@ export default function Logo({ size = 30, id = "pn" }: { size?: number; id?: str
         there, and a hole would leave nothing to cut it into.
       */}
       <path
-        d="M4.6 29.4 V8.2
-           A5.6 5.6 0 0 1 10.2 2.6
-           H21.6
-           A5.6 5.6 0 0 1 27.2 8.2
-           V14.6
-           A5.6 5.6 0 0 1 21.6 20.2
-           H12.6
-           V29.4
-           A0 0 0 0 1 12.6 29.4
-           H4.6 Z"
+        d="M5.6 29.6 V8.6
+           A6.2 6.2 0 0 1 11.8 2.4
+           H20.2
+           A6.2 6.2 0 0 1 26.4 8.6
+           V15.4
+           A6.2 6.2 0 0 1 20.2 21.6
+           H13.8
+           V29.6
+           H5.6 Z"
         fill={`url(#${id}-body)`}
         stroke={`url(#${id}-rim)`}
-        strokeWidth="1.5"
+        strokeWidth="1.6"
         strokeLinejoin="round"
       />
 
       {/* Specular pass, clipped to the top-left shoulder. */}
       <path
-        d="M6.1 14.6 V8.4 A4.3 4.3 0 0 1 10.4 4.1 H20 A4.3 4.3 0 0 1 22 4.6 Z"
+        d="M7.2 15.4 V8.8 A4.8 4.8 0 0 1 12 4 H19.4 A4.8 4.8 0 0 1 21.4 4.5 Z"
         fill={`url(#${id}-gloss)`}
       />
 
       {/* The scope, sitting in the bowl. Ticks stop a clear 1.3 units short of the body on every side. Drawn
           any longer they touch the rim, and the reticle stops reading as
           something sitting inside the letter and starts reading as a crack. */}
-      <g stroke="#f4f8f5" strokeWidth="1.5" strokeLinecap="round" fill="none">
-        <circle cx="18.8" cy="11.3" r="4.5" strokeWidth="1.6" />
-        <path d="M18.8 4.7 V8.3" />
-        <path d="M18.8 14.3 V17.9" />
-        <path d="M12.2 11.3 H15.8" />
-        <path d="M21.8 11.3 H25.4" />
+      <g stroke="#f6faf7" strokeWidth="1.55" strokeLinecap="round" fill="none">
+        <circle cx="19" cy="11.9" r="4.6" strokeWidth="1.7" />
+        <path d="M19 5.1 V8.5" />
+        <path d="M19 15.3 V18.7" />
+        <path d="M12.2 11.9 H15.6" />
+        <path d="M22.4 11.9 H25.8" />
       </g>
-      <circle cx="18.8" cy="11.3" r="1.2" fill="#f4f8f5" />
+      <circle cx="19" cy="11.9" r="1.25" fill="#f6faf7" />
     </svg>
   );
 }

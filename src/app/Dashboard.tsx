@@ -220,7 +220,7 @@ export default function Dashboard() {
       <header className="topbar">
         <div className="row" style={{ gap: 0, minWidth: 0 }}>
           <div className="lockup">
-            <Logo size={32} />
+            <Logo size={34} />
             <h1>Ponsnipe</h1>
           </div>
           <p className="sub">Precision sniping. Maximum edge.</p>

@@ -123,15 +123,56 @@ body {
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 8px 28px -20px #000;
 }
-.topbar .lockup { gap: 11px; }
-.topbar h1 { font-size: 19px; letter-spacing: -0.015em; }
+.topbar .lockup { gap: 12px; }
+
+/*
+ * The wordmark, matched to the mark instead of fighting it.
+ *
+ * This was 19px, weight 700, tracking -0.015em — heavy and tight, which is the
+ * opposite of the brand's own lettering: light strokes, wide spacing, brushed
+ * metal. Beside a pale glass P it read as two logos that had never met.
+ *
+ * The chrome is a gradient clipped to the glyphs, with a solid colour
+ * underneath. If background-clip:text is unsupported the fallback shows and
+ * the name is still legible; without it the text would be transparent, which
+ * is a blank header rather than a plain one.
+ */
+.topbar h1 {
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0.085em;
+  /* The last letter's tracking pushes a gap before the divider that is not
+     there optically; pulling it back re-centres the lockup. */
+  margin-right: -0.085em;
+  color: #e9eef2;
+}
+@supports (background-clip: text) {
+  .topbar h1 {
+    background: linear-gradient(
+      178deg,
+      #ffffff 0%,
+      #eef3f4 26%,
+      #a9b4b9 52%,
+      #7d888e 63%,
+      #dfe7e8 88%,
+      #ffffff 100%
+    );
+    background-clip: text;
+    color: transparent;
+  }
+}
+/* Set the way the brand sets it: small caps-height, widely tracked, and the
+   pale green that only ever appears in the mark's rim. */
 .topbar .sub {
   margin: 0;
-  font-size: 12.5px;
-  color: var(--muted-2);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #93b39c;
   border-left: 1px solid var(--line-2);
-  padding-left: 13px;
-  margin-left: 2px;
+  padding-left: 14px;
+  margin-left: 4px;
 }
 @media (max-width: 780px) {
   .topbar { padding: 12px 16px; }
