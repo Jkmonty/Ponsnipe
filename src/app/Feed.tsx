@@ -494,6 +494,20 @@ const FeedRow = memo(function FeedRow({
  */
 /** How long the list stays frozen after the pointer stops moving over it. */
 const HOLD_IDLE_MS = 3000;
+/*
+ * The floor between two pushed refreshes.
+ *
+ * The stream says "a launch landed" and the browser fetches. That was one
+ * fetch per launch, and pons launches about a coin a second — so the page was
+ * pulling 218KB, parsing it and reconciling 250 rows roughly once a second,
+ * for ever. On anything but a fast machine on a fast line that is the whole
+ * budget, and the feed felt slow and then stuck.
+ *
+ * The first push in a quiet moment still fetches immediately, so a launch
+ * appearing is as fast as it was. It is only a burst that gets collapsed, and
+ * a burst is precisely when one fetch would have carried all of them anyway.
+ */
+const PUSH_MIN_MS = 1500;
 
 export default function Feed({ onPick }: { onPick: (address: string) => void }) {
   const [data, setData] = useState<Payload | null>(null);
@@ -514,8 +528,15 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
    * you are in the middle of making, which is never three seconds long.
    */
   const [held, setHeld] = useState(false);
+  /*
+   * Written by the handlers, not during render.
+   *
+   * Assigning it while rendering meant it only caught up on the next render,
+   * so releasing the hold and immediately fetching read the stale value and
+   * the fetch bailed — the feed then waited for the next push instead of
+   * catching up the moment the pointer left.
+   */
   const heldRef = useRef(false);
-  heldRef.current = held;
   const holdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /**
    * A finder, not a filter: it never hides a coin that would otherwise be
@@ -566,13 +587,18 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
   /** Freeze the list, and start the clock that thaws it. */
   const hold = useCallback(() => {
     clearTimeout(holdTimer.current);
+    heldRef.current = true;
     setHeld(true);
-    holdTimer.current = setTimeout(() => setHeld(false), HOLD_IDLE_MS);
+    holdTimer.current = setTimeout(() => {
+      heldRef.current = false;
+      setHeld(false);
+    }, HOLD_IDLE_MS);
   }, []);
 
   /** Thaw now, and catch up immediately rather than at the next tick. */
   const release = useCallback(() => {
     clearTimeout(holdTimer.current);
+    heldRef.current = false;
     setHeld(false);
     void load();
   }, [load]);
@@ -592,6 +618,30 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
       clearTimeout(holdTimer.current);
     };
   }, [release]);
+
+  /*
+   * One fetch per push, but never more often than PUSH_MIN_MS.
+   *
+   * Trailing rather than leading-only: the last launch in a burst still gets
+   * fetched, so the feed settles on the truth instead of on whatever the last
+   * allowed fetch happened to see.
+   */
+  const lastLoad = useRef(0);
+  const queued = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const loadSoon = useCallback(() => {
+    const since = Date.now() - lastLoad.current;
+    if (since >= PUSH_MIN_MS) {
+      lastLoad.current = Date.now();
+      void load();
+      return;
+    }
+    if (queued.current) return;
+    queued.current = setTimeout(() => {
+      queued.current = undefined;
+      lastLoad.current = Date.now();
+      void load();
+    }, PUSH_MIN_MS - since);
+  }, [load]);
 
   /** True while the push connection is up, so the UI can say which it is on. */
   const [pushed, setPushed] = useState(false);
@@ -618,7 +668,7 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
     try {
       es = new EventSource("/api/feed/stream");
       es.onopen = () => setPushed(true);
-      es.onmessage = () => load();
+      es.onmessage = () => loadSoon();
       es.onerror = () => setPushed(false);
     } catch {
       // No EventSource, or blocked: the poll below is the whole mechanism.
@@ -627,9 +677,10 @@ export default function Feed({ onPick }: { onPick: (address: string) => void }) 
     const iv = setInterval(load, 10_000);
     return () => {
       clearInterval(iv);
+      clearTimeout(queued.current);
       es?.close();
     };
-  }, [load]);
+  }, [load, loadSoon]);
 
   /*
    * Which tokens have already been on screen.

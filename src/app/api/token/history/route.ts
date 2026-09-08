@@ -100,6 +100,38 @@ export async function GET(req: Request) {
      * candle is flat. That is the truth about them: nothing traded.
      */
     /*
+     * The last price before the window opened, so a coin that traded a minute
+     * ago still draws.
+     *
+     * Carry-forward can only carry something it has. With a thirty-second
+     * window and no trade inside it there was nothing to start from, so a coin
+     * with nine hundred trades reported "not enough trades yet" — which reads
+     * as broken rather than as quiet. Worse right after a deploy, when the
+     * sub-second table is empty for everybody and every coin said it.
+     *
+     * Looked for in the coarser tables too, because those go back further: the
+     * point is to find any price at all that predates the window.
+     */
+    let seed = 0;
+    const windowFrom = Date.now() - wantMs;
+    if (!hist.length || hist[0].bucket * src.unit > windowFrom) {
+      for (const alt of SOURCES) {
+        const before = db()
+          .prepare(
+            `SELECT price FROM ${alt.table}
+              WHERE curve = ? AND bucket <= ? ORDER BY bucket DESC LIMIT 1`,
+          )
+          .get(row.curve, Math.floor(windowFrom / alt.unit)) as
+          | { price: number }
+          | undefined;
+        if (before?.price) {
+          seed = before.price;
+          break;
+        }
+      }
+    }
+
+    /*
      * Which candle a stored bucket belongs to, in candle numbers since the
      * epoch — the same unit the fill loop below counts in.
      *
@@ -138,9 +170,13 @@ export async function GET(req: Request) {
     // A cap belongs here rather than in a comment: it is the difference
     // between a wrong answer and an unbounded loop.
     const span = Math.ceil(wantMs / step) + 2;
-    const first = Math.max(last - span, hist.length ? key(hist[0].bucket) : last);
+    // With a seed there is a price for the whole window, so draw the whole
+    // window. Without one, start where the data does.
+    const first = seed
+      ? last - span
+      : Math.max(last - span, hist.length ? key(hist[0].bucket) : last);
     const candles: Candle[] = [];
-    let carried = 0;
+    let carried = seed;
     for (let b = first; b <= last; b++) {
       const g = groups.get(b);
       if (g) {
