@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { cached, recentlyFailed, resolveImage } from "@/lib/feed/images";
+import { cached, noteImage, recentlyFailed, resolveImage } from "@/lib/feed/images";
 import { isKnownLogo } from "@/lib/feed/query";
 
 export const runtime = "nodejs";
@@ -43,7 +43,16 @@ export async function GET(req: Request) {
     Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), PATIENCE_MS))]);
 
   // A logo that failed everywhere a moment ago is not worth another attempt.
-  const hit = recentlyFailed(raw) ? null : (cached(raw) ?? (await wait(resolveImage(raw))));
+  noteImage("asked");
+  let hit = cached(raw);
+  if (!hit) {
+    if (recentlyFailed(raw)) {
+      noteImage("blocked");
+    } else {
+      hit = await wait(resolveImage(raw));
+      if (!hit) noteImage("gaveUpWaiting");
+    }
+  }
   /*
    * 404 rather than a placeholder: the client falls back to the direct URL and
    * then to its initials tile, which it can do only if this says nothing.

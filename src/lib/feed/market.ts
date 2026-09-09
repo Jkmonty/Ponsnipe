@@ -25,7 +25,7 @@ import { PUBLIC_RPC_POOL } from "../env";
 import { db, logEngine } from "../db/index";
 import { PONS } from "../pons/addresses";
 import { ponsFactoryAbi, erc20Abi, bondingCurveAbi } from "../pons/abis";
-import { warmImages } from "./images";
+import { imageStats, warmImages } from "./images";
 
 /** Every pons v2 token mints the same fixed supply. */
 const SUPPLY_RAW = 1e27;
@@ -1336,5 +1336,6 @@ export function feedStatus() {
     seen: s.seen,
     lastError: s.lastError,
     rpc: rpcLoad(),
+    img: imageStats(),
   };
 }

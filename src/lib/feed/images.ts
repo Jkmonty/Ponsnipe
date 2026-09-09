@@ -126,6 +126,30 @@ async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/*
+ * Counters, because two guesses at this have now been wrong.
+ *
+ * The disk cache holds three quarters of the feed's logos and yet only half of
+ * them serve, and no theory of mine survives both those numbers. These say
+ * which stage is losing them rather than inviting another theory.
+ */
+const stats = {
+  asked: 0,
+  fromMemOrDisk: 0,
+  fetched: 0,
+  hardFail: 0,
+  softFail: 0,
+  gaveUpWaiting: 0,
+  blocked: 0,
+};
+export function imageStats() {
+  return { ...stats, queued: waiting.length, active, failMapSize: failures().size };
+}
+/** Counted at the route, which is the only place that knows a viewer waited. */
+export function noteImage(k: "asked" | "gaveUpWaiting" | "blocked"): void {
+  stats[k]++;
+}
+
 const MAX_BYTES = 3 * 1024 * 1024;
 
 /**
@@ -349,7 +373,10 @@ export function cached(raw: string): CachedImage | null {
 /** Fetch and cache one logo. Resolves to null when nothing serves it. */
 export async function resolveImage(raw: string): Promise<CachedImage | null> {
   const hit = cached(raw);
-  if (hit) return hit;
+  if (hit) {
+    stats.fromMemOrDisk++;
+    return hit;
+  }
   const running = inFlight().get(raw);
   if (running) return running;
   const p = withSlot(() => fetchImage(raw));
@@ -405,6 +432,8 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
        */
       const errs = (err as AggregateError)?.errors ?? [err];
       const permanent = errs.length > 0 && errs.every(isPermanent);
+      if (permanent) stats.hardFail++;
+      else stats.softFail++;
       const f = failures();
       if (f.size > 5_000) f.clear();
       f.set(raw, { at: Date.now(), ttl: permanent ? FAIL_TTL_MS : SOFT_TTL_MS });
@@ -418,6 +447,7 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
     if (c.size >= MAX_ENTRIES) c.delete(c.keys().next().value as string);
     c.set(raw, entry);
     toDisk(raw, entry);
+    stats.fetched++;
     return entry;
   } finally {
     inFlight().delete(raw);
