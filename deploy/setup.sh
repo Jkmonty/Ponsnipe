@@ -17,9 +17,36 @@
 
 set -euo pipefail
 
-DOMAIN="${1:-}"
+#
+# A dropped terminal must not abandon a half-finished deploy.
+#
+# The build saturates both cores for half a minute, and Docker rewrites
+# iptables when it recreates containers, either of which can take an SSH
+# session with it. Ignoring SIGHUP means the deploy runs to the end whatever
+# happens to the connection that started it.
+#
+trap '' HUP
+
 REPO="https://github.com/Jkmonty/Ponsnipe.git"
 APP_DIR="/opt/ponsnipe"
+
+#
+# The domain, remembered between runs.
+#
+# It used to come only from the argument, and the script's own closing message
+# tells you to update with `sudo bash setup.sh` — with no argument. After
+# setting up HTTPS once, that update would rewrite the Caddyfile back to plain
+# :80 and silently drop the certificate. So a domain given once is kept, and
+# `none` is how you deliberately go back to HTTP.
+#
+DOMAIN_FILE="$APP_DIR/.domain"
+DOMAIN="${1:-}"
+if [ "$DOMAIN" = "none" ]; then
+  DOMAIN=""
+  rm -f "$DOMAIN_FILE"
+elif [ -z "$DOMAIN" ] && [ -f "$DOMAIN_FILE" ]; then
+  DOMAIN="$(cat "$DOMAIN_FILE")"
+fi
 
 say() { printf '\n\033[1;33m==> %s\033[0m\n' "$*"; }
 ok()  { printf '    \033[0;32m✓\033[0m %s\n' "$*"; }
@@ -84,6 +111,11 @@ else
 fi
 ok "code at $(git -C "$APP_DIR" rev-parse --short HEAD)"
 
+# Untracked, so the `git reset --hard` above leaves it alone.
+if [ -n "$DOMAIN" ]; then
+  printf '%s' "$DOMAIN" > "$DOMAIN_FILE"
+fi
+
 # ── 6. the reverse proxy ──────────────────────────────────────────────────
 # With a domain, Caddy fetches and renews a Let's Encrypt certificate by itself.
 # Without one, it serves plain HTTP on the IP — fine for a first look, and the
@@ -124,6 +156,16 @@ say "Building and starting (first build takes 3-5 minutes)"
 cd "$APP_DIR/deploy"
 docker compose up -d --build
 
+#
+# Keep the build cache from growing without limit.
+#
+# Measured at 9.2GB after a few weeks of deploys, of which 8.8GB was
+# reclaimable — harmless on a 96GB disk right up until it is not, and nothing
+# else on this box ever prunes it. Two gigabytes is enough to keep the layers
+# that make the next build fast.
+#
+docker builder prune --force --keep-storage 2GB >/dev/null 2>&1 || true
+
 say "Done"
 IP="$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || echo 'this server')"
 if [ -n "$DOMAIN" ]; then
@@ -132,8 +174,9 @@ if [ -n "$DOMAIN" ]; then
 else
   echo "    Ponsnipe is starting at http://$IP"
   echo "    Re-run with a domain to get HTTPS:  sudo bash setup.sh yourdomain.com"
+  echo "    The domain is remembered, so later updates need no argument."
 fi
 echo
 echo "    The feed needs a minute or two to index before it fills up."
 echo "    Watch it:    docker compose -f $APP_DIR/deploy/docker-compose.yml logs -f app"
-echo "    Update it:   sudo bash $APP_DIR/deploy/setup.sh ${DOMAIN}"
+echo "    Update it:   sudo bash $APP_DIR/deploy/setup.sh"
