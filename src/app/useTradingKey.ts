@@ -34,6 +34,16 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { robinhoodChain } from "@/lib/chain";
+import {
+  addressesOf,
+  keyFrom,
+  makeVault,
+  normalisePrivateKey,
+  openVault,
+  resealVault,
+  unb64,
+  type Vault,
+} from "./vault";
 import { broadcastTransport } from "./browserTrade";
 
 const STORE = "ponsnipe.tradingKey.v1";
@@ -76,36 +86,6 @@ export const REVEAL_TIMEOUT_MS = 60_000;
  * that costs money if it fails.
  */
 
-interface Vault {
-  v: 1;
-  salt: string;
-  iv: string;
-  data: string;
-  address: Address;
-}
-
-const b64 = (b: ArrayBuffer | Uint8Array) =>
-  btoa(String.fromCharCode(...new Uint8Array(b as ArrayBuffer)));
-const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-
-/**
- * PBKDF2 at 310,000 rounds, which is the OWASP figure for SHA-256 and takes
- * roughly a fifth of a second here. It is paid once per session on unlock, not
- * per trade, so it does not touch the speed this whole file exists for.
- */
-async function keyFrom(pass: string, salt: Uint8Array): Promise<CryptoKey> {
-  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, [
-    "deriveKey",
-  ]);
-  return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: salt as BufferSource, iterations: 310_000, hash: "SHA-256" },
-    base,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"],
-  );
-}
-
 function readVault(): Vault | null {
   try {
     const raw = localStorage.getItem(STORE);
@@ -120,8 +100,18 @@ export interface TradingKey {
   exists: boolean;
   /** Milliseconds until the idle lock fires, or null while locked. */
   lockingIn: number | null;
-  /** Address of the stored key, known even while locked. */
+  /** Address of the primary key, known even while locked. */
   address: Address | null;
+  /** Every address in the vault, in order, known even while locked. */
+  addresses: Address[];
+  /** Every unlocked account. Empty while locked. */
+  accounts: Account[];
+  /** One signing client per unlocked account, same order as `accounts`. */
+  clients: WalletClient[];
+  /** Generate a wallet, or import one, into an unlocked vault. */
+  addWallet: (privateKey?: string) => Promise<void>;
+  /** Drop a wallet. Its key is destroyed with it. */
+  removeWallet: (address: Address) => Promise<void>;
   /** Unlocked and ready to sign without prompting. */
   unlocked: boolean;
   busy: boolean;
@@ -130,7 +120,7 @@ export interface TradingKey {
   importKey: (privateKey: string, pass: string) => Promise<void>;
   unlock: (pass: string) => Promise<void>;
   lock: () => void;
-  /** The raw key, for backing up or sweeping into another wallet. */
+  /** The raw keys, one per line, for backing up or sweeping elsewhere. */
   reveal: (pass: string) => Promise<string | null>;
   forget: () => void;
   /** Push the idle deadline out; call when the key is used. */
@@ -143,7 +133,27 @@ export interface TradingKey {
 
 export function useTradingKey(): TradingKey {
   const [vault, setVault] = useState<Vault | null>(null);
-  const [account, setAccount] = useState<Account | null>(null);
+  /*
+   * Every unlocked key, in vault order. The first is the primary: it is what
+   * the single-wallet parts of the app act on, so nothing that existed before
+   * multi-wallet has to know about the rest.
+   */
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const account = accounts[0] ?? null;
+  /*
+   * The derived AES key, kept while unlocked so adding or removing a wallet
+   * does not ask for the passphrase again. No weaker than what is already
+   * held: the private keys themselves are in memory beside it.
+   */
+  const cryptoKeyRef = useRef<CryptoKey | null>(null);
+  /*
+   * The keys themselves, beside the accounts derived from them.
+   *
+   * A viem Account can sign but never hands the key back, and adding a wallet
+   * means re-sealing the whole set — so the set has to be held. Same lifetime
+   * as the accounts: gone on lock, on the idle timer, and on forget.
+   */
+  const keysRef = useRef<Hex[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lockAt, setLockAt] = useState<number | null>(null);
@@ -190,31 +200,41 @@ export function useTradingKey(): TradingKey {
     if (!account || lockAt == null) return;
     const iv = setInterval(() => {
       if (Date.now() >= lockAt) {
-        setAccount(null);
+        setAccounts([]);
+        cryptoKeyRef.current = null;
+    keysRef.current = [];
         setLockAt(null);
       }
     }, 10_000);
     return () => clearInterval(iv);
   }, [account, lockAt]);
 
-  const store = useCallback(async (pk: Hex, pass: string) => {
-    const acct = privateKeyToAccount(pk);
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const key = await keyFrom(pass, salt);
-    const data = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: iv as BufferSource },
-      key,
-      new TextEncoder().encode(pk),
-    );
-    const v: Vault = { v: 1, salt: b64(salt), iv: b64(iv), data: b64(data), address: acct.address };
+  const store = useCallback(async (keys: Hex[], pass: string) => {
+    const v = await makeVault(keys, pass);
     localStorage.setItem(STORE, JSON.stringify(v));
+    cryptoKeyRef.current = await keyFrom(pass, unb64(v.salt));
     setVault(v);
-    setAccount(acct);
+    keysRef.current = keys;
+    setAccounts(keys.map((k) => privateKeyToAccount(k)));
     setLockAt(Date.now() + IDLE_LOCK_MS);
     setWatchingState(false);
     watchingRef.current = false;
   }, []);
+
+  /** Write a changed key set back, re-sealed with the key already in hand. */
+  const save = useCallback(
+    async (keys: Hex[]) => {
+      const v = readVault();
+      const ck = cryptoKeyRef.current;
+      if (!v || !ck) throw new Error("Unlock first.");
+      const next = await resealVault(v, ck, keys);
+      localStorage.setItem(STORE, JSON.stringify(next));
+      setVault(next);
+      keysRef.current = keys;
+      setAccounts(keys.map((k) => privateKeyToAccount(k)));
+    },
+    [],
+  );
 
   const create = useCallback(
     async (pass: string) => {
@@ -222,7 +242,7 @@ export function useTradingKey(): TradingKey {
       setError(null);
       try {
         if (pass.length < 12) throw new Error("Use at least 12 characters.");
-        await store(generatePrivateKey(), pass);
+        await store([generatePrivateKey()], pass);
       } catch (e) {
         setError(e instanceof Error ? e.message : "could not create the key");
       } finally {
@@ -238,9 +258,7 @@ export function useTradingKey(): TradingKey {
       setError(null);
       try {
         if (pass.length < 12) throw new Error("Use at least 12 characters.");
-        const pk = privateKey.trim().startsWith("0x") ? privateKey.trim() : `0x${privateKey.trim()}`;
-        if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) throw new Error("That is not a private key.");
-        await store(pk as Hex, pass);
+        await store([normalisePrivateKey(privateKey)], pass);
       } catch (e) {
         setError(e instanceof Error ? e.message : "could not import the key");
       } finally {
@@ -250,60 +268,119 @@ export function useTradingKey(): TradingKey {
     [store],
   );
 
-  const decrypt = useCallback(async (v: Vault, pass: string): Promise<Hex> => {
-    const key = await keyFrom(pass, unb64(v.salt));
-    const out = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: unb64(v.iv) as BufferSource },
-      key,
-      unb64(v.data) as BufferSource,
-    );
-    return new TextDecoder().decode(out) as Hex;
+  const unlock = useCallback(async (pass: string) => {
+    const v = readVault();
+    if (!v) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const keys = await openVault(v, pass);
+      cryptoKeyRef.current = await keyFrom(pass, unb64(v.salt));
+      keysRef.current = keys;
+      setAccounts(keys.map((k) => privateKeyToAccount(k)));
+      setLockAt(Date.now() + IDLE_LOCK_MS);
+      /*
+       * A v1 vault is rewritten as v2 the first time it is opened, so the
+       * migration happens once, silently, on a passphrase we have just
+       * verified — rather than on some later write that might not have one.
+       */
+      if (v.v === 1) {
+        const next = await resealVault(v, cryptoKeyRef.current, keys);
+        localStorage.setItem(STORE, JSON.stringify(next));
+        setVault(next);
+      }
+    } catch {
+      // AES-GCM fails authentication on a wrong passphrase; there is no way
+      // to tell that apart from corruption, and the honest message is the
+      // one the user can act on.
+      setError("Wrong passphrase.");
+    } finally {
+      setBusy(false);
+    }
   }, []);
 
-  const unlock = useCallback(
-    async (pass: string) => {
-      const v = readVault();
-      if (!v) return;
+  const reveal = useCallback(async (pass: string): Promise<string | null> => {
+    const v = readVault();
+    if (!v) return null;
+    try {
+      // Newline-separated when there are several: one key per line is what a
+      // person pastes into another wallet, one at a time.
+      return (await openVault(v, pass)).join("\n");
+    } catch {
+      setError("Wrong passphrase.");
+      return null;
+    }
+  }, []);
+
+  /**
+   * Add a wallet to an unlocked vault — generated, or imported from a key.
+   *
+   * Needs no passphrase: the derived key is already held, which is the whole
+   * reason it is kept. Ordering matters, so a new wallet goes on the end and
+   * the primary never changes underneath somebody mid-trade.
+   */
+  const addWallet = useCallback(
+    async (privateKey?: string) => {
       setBusy(true);
       setError(null);
       try {
-        setAccount(privateKeyToAccount(await decrypt(v, pass)));
-        setLockAt(Date.now() + IDLE_LOCK_MS);
-      } catch {
-        // AES-GCM fails authentication on a wrong passphrase; there is no way
-        // to tell that apart from corruption, and the honest message is the
-        // one the user can act on.
-        setError("Wrong passphrase.");
+        if (!cryptoKeyRef.current) throw new Error("Unlock first.");
+        const pk = privateKey ? normalisePrivateKey(privateKey) : generatePrivateKey();
+        if (keysRef.current.includes(pk)) throw new Error("That wallet is already here.");
+        await save([...keysRef.current, pk]);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "could not add a wallet");
       } finally {
         setBusy(false);
       }
     },
-    [decrypt],
+    [save],
   );
 
-  const reveal = useCallback(
-    async (pass: string): Promise<string | null> => {
-      const v = readVault();
-      if (!v) return null;
+  /**
+   * Drop a wallet from the vault.
+   *
+   * The key goes with it, and this browser is the only place it existed — so
+   * anything still held by that address is unreachable afterwards. The caller
+   * is responsible for saying so before calling; the balance check belongs
+   * where the confirmation is, not here.
+   */
+  const removeWallet = useCallback(
+    async (address: Address) => {
+      setBusy(true);
+      setError(null);
       try {
-        return await decrypt(v, pass);
-      } catch {
-        setError("Wrong passphrase.");
-        return null;
+        if (!cryptoKeyRef.current) throw new Error("Unlock first.");
+        const keys = keysRef.current.filter(
+          (k) => privateKeyToAccount(k).address.toLowerCase() !== address.toLowerCase(),
+        );
+        // Emptying the vault is `forget`, which also clears the passphrase and
+        // the stored blob. Silently leaving an empty vault behind is worse.
+        if (!keys.length) throw new Error("That is the last wallet — use Forget instead.");
+        if (keys.length === keysRef.current.length) throw new Error("No such wallet.");
+        await save(keys);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "could not remove that wallet");
+      } finally {
+        setBusy(false);
       }
     },
-    [decrypt],
+    [save],
   );
 
   const lock = useCallback(() => {
-    setAccount(null);
+    setAccounts([]);
+    cryptoKeyRef.current = null;
+    keysRef.current = [];
     setLockAt(null);
   }, []);
 
   const forget = useCallback(() => {
     localStorage.removeItem(STORE);
     setVault(null);
-    setAccount(null);
+    setAccounts([]);
+    cryptoKeyRef.current = null;
+    keysRef.current = [];
     setLockAt(null);
   }, []);
 
@@ -311,18 +388,20 @@ export function useTradingKey(): TradingKey {
    * Signs locally and broadcasts over plain HTTP — no injected provider, so
    * nothing to confirm. This is the whole speed difference.
    */
-  const client = account
-    ? createWalletClient({
-        account,
-        chain: robinhoodChain,
-        transport: broadcastTransport(),
-      })
-    : null;
+  const clients = accounts.map((a) =>
+    createWalletClient({ account: a, chain: robinhoodChain, transport: broadcastTransport() }),
+  );
+  const client = clients[0] ?? null;
 
   return {
     exists: !!vault,
     lockingIn: account && lockAt != null ? Math.max(0, lockAt - Date.now()) : null,
-    address: vault?.address ?? null,
+    address: addressesOf(vault)[0] ?? null,
+    addresses: addressesOf(vault),
+    accounts,
+    clients,
+    addWallet,
+    removeWallet,
     unlocked: !!account,
     busy,
     error,
