@@ -133,6 +133,8 @@ async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
   } finally {
     active--;
     waiting.shift()?.();
+    // A freed slot is the only moment the backlog can make progress.
+    pump();
   }
 }
 
@@ -143,18 +145,82 @@ async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
  * them serve, and no theory of mine survives both those numbers. These say
  * which stage is losing them rather than inviting another theory.
  */
-const stats = {
-  asked: 0,
-  fromMemOrDisk: 0,
-  fetched: 0,
-  hardFail: 0,
-  softFail: 0,
-  gaveUpWaiting: 0,
-  blocked: 0,
-  cacheHit: 0,
-};
+/*
+ * globalThis-backed, like everything else here that two module instances can
+ * touch. Without it the sweep and the route each increment their own copy, and
+ * the numbers disagree with each other — the failure map said 615 entries
+ * while the counters claimed 32 failures, which is how this was noticed.
+ */
+interface Stats {
+  asked: number;
+  fromMemOrDisk: number;
+  fetched: number;
+  hardFail: number;
+  softFail: number;
+  gaveUpWaiting: number;
+  blocked: number;
+  cacheHit: number;
+}
+const sg = globalThis as typeof globalThis & { __ponsImgStats?: Stats };
+const stats: Stats =
+  sg.__ponsImgStats ??
+  (sg.__ponsImgStats = {
+    asked: 0,
+    fromMemOrDisk: 0,
+    fetched: 0,
+    hardFail: 0,
+    softFail: 0,
+    gaveUpWaiting: 0,
+    blocked: 0,
+    cacheHit: 0,
+  });
 export function imageStats() {
-  return { ...stats, queued: waiting.length, active, failMapSize: failures().size };
+  return {
+    ...stats,
+    queued: waiting.length,
+    active,
+    backlog: backlog().size,
+    failMapSize: failures().size,
+  };
+}
+
+/**
+ * Logos waiting to be warmed, kept until they are.
+ *
+ * warmImages used to give up on the rest of a batch when the queue was busy,
+ * and a launch is warmed exactly once — when it is indexed. So every coin that
+ * happened to land during a busy moment never had its artwork fetched at all,
+ * and the newest rows, which are the ones anybody actually looks at, were the
+ * ones missing pictures. Dropped work looked like backpressure and was really
+ * just loss.
+ *
+ * Now the busy moment defers rather than discards, and the pump comes back for
+ * them as slots free.
+ */
+const bg = globalThis as typeof globalThis & { __ponsImgBacklog?: Set<string> };
+function backlog(): Set<string> {
+  bg.__ponsImgBacklog ??= new Set();
+  return bg.__ponsImgBacklog;
+}
+/** Bounded, so a feed nobody is watching cannot grow it without limit. */
+const MAX_BACKLOG = 2_000;
+/*
+ * Slots the backlog will not touch.
+ *
+ * Warming is work nobody asked for yet; a viewer looking at the page has. This
+ * keeps a third of the budget free for them, so background work can never be
+ * the reason a visible row has no picture.
+ */
+const RESERVED_FOR_VIEWERS = 8;
+
+function pump(): void {
+  const q = backlog();
+  while (active < MAX_INFLIGHT - RESERVED_FOR_VIEWERS && q.size > 0) {
+    const next = q.values().next().value as string;
+    q.delete(next);
+    if (cached(next) || recentlyFailed(next)) continue;
+    void resolveImage(next).catch(() => {});
+  }
 }
 /** Counted at the route, which is the only place that knows a viewer waited. */
 export function noteImage(k: "asked" | "gaveUpWaiting" | "blocked" | "cacheHit"): void {
@@ -473,9 +539,11 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
  * should wait, not the request from someone looking at the page right now.
  */
 export function warmImages(logos: (string | null | undefined)[]): void {
+  const q = backlog();
   for (const l of logos) {
-    if (!l || l.length > 512 || cached(l)) continue;
-    if (waiting.length > 8) break;
-    void resolveImage(l).catch(() => {});
+    if (!l || l.length > 512 || cached(l) || recentlyFailed(l)) continue;
+    if (q.size >= MAX_BACKLOG) break;
+    q.add(l);
   }
+  pump();
 }

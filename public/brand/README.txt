@@ -1,7 +1,7 @@
 Brand artwork, as supplied.
 
   mark.png       the glass P with the crosshair   (1254x1254, content 438x632)
-  wordmark.png   the word "Ponsnipe"              (1254x1254, content 978x186)
+  wordmark.png   the word "Ponsnipe"              (1024x1024, content 801x152)
   tagline.png    "PRECISION SNIPING. MAXIMUM EDGE." (content 981x28)
 
 The .webp files beside them are generated, not authored. Each source is
