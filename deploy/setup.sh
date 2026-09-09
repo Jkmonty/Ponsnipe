@@ -157,6 +157,20 @@ cd "$APP_DIR/deploy"
 docker compose up -d --build
 
 #
+# Make Caddy read the Caddyfile it was just handed.
+#
+# The Caddyfile is a bind mount, so writing a new one does not change the
+# container's spec and `up -d` leaves Caddy running with whatever it started
+# with. Setting a domain therefore appeared to work — the file said
+# ponsnipe.com, the script said https — while Caddy was still serving :80 and
+# had never asked for a certificate.
+#
+# A reload rather than a restart: it swaps the config in place with no dropped
+# connections, which matters for the feed's open event streams.
+#
+docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile   || docker compose restart caddy
+
+#
 # Keep the build cache from growing without limit.
 #
 # Measured at 9.2GB after a few weeks of deploys, of which 8.8GB was
