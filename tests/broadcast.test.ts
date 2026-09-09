@@ -8,15 +8,27 @@ const RAW = "0xdeadbeef" as const;
 const HASH = keccak256(RAW);
 
 type Reply = { result?: string } | { error: { message: string } };
+/** A CDN page rather than JSON, which is what a throttled node really sends. */
+type Html = { html: number };
+type Stub = Reply | Html | "network-error";
 
 /** Stand in for every endpoint, answering per-URL. */
-function stubFetch(byUrl: Record<string, Reply | "network-error">, seen?: string[]) {
+function stubFetch(byUrl: Record<string, Stub>, seen?: string[]) {
   globalThis.fetch = (async (url: unknown) => {
     const u = String(url);
     seen?.push(u);
     const r = byUrl[u];
     if (r === "network-error") throw new Error("connection refused");
-    return { json: async () => ({ jsonrpc: "2.0", id: 1, ...r }) } as Response;
+    if (r && "html" in r) {
+      return {
+        ok: false,
+        status: r.html,
+        json: async () => {
+          throw new SyntaxError("Unexpected token < in JSON at position 0");
+        },
+      } as unknown as Response;
+    }
+    return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, ...r }) } as Response;
   }) as typeof fetch;
 }
 
@@ -86,4 +98,27 @@ test("every endpoint failing surfaces a real reason", async () => {
 test("a reply with neither result nor error is a failure", async () => {
   stubFetch(all({}));
   await assert.rejects(broadcast(RAW));
+});
+
+test("a throttled node says so, rather than talking about JSON", async () => {
+  /*
+   * These endpoints sit behind CDNs, so a rate limit arrives as an HTML page.
+   * Reading it as JSON throws "Unexpected token <", which would be shown to a
+   * trader in place of the one fact that helps them: they were throttled.
+   */
+  stubFetch(all({ html: 429 } as never));
+  await assert.rejects(broadcast(RAW), (e: Error) => {
+    assert.match(e.message, /429/);
+    assert.doesNotMatch(e.message, /Unexpected token|JSON/);
+    return true;
+  });
+});
+
+test("one throttled node does not stop another accepting", async () => {
+  stubFetch({
+    [RPCS[0]]: { html: 502 } as never,
+    [RPCS[1]]: { html: 429 } as never,
+    [RPCS[2]]: { result: HASH },
+  });
+  assert.equal(await broadcast(RAW), HASH);
 });

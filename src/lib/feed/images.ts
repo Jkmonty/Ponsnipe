@@ -146,22 +146,37 @@ export function recentlyFailed(raw: string): boolean {
 }
 
 /*
- * A plain semaphore. Six at a time, the rest waiting their turn.
+ * A plain semaphore. MAX_INFLIGHT at a time, the rest waiting their turn.
  *
  * Queued here rather than at the route, so the background warm and a viewer's
  * request share one budget — two queues against the same gateways would just
  * be the old problem with extra steps.
  */
-let active = 0;
-const waiting: (() => void)[] = [];
+/*
+ * globalThis-backed, for the same reason as everything else in this file — and
+ * this is the one place it was missed.
+ *
+ * Two module instances each keeping their own counter means each allows
+ * MAX_INFLIGHT, so the real ceiling is twice what it says: sixteen against
+ * gateways that were measured to need eight. That is precisely the pressure
+ * this cap exists to prevent, and imageStats() would have reported one
+ * instance's half of it while the other went unseen.
+ */
+interface Sem {
+  active: number;
+  waiting: (() => void)[];
+}
+const semg = globalThis as typeof globalThis & { __ponsImgSem?: Sem };
+const sem: Sem = semg.__ponsImgSem ?? (semg.__ponsImgSem = { active: 0, waiting: [] });
+
 async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
-  if (active >= MAX_INFLIGHT) await new Promise<void>((r) => waiting.push(r));
-  active++;
+  if (sem.active >= MAX_INFLIGHT) await new Promise<void>((r) => sem.waiting.push(r));
+  sem.active++;
   try {
     return await fn();
   } finally {
-    active--;
-    waiting.shift()?.();
+    sem.active--;
+    sem.waiting.shift()?.();
     // A freed slot is the only moment the backlog can make progress.
     pump();
   }
@@ -206,8 +221,8 @@ const stats: Stats =
 export function imageStats() {
   return {
     ...stats,
-    queued: waiting.length,
-    active,
+    queued: sem.waiting.length,
+    active: sem.active,
     backlog: backlog().stack.length,
     failMapSize: failures().size,
   };
@@ -264,7 +279,7 @@ const RESERVED_FOR_VIEWERS = 3;
  */
 function pump(): void {
   const q = backlog();
-  while (active < MAX_INFLIGHT - RESERVED_FOR_VIEWERS && q.stack.length > 0) {
+  while (sem.active < MAX_INFLIGHT - RESERVED_FOR_VIEWERS && q.stack.length > 0) {
     const next = q.stack.pop() as string;
     q.seen.delete(next);
     if (cached(next) || recentlyFailed(next)) continue;

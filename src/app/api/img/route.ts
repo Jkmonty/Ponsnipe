@@ -39,8 +39,24 @@ export async function GET(req: Request) {
    * running and keeps going, so the image is there on the next render.
    */
   const PATIENCE_MS = 2_500;
-  const wait = <T,>(p: Promise<T>): Promise<T | null> =>
-    Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), PATIENCE_MS))]);
+  /*
+   * A distinct answer for "ran out of patience", because null is not one.
+   *
+   * resolveImage also resolves null when every gateway has definitively
+   * refused, and that case is already booked as hardFail or softFail. Counting
+   * it as gaveUpWaiting too made permanent 404s look like a slot shortage —
+   * corrupting the exact reading these counters were added to give.
+   *
+   * The timer is cleared either way; a race leaves the loser running.
+   */
+  const TIMED_OUT = Symbol("timed out");
+  const wait = <T,>(p: Promise<T>): Promise<T | typeof TIMED_OUT> => {
+    let t: ReturnType<typeof setTimeout>;
+    const patience = new Promise<typeof TIMED_OUT>((r) => {
+      t = setTimeout(() => r(TIMED_OUT), PATIENCE_MS);
+    });
+    return Promise.race([p, patience]).finally(() => clearTimeout(t));
+  };
 
   // A logo that failed everywhere a moment ago is not worth another attempt.
   noteImage("asked");
@@ -52,8 +68,9 @@ export async function GET(req: Request) {
     if (recentlyFailed(raw)) {
       noteImage("blocked");
     } else {
-      hit = await wait(resolveImage(raw));
-      if (!hit) noteImage("gaveUpWaiting");
+      const got = await wait(resolveImage(raw));
+      if (got === TIMED_OUT) noteImage("gaveUpWaiting");
+      else hit = got;
     }
   }
   /*

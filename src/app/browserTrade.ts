@@ -105,7 +105,26 @@ export async function broadcast(raw: Hex): Promise<Hex> {
       // cannot answer in six seconds has already lost the race to the others.
       signal: AbortSignal.timeout(6_000),
     });
-    const j = (await r.json()) as { result?: Hex; error?: { message?: string } };
+    /*
+     * Parsed before the status is judged, not after.
+     *
+     * Some nodes answer a perfectly good JSON-RPC error — "already known"
+     * included — with a 4xx, so refusing on !r.ok would throw away the one
+     * reply that means the broadcast worked. But these endpoints sit behind
+     * CDNs, and a rate limit or a gateway timeout comes back as an HTML page:
+     * r.json() then throws "Unexpected token < in JSON", which is what the
+     * trader would be shown instead of "you were throttled".
+     *
+     * So: read the body as JSON, and if it is not JSON at all, report what the
+     * server actually said.
+     */
+    let j: { result?: Hex; error?: { message?: string } };
+    try {
+      j = (await r.json()) as { result?: Hex; error?: { message?: string } };
+    } catch {
+      const host = url.replace(/^https?:\/\//, "").split("/")[0];
+      throw new Error(`${host} returned HTTP ${r.status}`);
+    }
     if (j.error) {
       const m = String(j.error.message ?? "").toLowerCase();
       if (ALREADY.some((k) => m.includes(k))) return hash;
