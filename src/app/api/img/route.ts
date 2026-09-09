@@ -29,21 +29,34 @@ export async function GET(req: Request) {
    */
   if (!isKnownLogo(raw)) return new NextResponse(null, { status: 403 });
 
+  /*
+   * How long this request will wait for a logo that is not cached yet.
+   *
+   * Fetches are queued six at a time, so a viewer arriving during a burst
+   * could otherwise sit behind a long line holding one of the browser's six
+   * connections — which is the problem the queue was meant to solve, moved.
+   * Waiting briefly and then giving up costs nothing: the fetch is already
+   * running and keeps going, so the image is there on the next render.
+   */
+  const PATIENCE_MS = 2_500;
+  const wait = <T,>(p: Promise<T>): Promise<T | null> =>
+    Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), PATIENCE_MS))]);
+
   // A logo that failed everywhere a moment ago is not worth another attempt.
-  // Answered immediately so it costs the browser a round trip rather than a
-  // connection held open for the whole fetch budget.
-  const hit = recentlyFailed(raw) ? null : (cached(raw) ?? (await resolveImage(raw)));
+  const hit = recentlyFailed(raw) ? null : (cached(raw) ?? (await wait(resolveImage(raw))));
   /*
    * 404 rather than a placeholder: the client falls back to the direct URL and
    * then to its initials tile, which it can do only if this says nothing.
    *
-   * Cached, though. An uncached 404 is re-requested on every render by every
-   * viewer, and the answer does not change minute to minute.
+   * Cached briefly. Uncached, it is re-requested on every render by every
+   * viewer; cached for long, a logo that was merely slow this minute stays
+   * missing for the rest of the session. Thirty seconds stops the stampede
+   * without turning a busy gateway into a permanent hole in the feed.
    */
   if (!hit) {
     return new NextResponse(null, {
       status: 404,
-      headers: { "cache-control": "public, max-age=600" },
+      headers: { "cache-control": "public, max-age=30" },
     });
   }
 

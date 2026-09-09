@@ -50,30 +50,80 @@ const GATEWAYS = [
  * an image this small, and a logo that cannot beat it is not worth a
  * connection slot.
  */
-const FETCH_TIMEOUT_MS = 4_000;
+const FETCH_TIMEOUT_MS = 6_000;
 /**
- * How long a logo that failed everywhere is left alone.
+ * At most this many logos are fetched at once.
  *
- * Without this a broken logo is retried on every render by every viewer, for
- * ever, each retry costing a connection and the full timeout. Ten minutes is
- * long enough to stop the stampede and short enough that a gateway coming back
- * is noticed the same session.
+ * Without a cap, warmImages fired one unbounded fetch per launch — about one a
+ * second, each racing four gateways — and a cold cache meant hundreds in
+ * flight together. The gateways answered that by slowing down, so everything
+ * timed out at once. We were the reason the artwork was slow.
+ */
+const MAX_INFLIGHT = 6;
+/**
+ * How long a failed logo is left alone — and why there are two answers.
+ *
+ * A single ten-minute rule was wrong, and wrong in the worst direction. A
+ * gateway timing out under load is a temporary fact about that moment; a CID
+ * nobody hosts is a permanent fact about the image. Treating them alike meant
+ * one bad minute blacklisted most of the feed for ten, and because the 404 was
+ * cached in the browser too, the artwork went away and stayed away.
+ *
+ * So a definite miss is remembered, and everything else is a short backoff
+ * that lets the next viewer try again.
  */
 const FAIL_TTL_MS = 10 * 60_000;
+const SOFT_TTL_MS = 30_000;
 
-const fx = globalThis as typeof globalThis & { __ponsImgFail?: Map<string, number> };
-function failures(): Map<string, number> {
+interface Failure {
+  at: number;
+  ttl: number;
+}
+const fx = globalThis as typeof globalThis & { __ponsImgFail?: Map<string, Failure> };
+function failures(): Map<string, Failure> {
   fx.__ponsImgFail ??= new Map();
   return fx.__ponsImgFail;
 }
 
+/**
+ * Is this a fact about the image, or about right now?
+ *
+ * Only a gateway that answers — and says the thing is missing or is not an
+ * image — tells us something durable. A timeout, a rate limit or a 5xx says
+ * the gateway is busy, which it will not be forever.
+ */
+function isPermanent(err: unknown): boolean {
+  const m = String(err instanceof Error ? err.message : err);
+  return m === "404" || m === "410" || m === "not an image" || m === "too big";
+}
+
 /** Did this logo fail recently enough that it is not worth trying again? */
 export function recentlyFailed(raw: string): boolean {
-  const at = failures().get(raw);
-  if (at == null) return false;
-  if (Date.now() - at < FAIL_TTL_MS) return true;
+  const f = failures().get(raw);
+  if (!f) return false;
+  if (Date.now() - f.at < f.ttl) return true;
   failures().delete(raw);
   return false;
+}
+
+/*
+ * A plain semaphore. Six at a time, the rest waiting their turn.
+ *
+ * Queued here rather than at the route, so the background warm and a viewer's
+ * request share one budget — two queues against the same gateways would just
+ * be the old problem with extra steps.
+ */
+let active = 0;
+const waiting: (() => void)[] = [];
+async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (active >= MAX_INFLIGHT) await new Promise<void>((r) => waiting.push(r));
+  active++;
+  try {
+    return await fn();
+  } finally {
+    active--;
+    waiting.shift()?.();
+  }
 }
 
 const MAX_BYTES = 3 * 1024 * 1024;
@@ -302,7 +352,7 @@ export async function resolveImage(raw: string): Promise<CachedImage | null> {
   if (hit) return hit;
   const running = inFlight().get(raw);
   if (running) return running;
-  const p = fetchImage(raw);
+  const p = withSlot(() => fetchImage(raw));
   inFlight().set(raw, p);
   return p;
 }
@@ -327,6 +377,7 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
         headers: { accept: "image/*" },
         redirect: "follow",
       });
+      // The status is the message, so isPermanent can tell 404 from 503.
       if (!r.ok) throw new Error(String(r.status));
       const type = r.headers.get("content-type") ?? "";
       // A gateway answering with an HTML error page is a failure, not an
@@ -345,12 +396,18 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
     let entry: CachedImage;
     try {
       entry = await Promise.any(urls.map(attempt));
-    } catch {
-      // Every gateway failed: AggregateError, nothing served this logo. Noted,
-      // so the next viewer does not spend another four seconds finding out.
+    } catch (err) {
+      /*
+       * Every gateway failed. Remembered so the next viewer does not spend
+       * another six seconds finding out the same thing — but for ten minutes
+       * only when every gateway agreed the image is genuinely not there, and
+       * for thirty seconds when they were merely busy.
+       */
+      const errs = (err as AggregateError)?.errors ?? [err];
+      const permanent = errs.length > 0 && errs.every(isPermanent);
       const f = failures();
       if (f.size > 5_000) f.clear();
-      f.set(raw, Date.now());
+      f.set(raw, { at: Date.now(), ttl: permanent ? FAIL_TTL_MS : SOFT_TTL_MS });
       return null;
     } finally {
       // Stop the losers downloading bytes nobody will look at.
