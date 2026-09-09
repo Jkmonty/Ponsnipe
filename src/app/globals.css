@@ -1740,3 +1740,68 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 /* A quiet coin, said in the chart's own footer. Amber rather than red: it is
    the market being still, not the app being wrong. */
 .ch-stale { color: var(--gold); }
+
+/* ── the wallet list ───────────────────────────────────────────────────────
+   Inside the wallet menu, which is narrow and already dense, so the row is one
+   line: address, balance, and the way out. */
+.wl { margin-top: var(--sp-3); border-top: 1px solid var(--line-1); padding-top: var(--sp-3); }
+.wl-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
+.wl-title { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--t3); }
+.wl-title b { color: var(--t1); font-weight: 600; }
+.wl-rows { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: grid; gap: 2px; }
+.wl-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 30px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-sm);
+}
+.wl-row:hover { background: var(--s2); }
+.wl-addr {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--t2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.wl-addr:hover { color: var(--t1); text-decoration: underline; }
+.wl-tag {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--lime);
+  border: 1px solid var(--lime-line);
+  background: var(--lime-dim);
+  border-radius: var(--r-sm);
+  padding: 1px 5px;
+}
+/* Pushes the balance and the remove button to the right edge together. */
+.wl-bal { margin-left: auto; font-size: 12.5px; color: var(--t2); white-space: nowrap; }
+.wl-x {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--t4);
+  cursor: pointer;
+}
+.wl-x:hover { color: var(--down); border-color: var(--line-2); background: var(--s3); }
+.wl-confirm {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 11.5px;
+  color: var(--t3);
+}
+.wl-confirm b { color: var(--gold); font-weight: 600; }
+.linkish.danger { color: var(--down); }
+.wl-import { margin-top: var(--sp-2); display: grid; gap: var(--sp-2); }
+.wl-alt { margin-top: var(--sp-2); }

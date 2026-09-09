@@ -20,6 +20,7 @@ import { robinhoodChain } from "@/lib/chain";
 import { browserPublic } from "./browserTrade";
 import { useWallet } from "./WalletContext";
 import { REVEAL_TIMEOUT_MS } from "./useTradingKey";
+import WalletList from "./WalletList";
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
@@ -290,6 +291,16 @@ export default function WalletButton({ localInstall = false }: { localInstall?: 
                 <p className="wb-fine">
                   Locks after {Math.ceil(key.lockingIn / 60_000)} more minutes without a trade.
                 </p>
+              )}
+
+              {/* The list appears once there is a choice to make. With a single
+                  wallet the head above already says everything it would. */}
+              {key.addresses.length > 1 ? (
+                <WalletList k={key} />
+              ) : (
+                <button className="linkish wb-alt" onClick={() => void key.addWallet()}>
+                  add another wallet
+                </button>
               )}
 
               {ext.address ? (
