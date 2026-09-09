@@ -50,7 +50,23 @@ const GATEWAYS = [
  * an image this small, and a logo that cannot beat it is not worth a
  * connection slot.
  */
-const FETCH_TIMEOUT_MS = 6_000;
+/*
+ * Twelve seconds, which is longer than it has ever been here, and that is the
+ * point.
+ *
+ * Fifteen was wrong originally because the browser waited on it — a slow logo
+ * held one of the six connections a browser allows, and the feed queued behind
+ * artwork. Cutting it to four fixed that and broke something else: gateways
+ * that were merely slow got abandoned and retried, which is more load, which
+ * makes them slower.
+ *
+ * The route now gives up after 2.5s and lets the fetch carry on in the
+ * background, so nobody is waiting on this number any more. Once the browser
+ * is not on the other end of it, patience is free — and a fetch that succeeds
+ * in nine seconds populates the cache for ever, where one abandoned at six
+ * comes back as another attempt.
+ */
+const FETCH_TIMEOUT_MS = 12_000;
 /**
  * At most this many logos are fetched at once.
  *
@@ -65,11 +81,18 @@ const FETCH_TIMEOUT_MS = 6_000;
  * is roughly one logo a second against a feed that launches one a second —
  * no headroom at all, and none for the backlog after a restart.
  *
- * Twenty-four is still a cap, and still nothing like the hundreds that caused
- * the original problem. These are cheap outbound sockets on a server, not the
- * six connections a browser gets.
+ * Twenty-four was too many, measured: over forty minutes it made 2,400 attempts
+ * — one a second, sustained — of which 1,028 failed transiently and only 12
+ * failed because an image was actually missing. Serving fell to 52%. The 93%
+ * reading earlier in the day came from a period with 51 fetches and 22 soft
+ * failures. More attempts produced fewer pictures.
+ *
+ * So eight, with a longer timeout each. Concurrency and patience trade against
+ * each other, and against a handful of public gateways it is patience that
+ * pays: eight slots at a second or two apiece still clears five logos a second
+ * against a feed that launches one.
  */
-const MAX_INFLIGHT = 24;
+const MAX_INFLIGHT = 8;
 /**
  * How long a failed logo is left alone — and why there are two answers.
  *
@@ -79,11 +102,17 @@ const MAX_INFLIGHT = 24;
  * one bad minute blacklisted most of the feed for ten, and because the 404 was
  * cached in the browser too, the artwork went away and stayed away.
  *
- * So a definite miss is remembered, and everything else is a short backoff
- * that lets the next viewer try again.
+ * So a definite miss is remembered, and everything else backs off.
+ *
+ * Thirty seconds was too short for that backoff, and short backoffs amplify:
+ * every viewer loading the page asks for 250 logos, so a failure that expires
+ * in half a minute is re-attempted by every visitor, every render, against the
+ * gateway that was already struggling. Five minutes is long enough to stop
+ * that and short enough that a gateway coming back is noticed the same
+ * session.
  */
 const FAIL_TTL_MS = 10 * 60_000;
-const SOFT_TTL_MS = 30_000;
+const SOFT_TTL_MS = 5 * 60_000;
 
 interface Failure {
   at: number;
@@ -211,7 +240,7 @@ const MAX_BACKLOG = 2_000;
  * keeps a third of the budget free for them, so background work can never be
  * the reason a visible row has no picture.
  */
-const RESERVED_FOR_VIEWERS = 8;
+const RESERVED_FOR_VIEWERS = 3;
 
 function pump(): void {
   const q = backlog();
