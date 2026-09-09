@@ -58,8 +58,18 @@ const FETCH_TIMEOUT_MS = 6_000;
  * second, each racing four gateways — and a cold cache meant hundreds in
  * flight together. The gateways answered that by slowing down, so everything
  * timed out at once. We were the reason the artwork was slow.
+ *
+ * Six was the overcorrection. The counters caught it: of 290 requests, 95 gave
+ * up waiting for a slot while exactly one logo turned out to be genuinely
+ * missing. Gateways answer in about five seconds under load, so six at a time
+ * is roughly one logo a second against a feed that launches one a second —
+ * no headroom at all, and none for the backlog after a restart.
+ *
+ * Twenty-four is still a cap, and still nothing like the hundreds that caused
+ * the original problem. These are cheap outbound sockets on a server, not the
+ * six connections a browser gets.
  */
-const MAX_INFLIGHT = 6;
+const MAX_INFLIGHT = 24;
 /**
  * How long a failed logo is left alone — and why there are two answers.
  *
@@ -141,12 +151,13 @@ const stats = {
   softFail: 0,
   gaveUpWaiting: 0,
   blocked: 0,
+  cacheHit: 0,
 };
 export function imageStats() {
   return { ...stats, queued: waiting.length, active, failMapSize: failures().size };
 }
 /** Counted at the route, which is the only place that knows a viewer waited. */
-export function noteImage(k: "asked" | "gaveUpWaiting" | "blocked"): void {
+export function noteImage(k: "asked" | "gaveUpWaiting" | "blocked" | "cacheHit"): void {
   stats[k]++;
 }
 
@@ -454,10 +465,17 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
   }
 }
 
-/** Fire-and-forget warm for freshly indexed launches. Never throws. */
+/**
+ * Fire-and-forget warm for freshly indexed launches. Never throws.
+ *
+ * Yields to viewers. Warming is an optimisation — it makes a logo ready before
+ * anybody asks — so when the queue is already backed up it is the thing that
+ * should wait, not the request from someone looking at the page right now.
+ */
 export function warmImages(logos: (string | null | undefined)[]): void {
   for (const l of logos) {
     if (!l || l.length > 512 || cached(l)) continue;
+    if (waiting.length > 8) break;
     void resolveImage(l).catch(() => {});
   }
 }

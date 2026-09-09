@@ -45,6 +45,9 @@ export async function GET(req: Request) {
   // A logo that failed everywhere a moment ago is not worth another attempt.
   noteImage("asked");
   let hit = cached(raw);
+  // Counted here as well as in resolveImage: the route checks the cache first,
+  // so without this the hit counter read zero while most requests were hits.
+  if (hit) noteImage("cacheHit");
   if (!hit) {
     if (recentlyFailed(raw)) {
       noteImage("blocked");
