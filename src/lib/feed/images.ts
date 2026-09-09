@@ -208,7 +208,7 @@ export function imageStats() {
     ...stats,
     queued: waiting.length,
     active,
-    backlog: backlog().size,
+    backlog: backlog().stack.length,
     failMapSize: failures().size,
   };
 }
@@ -226,9 +226,15 @@ export function imageStats() {
  * Now the busy moment defers rather than discards, and the pump comes back for
  * them as slots free.
  */
-const bg = globalThis as typeof globalThis & { __ponsImgBacklog?: Set<string> };
-function backlog(): Set<string> {
-  bg.__ponsImgBacklog ??= new Set();
+interface Backlog {
+  /** Newest last, so the newest come off first. */
+  stack: string[];
+  /** Membership, so the same logo is never queued twice. */
+  seen: Set<string>;
+}
+const bg = globalThis as typeof globalThis & { __ponsImgBacklog?: Backlog };
+function backlog(): Backlog {
+  bg.__ponsImgBacklog ??= { stack: [], seen: new Set() };
   return bg.__ponsImgBacklog;
 }
 /** Bounded, so a feed nobody is watching cannot grow it without limit. */
@@ -242,11 +248,25 @@ const MAX_BACKLOG = 2_000;
  */
 const RESERVED_FOR_VIEWERS = 3;
 
+/*
+ * Newest first, which is the whole difference between a useful queue and a
+ * pointless one.
+ *
+ * The feed shows the newest 250 launches, and at the rate pons launches that
+ * is the last thirteen minutes. Draining the backlog in arrival order meant
+ * fetching the artwork for coins that had already scrolled off the screen
+ * before the ones on it — so after a restart the visible rows were served
+ * last, and by the time their turn came they had scrolled away too. The work
+ * was all being done and none of it was being seen.
+ *
+ * A stack fixes it. Whatever launched most recently is what somebody is
+ * looking at.
+ */
 function pump(): void {
   const q = backlog();
-  while (active < MAX_INFLIGHT - RESERVED_FOR_VIEWERS && q.size > 0) {
-    const next = q.values().next().value as string;
-    q.delete(next);
+  while (active < MAX_INFLIGHT - RESERVED_FOR_VIEWERS && q.stack.length > 0) {
+    const next = q.stack.pop() as string;
+    q.seen.delete(next);
     if (cached(next) || recentlyFailed(next)) continue;
     void resolveImage(next).catch(() => {});
   }
@@ -570,9 +590,16 @@ async function fetchImage(raw: string): Promise<CachedImage | null> {
 export function warmImages(logos: (string | null | undefined)[]): void {
   const q = backlog();
   for (const l of logos) {
-    if (!l || l.length > 512 || cached(l) || recentlyFailed(l)) continue;
-    if (q.size >= MAX_BACKLOG) break;
-    q.add(l);
+    if (!l || l.length > 512 || q.seen.has(l) || cached(l) || recentlyFailed(l)) continue;
+    q.seen.add(l);
+    q.stack.push(l);
+    // Over the limit, the oldest waiting logo goes — it is the one furthest
+    // from anybody's screen, and dropping the newest to keep it would undo
+    // the ordering above.
+    if (q.stack.length > MAX_BACKLOG) {
+      const dropped = q.stack.shift() as string;
+      q.seen.delete(dropped);
+    }
   }
   pump();
 }
