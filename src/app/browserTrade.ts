@@ -13,11 +13,14 @@
  */
 import {
   createPublicClient,
+  custom,
   fallback,
   getAddress,
   http,
+  keccak256,
   parseAbi,
   type Address,
+  type Hex,
   type PublicClient,
   type WalletClient,
 } from "viem";
@@ -25,7 +28,7 @@ import { robinhoodChain } from "@/lib/chain";
 import { bondingCurveAbi, erc20Abi } from "@/lib/pons/abis";
 import { applySlippage, quoteBuy, type CurveReserves } from "@/lib/pons/pricing";
 
-const RPCS = [
+export const RPCS = [
   "https://robinhood-rpc.publicnode.com",
   "https://rpc.mainnet.chain.robinhood.com",
   "https://rpc.ordofi.network",
@@ -57,6 +60,97 @@ export function browserPublic(): PublicClient {
     ),
   }) as PublicClient;
   return cached;
+}
+
+/*
+ * Errors that mean the transaction is already in the mempool.
+ *
+ * Not failures. When the same signed transaction reaches three nodes, two of
+ * them are entitled to say they have seen it before — that is the broadcast
+ * working, not a problem, and reporting it as one would tell a trader their
+ * buy failed while it was being mined.
+ */
+const ALREADY = ["already known", "known transaction", "already exists", "duplicate transaction"];
+
+/**
+ * Send one signed transaction to every endpoint at once.
+ *
+ * A signed transaction is a fixed string with a fixed hash, so sending it to
+ * three nodes cannot buy anything twice — whichever propagates first wins and
+ * the rest are redundant. That is the opposite of the read path, where trying
+ * endpoints in order is right because a slow answer is still an answer.
+ *
+ * The hash is computed here rather than taken from whichever node replied, so
+ * it is known before the first request leaves and is the same whoever answers.
+ *
+ * Exported for the tests. This decides whether a trader is told their buy
+ * failed, so the cases where a node disagrees with its neighbours are worth
+ * pinning down rather than reasoning about once.
+ */
+export async function broadcast(raw: Hex): Promise<Hex> {
+  const hash = keccak256(raw);
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "eth_sendRawTransaction",
+    params: [raw],
+  });
+
+  const attempt = async (url: string): Promise<Hex> => {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      // Short, because this is the request a snipe is waiting on. A node that
+      // cannot answer in six seconds has already lost the race to the others.
+      signal: AbortSignal.timeout(6_000),
+    });
+    const j = (await r.json()) as { result?: Hex; error?: { message?: string } };
+    if (j.error) {
+      const m = String(j.error.message ?? "").toLowerCase();
+      if (ALREADY.some((k) => m.includes(k))) return hash;
+      throw new Error(j.error.message ?? "broadcast refused");
+    }
+    if (!j.result) throw new Error("no transaction hash");
+    return j.result;
+  };
+
+  /*
+   * The first acceptance wins; a rejection only counts once every endpoint has
+   * given one. Promise.any is exactly this, and its AggregateError carries all
+   * of them — the first is reported because they are usually the same reason
+   * and a wall of identical text helps nobody.
+   */
+  try {
+    return await Promise.any(RPCS.map(attempt));
+  } catch (err) {
+    const all = err as AggregateError;
+    const first = all?.errors?.[0];
+    throw first instanceof Error ? first : new Error("no endpoint accepted the transaction");
+  }
+}
+
+/**
+ * Transport for the wallet: reads through the pool, broadcasts to all of it.
+ *
+ * Built as a transport rather than as a helper so every existing send goes
+ * through it without changing a line at the call sites — and so no future one
+ * can be written that quietly misses it.
+ */
+export function broadcastTransport() {
+  return custom(
+    {
+      async request({ method, params }: { method: string; params?: unknown }) {
+        if (method === "eth_sendRawTransaction") {
+          return broadcast((params as [Hex])[0]);
+        }
+        // Everything else — nonce, gas, receipts — is an ordinary read, and
+        // the pooled client already ranks and retries those.
+        return browserPublic().request({ method, params } as never);
+      },
+    },
+    { retryCount: 0 },
+  );
 }
 
 export interface ZapRoute {

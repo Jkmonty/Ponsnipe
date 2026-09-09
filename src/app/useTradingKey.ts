@@ -27,7 +27,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createWalletClient,
-  http,
   type Account,
   type Address,
   type Hex,
@@ -35,6 +34,7 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { robinhoodChain } from "@/lib/chain";
+import { broadcastTransport } from "./browserTrade";
 
 const STORE = "ponsnipe.tradingKey.v1";
 
@@ -66,19 +66,15 @@ const WATCHING_LOCK_MS = 8 * 60 * 60_000;
  */
 export const REVEAL_TIMEOUT_MS = 60_000;
 
-/**
- * Broadcast endpoint, chosen by measurement rather than by name.
+/*
+ * The endpoint list and the broadcast transport both live in browserTrade,
+ * which is where the reads already pool across them.
  *
- * Of the four public endpoints, one refuses browser requests outright (no CORS
- * headers) and the rest answered a browser in 92ms, 299ms and 332ms. The
- * fastest is used first and the others follow it, because the whole reason
- * this key exists is to remove seconds from a buy.
+ * This file used to keep its own copy of the list and then send to the first
+ * entry only — the comment claimed "the others follow it" and nothing did. A
+ * single public node with no fallback is a poor place to put the one request
+ * that costs money if it fails.
  */
-const RPCS = [
-  "https://robinhood-rpc.publicnode.com",
-  "https://rpc.mainnet.chain.robinhood.com",
-  "https://rpc.ordofi.network",
-];
 
 interface Vault {
   v: 1;
@@ -319,7 +315,7 @@ export function useTradingKey(): TradingKey {
     ? createWalletClient({
         account,
         chain: robinhoodChain,
-        transport: http(RPCS[0], { retryCount: 2, timeout: 15_000 }),
+        transport: broadcastTransport(),
       })
     : null;
 
