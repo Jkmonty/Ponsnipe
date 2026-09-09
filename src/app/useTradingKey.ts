@@ -96,6 +96,15 @@ function readVault(): Vault | null {
 }
 
 export interface TradingKey {
+  /**
+   * Can this page do crypto at all?
+   *
+   * WebCrypto is restricted to secure contexts, so on plain HTTP over an IP
+   * address crypto.subtle is simply undefined and every key operation throws
+   * "Cannot read properties of undefined". False here means the wallet cannot
+   * work until the site has a certificate — not that anything is broken.
+   */
+  secure: boolean;
   /** A vault exists in this browser, locked or not. */
   exists: boolean;
   /** Milliseconds until the idle lock fires, or null while locked. */
@@ -132,6 +141,15 @@ export interface TradingKey {
 }
 
 export function useTradingKey(): TradingKey {
+  /*
+   * Read once on mount rather than during render: the server has no window,
+   * and branching on it while rendering would make the first client paint
+   * disagree with the server's HTML.
+   */
+  const [secure, setSecure] = useState(true);
+  useEffect(() => {
+    setSecure(typeof crypto !== "undefined" && !!crypto.subtle);
+  }, []);
   const [vault, setVault] = useState<Vault | null>(null);
   /*
    * Every unlocked key, in vault order. The first is the primary: it is what
@@ -394,6 +412,7 @@ export function useTradingKey(): TradingKey {
   const client = clients[0] ?? null;
 
   return {
+    secure,
     exists: !!vault,
     lockingIn: account && lockAt != null ? Math.max(0, lockAt - Date.now()) : null,
     address: addressesOf(vault)[0] ?? null,

@@ -1805,3 +1805,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .linkish.danger { color: var(--down); }
 .wl-import { margin-top: var(--sp-2); display: grid; gap: var(--sp-2); }
 .wl-alt { margin-top: var(--sp-2); }
+
+/* Shown in place of the wallet forms when the page has no certificate. Amber,
+   not red: nothing has failed, the site is simply not served over HTTPS yet. */
+.wb-insecure h3 { color: var(--gold); }
+.wb-insecure .mono { color: var(--t2); word-break: break-all; }

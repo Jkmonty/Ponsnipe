@@ -36,6 +36,9 @@ export default function WalletButton({ localInstall = false }: { localInstall?: 
   const [revealed, setRevealed] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  /* Read after mount for the same reason `secure` is: the server has no window. */
+  const [origin, setOrigin] = useState("this address");
+  useEffect(() => setOrigin(window.location.origin), []);
 
   /* Close on a click anywhere else, and on Escape — a menu holding a
      passphrase field should not need aiming at to dismiss. */
@@ -152,7 +155,33 @@ export default function WalletButton({ localInstall = false }: { localInstall?: 
       {menu && (
         <div className="wb-menu" role="dialog" aria-label="Wallet">
           {/* ── nothing yet: create or import ── */}
-          {!key.exists && (
+          {/*
+            No certificate, no wallet.
+            
+            WebCrypto only exists in a secure context, so on plain HTTP over an
+            IP address crypto.subtle is undefined and every key operation dies
+            with "Cannot read properties of undefined". Said here rather than
+            thrown from a click, because it is not a fault the reader can fix by
+            trying again — and localhost is a secure context, which is why this
+            only ever appears on a deployed site.
+          */}
+          {!key.secure && (
+            <div className="wb-insecure">
+              <h3>This needs HTTPS</h3>
+              <p className="wb-lead">
+                A browser only allows the encryption this wallet is built on over a
+                secure connection. On <span className="mono">{origin}</span> it is not
+                available, so a key cannot be created or unlocked here.
+              </p>
+              <p className="wb-fine">
+                Nothing is wrong with your browser or your wallet. The site needs a
+                domain with a certificate, and this comes back on its own once it has
+                one.
+              </p>
+            </div>
+          )}
+
+          {key.secure && !key.exists && (
             <>
               <h3>Trading wallet</h3>
               <p className="wb-lead">
@@ -226,7 +255,7 @@ export default function WalletButton({ localInstall = false }: { localInstall?: 
           )}
 
           {/* ── locked ── */}
-          {key.exists && !key.unlocked && (
+          {key.secure && key.exists && !key.unlocked && (
             <>
               <h3>Unlock</h3>
               <p className="wb-lead mono">{key.address ? short(key.address) : ""}</p>
@@ -265,7 +294,7 @@ export default function WalletButton({ localInstall = false }: { localInstall?: 
           )}
 
           {/* ── unlocked ── */}
-          {key.unlocked && (
+          {key.secure && key.unlocked && (
             <>
               {/* Copyable, because the alternative was telling someone to send
                   ETH to "0x9EcD…BD86" — an address they can read and cannot
