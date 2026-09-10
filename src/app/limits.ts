@@ -19,6 +19,28 @@ export interface Limits {
 
 export const DEFAULT_LIMITS: Limits = { perTrade: 0.05, perDay: 0.25 };
 
+/**
+ * Is `amount` within `cap`?
+ *
+ * Zero, blank or anything not a number means no cap. The fields were always
+ * editable, but there was no way to say "no limit" — you could only type a
+ * number large enough to hope it never bound, which is a worse version of the
+ * same thing because it still fails at some size you have forgotten about.
+ *
+ * One function rather than a comparison at each of the four call sites, for
+ * the reason this file exists at all: a cap enforced in one place and ignored
+ * in another is the failure mode worth designing out.
+ */
+export function within(amount: number, cap: number): boolean {
+  if (!Number.isFinite(cap) || cap <= 0) return true;
+  return amount <= cap;
+}
+
+/** How a cap reads on screen, including when it is off. */
+export function capText(cap: number): string {
+  return !Number.isFinite(cap) || cap <= 0 ? "no limit" : `${cap} ETH`;
+}
+
 export function readLimits(): Limits {
   try {
     const r = localStorage.getItem(LIMITS_KEY);

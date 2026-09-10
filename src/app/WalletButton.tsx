@@ -382,7 +382,9 @@ export default function WalletButton({ localInstall = false }: { localInstall?: 
                   />
                 </label>
               </div>
-              <p className="wb-fine">Spent today: {spent.toFixed(4)} ETH.</p>
+              <p className="wb-fine">
+                Spent today: {spent.toFixed(4)} ETH. Set a cap to <b>0</b> for no limit.
+              </p>
 
               <div className="wb-foot">
                 <button

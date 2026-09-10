@@ -28,7 +28,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAddress, type Address } from "viem";
-import { addSpentToday, readSpentToday, type Limits } from "./limits";
+import { addSpentToday, capText, readSpentToday, within, type Limits } from "./limits";
 import { setRule } from "./useAutoSell";
 
 const STORE = "ponsnipe.watches.v1";
@@ -450,17 +450,17 @@ export function useSniper(
 
         const amount = Number(spendEth) || 0;
         const spentSoFar = readSpentToday();
-        if (amount > limits.perTrade) {
+        if (!within(amount, limits.perTrade)) {
           note({
             at: Date.now(), symbol: row.symbol, token: row.token, decision: "skipped",
-            reason: `over your ${limits.perTrade} ETH per-trade limit`,
+            reason: `over your ${capText(limits.perTrade)} per-trade limit`,
           });
           continue;
         }
-        if (spentSoFar + amount > limits.perDay) {
+        if (!within(spentSoFar + amount, limits.perDay)) {
           note({
             at: Date.now(), symbol: row.symbol, token: row.token, decision: "skipped",
-            reason: `would pass your ${limits.perDay} ETH daily limit`,
+            reason: `would pass your ${capText(limits.perDay)} daily limit`,
           });
           continue;
         }

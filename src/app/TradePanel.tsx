@@ -21,7 +21,7 @@ import { applySlippage, quoteSell } from "@/lib/pons/pricing";
 import { robinhoodChain } from "@/lib/chain";
 import { browserPublic, executeBuy, findRoute } from "./browserTrade";
 import { useWallet } from "./WalletContext";
-import { addSpentToday } from "./limits";
+import { addSpentToday, within } from "./limits";
 import { forgetPosition, recordBuy, usePositions, type Holding } from "./usePositions";
 import { useAutoSell, WATCH_INTERVAL_MS } from "./useAutoSell";
 import { CollapseButton, useCollapsed } from "./Collapse";
@@ -199,8 +199,8 @@ export default function TradePanel({
 
   const slippageBps = SLIPPAGE_PCT * 100;
   const amount = Number(eth) || 0;
-  const overPerTrade = amount > limits.perTrade;
-  const overDaily = spent + amount > limits.perDay;
+  const overPerTrade = !within(amount, limits.perTrade);
+  const overDaily = !within(spent + amount, limits.perDay);
 
   /**
    * Buy one coin, priced fresh at the moment of buying.
