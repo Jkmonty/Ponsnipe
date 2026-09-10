@@ -873,8 +873,19 @@ export default function TradePanel({
               ticker: wTicker.trim(),
               deployer: wDev.trim(),
               eth: wEth,
-              tp: wTp.trim() ? Math.abs(Number(wTp)) : null,
-              sl: wSl.trim() ? Math.abs(Number(wSl)) : null,
+              /*
+               * Zero means none, not "sell at zero percent".
+               *
+               * This tested the field for text rather than for a number, so a
+               * typed 0 armed a take-profit at break-even — which fires the
+               * instant the position exists — and a stop-loss at break-even,
+               * which fires the moment it dips. Somebody switching a rule off
+               * the obvious way would have had the coin sold from under them
+               * seconds after buying it. The auto-snipe rules panel already
+               * read 0 as off; this is the same question answered twice.
+               */
+              tp: Number(wTp) > 0 ? Math.abs(Number(wTp)) : null,
+              sl: Number(wSl) > 0 ? Math.abs(Number(wSl)) : null,
               tpSellPct: Math.max(1, Math.min(100, Number(wTpPct) || 100)),
               maxBuys: 1,
               // A watch you set and forget should not fire next week.
