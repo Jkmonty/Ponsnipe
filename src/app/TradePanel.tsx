@@ -223,7 +223,7 @@ export default function TradePanel({
       if (!t.tradeable) throw new Error(t.reason ?? "not tradeable");
 
       const wei = parseEther(ethIn);
-      const { hashes, spentQuote } = await executeBuy(key.client, key.address, wei, {
+      const { hashes, spentQuote } = await executeBuy(key.client, key.account!, wei, {
         curve: getAddress(t.curve),
         token: getAddress(t.address),
         pairToken: t.pairToken as Address,

@@ -19,6 +19,7 @@ import {
   http,
   keccak256,
   parseAbi,
+  type Account,
   type Address,
   type Hex,
   type PublicClient,
@@ -269,14 +270,29 @@ export interface BuyPlan {
  * transactions and a trader who has just spent money needs to be able to
  * follow all of them, not only the last.
  */
+/**
+ * `signer`, not an address.
+ *
+ * This took an Address, and viem reads a bare address as a JSON-RPC account —
+ * one the node is expected to hold the key for. So every write here asked the
+ * public endpoint to `eth_sendTransaction` on behalf of a wallet it has never
+ * heard of, and every buy failed with "the method does not exist". Passing the
+ * local account makes viem sign in the browser and send the raw transaction,
+ * which is the whole design of this wallet.
+ *
+ * The manual buy and sell buttons always passed the account object. This one
+ * path did not, which is why it had never worked.
+ */
 export async function executeBuy(
   wallet: WalletClient,
-  account: Address,
+  signer: Account,
   ethIn: bigint,
   p: BuyPlan,
 ): Promise<{ hashes: `0x${string}`[]; spentQuote: bigint }> {
   const c = browserPublic();
   const hashes: `0x${string}`[] = [];
+  /* Reads, args and recipients want the address; the writes want the signer. */
+  const account = signer.address;
 
   let quoteIn = ethIn;
 
@@ -293,7 +309,7 @@ export async function executeBuy(
     })) as bigint;
 
     const swapHash = await wallet.writeContract({
-      account,
+      account: signer,
       chain: robinhoodChain,
       address: SWAP_ROUTER,
       abi: swapRouterAbi,
@@ -334,7 +350,7 @@ export async function executeBuy(
     })) as bigint;
     if (allowance < quoteIn) {
       const ap = await wallet.writeContract({
-        account,
+        account: signer,
         chain: robinhoodChain,
         address: quote,
         abi: erc20Abi,
@@ -351,7 +367,7 @@ export async function executeBuy(
   if (minOut <= 0n) throw new Error("slippage leaves no minimum — raise the amount");
 
   const buyHash = await wallet.writeContract({
-    account,
+    account: signer,
     chain: robinhoodChain,
     address: p.curve,
     abi: bondingCurveAbi,
