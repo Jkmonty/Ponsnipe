@@ -81,9 +81,20 @@ export default function WalletButton({ localInstall = false }: { localInstall?: 
     setBusy("fund");
     setNote(null);
     try {
+      /*
+       * The chain is named, not left to whatever the wallet is on.
+       *
+       * This was `chain: null`, which tells viem to skip the check and send on
+       * the connected network — so with MetaMask on mainnet the ETH went to
+       * the right address on the wrong ledger, three times, while every
+       * confirmation screen looked correct. Naming it makes the wallet prompt
+       * to switch instead of quietly obeying. The withdraw below always named
+       * it; this was the odd one out.
+       */
+      if (ext.chainId !== robinhoodChain.id) await ext.switchChain();
       const hash = await ext.client.sendTransaction({
         account: ext.address,
-        chain: null,
+        chain: robinhoodChain,
         to: key.address,
         value: parseEther(fundEth),
       });

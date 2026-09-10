@@ -51,6 +51,32 @@ export interface BrowserWallet {
   client: WalletClient | null;
 }
 
+/**
+ * Ask the wallet to move to Robinhood Chain, adding it if it has never heard
+ * of it. Throws if the trader refuses; callers decide whether that matters.
+ */
+async function switchToChain(p: Eip1193): Promise<void> {
+  try {
+    await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: CHAIN_HEX }] });
+  } catch (e) {
+    // 4902 means the wallet has never heard of this chain, so offer it rather
+    // than leaving the trader to type an RPC URL by hand.
+    if ((e as { code?: number }).code !== 4902) throw e;
+    await p.request({
+      method: "wallet_addEthereumChain",
+      params: [
+        {
+          chainId: CHAIN_HEX,
+          chainName: robinhoodChain.name,
+          nativeCurrency: robinhoodChain.nativeCurrency,
+          rpcUrls: ["https://rpc.mainnet.chain.robinhood.com"],
+          blockExplorerUrls: [robinhoodChain.blockExplorers.default.url],
+        },
+      ],
+    });
+  }
+}
+
 export function useBrowserWallet(): BrowserWallet {
   const [address, setAddress] = useState<Address | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
@@ -122,6 +148,20 @@ export function useBrowserWallet(): BrowserWallet {
     try {
       const accs = (await p.request({ method: "eth_requestAccounts" })) as string[];
       setAddress((accs?.[0] as Address) ?? null);
+      /*
+       * Put them on the right chain straight away rather than waiting for
+       * something to go wrong.
+       *
+       * The switch logic existed and was behind a button nobody had a reason
+       * to press, so connecting left the wallet on whatever network it was
+       * already on — usually mainnet. Every send after that went to the wrong
+       * chain while looking completely correct in the confirmation dialog,
+       * because the address and the amount are right; only the ledger is not.
+       *
+       * Ignored if refused: the trader may have a reason, and the send path
+       * checks the chain again anyway.
+       */
+      await switchToChain(p).catch(() => {});
       await readChain(p);
     } catch (e) {
       // 4001 is the user closing the popup, which is not an error worth
@@ -150,30 +190,9 @@ export function useBrowserWallet(): BrowserWallet {
     if (!p) return;
     setError(null);
     try {
-      await p.request({ method: "wallet_switchEthereumChain", params: [{ chainId: CHAIN_HEX }] });
+      await switchToChain(p);
     } catch (e) {
-      // 4902 means the wallet has never heard of this chain, so offer it
-      // rather than leaving the trader to type an RPC URL by hand.
-      if ((e as { code?: number }).code === 4902) {
-        try {
-          await p.request({
-            method: "wallet_addEthereumChain",
-            params: [
-              {
-                chainId: CHAIN_HEX,
-                chainName: robinhoodChain.name,
-                nativeCurrency: robinhoodChain.nativeCurrency,
-                rpcUrls: ["https://rpc.mainnet.chain.robinhood.com"],
-                blockExplorerUrls: [robinhoodChain.blockExplorers.default.url],
-              },
-            ],
-          });
-        } catch (addErr) {
-          setError((addErr as Error).message ?? "could not add the network");
-        }
-      } else {
-        setError((e as Error).message ?? "could not switch network");
-      }
+      setError((e as Error).message ?? "could not switch network");
     }
     await readChain(p);
   }, [readChain]);
