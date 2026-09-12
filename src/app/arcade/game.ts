@@ -144,12 +144,32 @@ export class Arcade {
     if (this.running) return;
     this.running = true;
     this.last = performance.now();
+    /*
+     * Tell the page immediately, and then keep telling it.
+     *
+     * The snapshot used to be emitted only on events — a hit, a life lost —
+     * so on starting nothing was sent, the page's state stayed null, and the
+     * "press start" overlay never went away. The game was running underneath
+     * it the whole time, which is the confusing kind of broken.
+     *
+     * Ten times a second rather than sixty. The clock only shows whole
+     * seconds and the score only changes when something happens, so the other
+     * fifty renders a second would be React re-rendering to display the same
+     * numbers.
+     */
+    this.onChange(this.snapshot());
+    let sinceEmit = 0;
     const loop = (now: number) => {
       if (!this.running) return;
       const dt = Math.min(0.05, (now - this.last) / 1000);
       this.last = now;
       this.step(dt);
       this.draw();
+      sinceEmit += dt;
+      if (sinceEmit >= 0.1 && !this.over) {
+        sinceEmit = 0;
+        this.onChange(this.snapshot());
+      }
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
