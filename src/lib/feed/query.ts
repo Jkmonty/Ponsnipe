@@ -69,6 +69,15 @@ export interface FeedRow {
   deployer: string;
   /** Other launches by this deployer inside the feed window. */
   devLaunches: number;
+  /** How many of those reached a graduated pool. */
+  devGraduated: number;
+  /**
+   * How many of those ever traded at all.
+   *
+   * The blunt one. About half of all launches never see a single buy, so a
+   * deployer whose previous coins are mostly in that half is not unlucky.
+   */
+  devTraded: number;
   /** Share of supply the deployer bought of their own launch, 0-1. */
   devHoldRate: number;
   /** True when the deployer has sold any of what they bought. */
@@ -126,6 +135,8 @@ interface Raw {
   dev_bought: number | null;
   top10: number | null;
   dev_launches: number | null;
+  dev_graduated: number | null;
+  dev_traded: number | null;
   socials: string | null;
   description: string | null;
   snipers: number | null;
@@ -170,7 +181,7 @@ export async function readFeed(
                 v.vol, v.buys, v.sells,
                 h.holders, h.top10,
                 d.net AS dev_net, d.bought AS dev_bought,
-                dl.n AS dev_launches
+                dl.n AS dev_launches, dl.grad AS dev_graduated, dl.traded AS dev_traded
            FROM feed_tokens t
            LEFT JOIN (
              SELECT curve, SUM(quote) AS vol, SUM(buys) AS buys, SUM(sells) AS sells
@@ -194,7 +205,28 @@ export async function readFeed(
              SELECT curve, wallet, net, net AS bought FROM feed_positions
            ) d ON d.curve = t.curve AND d.wallet = t.deployer
            LEFT JOIN (
-             SELECT deployer, COUNT(*) AS n FROM feed_tokens GROUP BY deployer
+             /*
+              * The deployer's record, not just their count.
+              *
+              * A launch two seconds old tells you nothing about itself. Who
+              * made it is the only fact available at the moment the decision
+              * has to be made, and it is knowable: this index holds every
+              * launch on the chain, so a deployer on their sixty-fourth coin
+              * with nothing graduated is visible the instant the sixty-fifth
+              * appears.
+              *
+              * The traded column counts launches that ever saw a buy or a sell.
+              * Roughly half of all launches never trade at all, so a deployer
+              * whose previous coins are mostly in that group is not unlucky —
+              * that is what they make.
+              */
+             SELECT t2.deployer,
+                    COUNT(*) AS n,
+                    SUM(t2.graduated) AS grad,
+                    SUM(CASE WHEN vv.curve IS NOT NULL THEN 1 ELSE 0 END) AS traded
+               FROM feed_tokens t2
+               LEFT JOIN (SELECT DISTINCT curve FROM feed_volume) vv ON vv.curve = t2.curve
+              GROUP BY t2.deployer
            ) dl ON dl.deployer = t.deployer
           WHERE t.created_at >= ? AND t.graduated = 0
           -- Chain order, not insert order.
@@ -330,6 +362,8 @@ export async function readFeed(
       priceQuote: r.price ?? 0,
       deployer: r.deployer ?? "",
       devLaunches: r.dev_launches ?? 0,
+      devGraduated: r.dev_graduated ?? 0,
+      devTraded: r.dev_traded ?? 0,
       // Supply is a fixed 1e9 tokens on every pons launch.
       devHoldRate: Math.max(0, Math.min(1, (r.dev_net ?? 0) / SUPPLY)),
       // A negative net means they have sold more than the stream saw them buy,
