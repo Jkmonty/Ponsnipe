@@ -26,6 +26,7 @@ import { forgetPosition, recordBuy, usePositions, type Holding } from "./usePosi
 import { useAutoSell, WATCH_INTERVAL_MS } from "./useAutoSell";
 import { CollapseButton, useCollapsed } from "./Collapse";
 import Chart from "./Chart";
+import Dividend from "./Dividend";
 import { useSniper, WATCH_POLL_MS } from "./useSniper";
 import SniperRules from "./SniperRules";
 
@@ -519,6 +520,10 @@ export default function TradePanel({
         </p>
       ) : (
         <>
+          {/* Only for coins priced in a share; there is nothing to say about
+              an ETH-paired one. */}
+          {!snap.quoteIsNative && <Dividend symbol={snap.quoteSymbol} />}
+
           <div className="spread" style={{ marginTop: 10 }}>
             <strong>{snap.symbol}</strong>
             <div className="row" style={{ gap: 8 }}>

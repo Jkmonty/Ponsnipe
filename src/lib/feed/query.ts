@@ -109,6 +109,8 @@ interface Raw {
   name: string | null;
   logo: string | null;
   quote_symbol: string | null;
+  /** The quote asset's contract, needed to read its dividend multiplier. */
+  quote_token: string | null;
   quote_is_native: number;
   created_at: string;
   price: number | null;
@@ -150,7 +152,7 @@ export async function readFeed(
     raw = db()
       .prepare(
         `SELECT t.token, t.curve, t.symbol, t.name, t.logo, t.quote_symbol,
-                t.quote_is_native, t.created_at, t.price, t.mcap, t.liquidity,
+                t.quote_token, t.quote_is_native, t.created_at, t.price, t.mcap, t.liquidity,
                 t.progress_pct, t.deployer, t.socials, t.description,
                 -- Correlated because the cut-off is per token: each curve is
                 -- compared against its own launch block.
@@ -281,7 +283,19 @@ export async function readFeed(
 
   const quoteOf = (r: Raw) => (r.quote_is_native === 1 ? "ETH" : (r.quote_symbol ?? "?"));
   // One rate lookup per distinct quote asset, not per row.
-  const rates = await buildRates(raw.map(quoteOf));
+  /*
+   * Addresses as well as symbols, so a stock token's dividend multiplier can
+   * be read. Without them the rate is the share price, which stopped being
+   * what one token is worth at the first dividend.
+   */
+  const quoteTokens = [
+    ...new Map(
+      raw
+        .filter((r) => r.quote_is_native !== 1 && r.quote_token && r.quote_symbol)
+        .map((r) => [r.quote_symbol as string, { symbol: r.quote_symbol as string, address: r.quote_token as string }]),
+    ).values(),
+  ];
+  const rates = await buildRates(raw.map(quoteOf), quoteTokens);
   const unpriced = new Set<string>();
 
   const rows: FeedRow[] = raw.map((r) => {

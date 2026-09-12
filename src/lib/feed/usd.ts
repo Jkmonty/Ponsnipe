@@ -22,6 +22,8 @@
  * that silently invented a rate would be worse than one that says it cannot
  * see.
  */
+import { multipliersFor } from "./multipliers";
+
 const STABLES = new Set(["USDG", "USDC", "USDT", "DAI", "PYUSD", "USDS", "USD"]);
 
 /**
@@ -129,8 +131,22 @@ async function rateFor(symbol: string): Promise<number | null> {
 /**
  * Dollar rate for each quote symbol in use, looked up in small batches.
  * A symbol absent from the returned map has no known rate.
+ *
+ * The rate is per *raw token*, which for a stock token is no longer the share
+ * price. These are ERC-8056 scaled-UI tokens: a dividend raises a multiplier
+ * rather than moving balances, so one raw token comes to stand for more than
+ * one share. The comment above this file says they are 1:1 with the share, and
+ * that was true until the first dividend — NVDA is already 1.000775, so every
+ * NVDA-quoted market cap here read 0.08% low, and the gap only widens because
+ * the multiplier ratchets and never falls.
+ *
+ * `tokens` is optional so callers that only want a share price — or that have
+ * no address to hand — keep working unchanged.
  */
-export async function buildRates(symbols: string[]): Promise<Map<string, number>> {
+export async function buildRates(
+  symbols: string[],
+  tokens?: { symbol: string; address: string }[],
+): Promise<Map<string, number>> {
   const want = [...new Set(symbols.map((s) => s.toUpperCase()))];
   const out = new Map<string, number>();
 
@@ -138,6 +154,19 @@ export async function buildRates(symbols: string[]): Promise<Map<string, number>
     const slice = want.slice(i, i + CONCURRENCY);
     const got = await Promise.all(slice.map(async (s) => [s, await rateFor(s)] as const));
     for (const [s, p] of got) if (p != null) out.set(s, p);
+  }
+
+  if (tokens?.length) {
+    try {
+      const mult = await multipliersFor(tokens);
+      for (const [sym, m] of mult) {
+        const base = out.get(sym);
+        if (base != null && m.scaled && m.now > 0) out.set(sym, base * m.now);
+      }
+    } catch {
+      // Unread multipliers leave the share price in place, which is the old
+      // behaviour: slightly low, never invented.
+    }
   }
   return out;
 }

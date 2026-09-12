@@ -1810,3 +1810,31 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
    not red: nothing has failed, the site is simply not served over HTTPS yet. */
 .wb-insecure h3 { color: var(--gold); }
 .wb-insecure .mono { color: var(--t2); word-break: break-all; }
+
+/* ── the quote asset's dividend ────────────────────────────────────────────
+   Gold, like everything else here that is information rather than an action or
+   a P&L. Sits above the coin's own numbers because it is a fact about what the
+   coin is priced in, not about the coin. */
+.divi {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line-1);
+  border-left: 2px solid var(--gold);
+  border-radius: var(--r-sm);
+  background: var(--s1);
+  font-size: 12px;
+}
+.divi-tag { color: var(--gold); font-weight: 600; letter-spacing: 0.02em; }
+.divi-val { color: var(--t2); }
+.divi-val i { font-style: normal; color: var(--t4); }
+.divi-next {
+  margin-left: auto;
+  color: var(--t3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+}
