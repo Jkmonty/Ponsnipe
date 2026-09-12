@@ -28,6 +28,7 @@ import {
 import { robinhoodChain } from "@/lib/chain";
 import { bondingCurveAbi, erc20Abi } from "@/lib/pons/abis";
 import { applySlippage, quoteBuy, type CurveReserves } from "@/lib/pons/pricing";
+import { DUST, payFee, splitFee } from "./fee";
 
 export const RPCS = [
   "https://robinhood-rpc.publicnode.com",
@@ -294,7 +295,15 @@ export async function executeBuy(
   /* Reads, args and recipients want the address; the writes want the signer. */
   const account = signer.address;
 
-  let quoteIn = ethIn;
+  /*
+   * The fee comes out of the amount, and is sent after the coin is bought.
+   *
+   * Out of, not on top of: type 0.01 and 0.01 leaves the wallet. And after,
+   * because this is racing other bots for a coin seconds old — waiting on an
+   * unrelated transfer first would trade the only thing the product sells.
+   */
+  const { fee, net } = splitFee(ethIn);
+  let quoteIn = net;
 
   if (!p.quoteIsNative) {
     const quote = getAddress(p.pairToken);
@@ -376,6 +385,9 @@ export async function executeBuy(
     value: p.quoteIsNative ? quoteIn : 0n,
   });
   hashes.push(buyHash);
+  // Fire-and-forget: the coin is already bought, and a fee that fails to
+  // collect is our problem rather than something to show the trader.
+  if (fee >= DUST) payFee(wallet, signer, fee);
   const rec = await c.waitForTransactionReceipt({ hash: buyHash });
   if (rec.status !== "success") throw new Error("the buy reverted");
   return { hashes, spentQuote: quoteIn };

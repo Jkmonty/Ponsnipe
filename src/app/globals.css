@@ -1898,3 +1898,11 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   line-height: 1.5;
 }
 .play-lesson b { color: var(--gold); }
+
+/* The trading fee, said before the buy rather than after it. Gold, like the
+   other things here that are information rather than a warning. */
+.fee-note {
+  margin: calc(var(--sp-2) * -1) 0 0;
+  font-size: 11.5px;
+  color: var(--t4);
+}

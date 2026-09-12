@@ -22,6 +22,7 @@ import { robinhoodChain } from "@/lib/chain";
 import { browserPublic, executeBuy, findRoute } from "./browserTrade";
 import { useWallet } from "./WalletContext";
 import { addSpentToday, within } from "./limits";
+import { feeEnabled, feePct } from "./fee";
 import { forgetPosition, recordBuy, usePositions, type Holding } from "./usePositions";
 import { useAutoSell, WATCH_INTERVAL_MS } from "./useAutoSell";
 import { CollapseButton, useCollapsed } from "./Collapse";
@@ -583,6 +584,21 @@ export default function TradePanel({
               ))}
             </div>
           </label>
+
+          {/*
+            Said before the buy, not in a terms page.
+            
+            The fee comes out of the amount typed rather than on top of it, so
+            without this line the coin quietly costs 1% more than the number in
+            the box implies — which is exactly the sort of thing a trader
+            should hear from us rather than work out later.
+          */}
+          {feeEnabled() && amount > 0 && (
+            <p className="fee-note">
+              {feePct()}% fee · {(amount * (feePct() / 100)).toFixed(5)} ETH of this goes to
+              the weekly prize pool
+            </p>
+          )}
 
           {overPerTrade && (
             <p className="neg small">Above your {limits.perTrade} ETH per-trade limit.</p>
