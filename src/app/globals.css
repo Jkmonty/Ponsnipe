@@ -1906,3 +1906,51 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   font-size: 11.5px;
   color: var(--t4);
 }
+
+/* ── arcade ────────────────────────────────────────────────────────────────
+   A stage, a scoreboard, and nothing else competing for the eye. */
+.arc { min-height: 100vh; display: flex; flex-direction: column; align-items: center; gap: var(--sp-4); padding: var(--sp-4); }
+.arc-top { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; justify-content: center; }
+.arc-home { display: flex; align-items: center; gap: var(--sp-2); color: var(--t1); text-decoration: none; font-weight: 600; }
+.arc-sub { color: var(--t3); font-size: 13px; }
+.arc-stage { position: relative; width: min(900px, 100%); border: 1px solid var(--line-1); border-radius: var(--r-lg); overflow: hidden; background: var(--bg); }
+/* The cursor is the scope; a second pointer on top of it reads as a bug. */
+.arc-canvas { display: block; width: 100%; cursor: none; touch-action: none; }
+.arc-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--sp-3);
+  text-align: center;
+  padding: var(--sp-5);
+  background: rgba(6, 7, 10, 0.86);
+}
+.arc-overlay h1 { margin: 0; font-size: 42px; }
+.arc-overlay p { margin: 0; color: var(--t3); max-width: 42ch; line-height: 1.5; }
+.arc-posted { color: var(--lime) !important; }
+.arc-hud {
+  position: absolute;
+  top: var(--sp-3);
+  left: var(--sp-3);
+  right: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  pointer-events: none;
+  font-size: 14px;
+}
+.arc-score { font-weight: 700; font-size: 20px; color: var(--t1); }
+.arc-lives { color: var(--down); letter-spacing: 2px; }
+.arc-combo { color: var(--lime); font-weight: 700; }
+.arc-time { margin-left: auto; color: var(--t3); }
+.arc-board { width: min(900px, 100%); }
+.arc-board h2 { margin: 0 0 var(--sp-3); font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--t3); }
+.arc-empty { color: var(--t4); font-size: 13px; }
+.arc-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.arc-rows li { display: flex; align-items: center; gap: var(--sp-3); padding: 6px var(--sp-3); border-radius: var(--r-sm); font-size: 13px; }
+.arc-rows li:nth-child(odd) { background: var(--s1); }
+.arc-rows li.me { border: 1px solid var(--lime-line); background: var(--lime-dim); }
+.arc-rank { width: 24px; color: var(--t4); }
+.arc-pts { margin-left: auto; color: var(--t1); font-weight: 600; }
