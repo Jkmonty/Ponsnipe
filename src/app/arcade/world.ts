@@ -279,6 +279,17 @@ export class World {
     });
   }
 
+  /**
+   * Point the view at a spot on the canvas, 0..1 in each axis.
+   *
+   * The unlocked fallback. Mapped across the same clamped range that `look`
+   * moves through, so both ways of aiming can reach exactly the same places.
+   */
+  aimAt(fx: number, fy: number) {
+    this.yaw = (0.5 - Math.max(0, Math.min(1, fx))) * 1.7;
+    this.pitch = (0.5 - Math.max(0, Math.min(1, fy))) * 0.6 - 0.02;
+  }
+
   /** Look. Yaw and pitch are clamped so the range stays in front of you. */
   look(dx: number, dy: number) {
     this.yaw = Math.max(-0.85, Math.min(0.85, this.yaw - dx * (this.scoped ? 0.0009 : 0.0022)));

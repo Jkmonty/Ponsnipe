@@ -30,6 +30,8 @@ export default function ArcadePage() {
   const [board, setBoard] = useState<BoardRow[]>([]);
   const [wallet, setWallet] = useState("");
   const [posted, setPosted] = useState<string | null>(null);
+  /** Whether the browser granted pointer lock. Aiming differs if it did not. */
+  const [locked, setLocked] = useState(true);
 
   useEffect(() => {
     void fetch("/api/arcade/targets")
@@ -74,14 +76,26 @@ export default function ArcadePage() {
     fit();
     gameRef.current?.stop();
     setPosted(null);
+    setLocked(true);
     const g = new World(cv, stocks, setS);
     gameRef.current = g;
     setS(null);
     g.start();
-    // Pointer lock turns mouse movement into looking around, which is what a
-    // first-person view needs — without it the cursor hits the edge of the
-    // canvas and the aim stops with it.
-    void cv.requestPointerLock?.();
+    /*
+     * Pointer lock if the browser will give it, and a fallback if not.
+     *
+     * Locked, mouse movement becomes head movement and the view keeps turning
+     * past the edge of the window. Refused — some embedded contexts throw
+     * WrongDocumentError outright — aiming falls back to cursor position, so
+     * the game is still playable rather than unaimable. Never depend on a
+     * permission the browser is free to decline.
+     */
+    try {
+      const res = cv.requestPointerLock?.() as unknown as Promise<void> | undefined;
+      if (res && typeof res.catch === "function") res.catch(() => setLocked(false));
+    } catch {
+      setLocked(false);
+    }
   };
 
   useEffect(() => () => gameRef.current?.stop(), []);
@@ -119,9 +133,24 @@ export default function ArcadePage() {
       .catch(() => setPosted("could not post that score"));
   }, [s?.over, posted, wallet]);
 
-  /* Relative movement, so the view keeps turning past the edge of the window. */
+  /*
+   * Relative movement while locked, absolute when not.
+   *
+   * Locked, movementX is the whole story. Unlocked, it still arrives but the
+   * cursor stops at the edge of the canvas and so does the aim — so the
+   * fallback steers towards wherever the cursor is instead, which keeps every
+   * part of the range reachable.
+   */
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    gameRef.current?.look(e.movementX || 0, e.movementY || 0);
+    const g = gameRef.current;
+    const cv = canvasRef.current;
+    if (!g || !cv) return;
+    if (locked && document.pointerLockElement === cv) {
+      g.look(e.movementX || 0, e.movementY || 0);
+      return;
+    }
+    const r = cv.getBoundingClientRect();
+    g.aimAt((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
   };
 
   const live = s && !s.over;
