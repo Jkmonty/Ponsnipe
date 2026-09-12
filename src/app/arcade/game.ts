@@ -61,6 +61,20 @@ interface Bullet {
   life: number;
 }
 
+/**
+ * The forest, drawn once per size rather than per frame.
+ *
+ * A treeline generated inside the loop shimmers, because every frame gets
+ * different random trunks. Generated once and cached, it stands still, which
+ * is what a wood does.
+ */
+interface Scenery {
+  w: number;
+  h: number;
+  far: { x: number; w: number; h: number }[];
+  trunks: { x: number; lane: number; w: number }[];
+}
+
 const ROUND_MS = 60_000;
 const START_LIVES = 3;
 /** Below this the scope is wide; held, it magnifies and slows the sway. */
@@ -87,6 +101,26 @@ export class Arcade {
   /** Where the scope is looking, in canvas pixels. */
   aim = { x: 0, y: 0 };
   zoomed = false;
+  private scenery: Scenery | null = null;
+
+  /** Build the wood for this canvas size, and keep it until the size changes. */
+  private wood(): Scenery {
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    if (this.scenery && this.scenery.w === w && this.scenery.h === h) return this.scenery;
+    const far: Scenery["far"] = [];
+    for (let x = -20; x < w + 40; x += rand(26, 58)) {
+      far.push({ x, w: rand(26, 54), h: rand(0.1, 0.22) * h });
+    }
+    const trunks: Scenery["trunks"] = [];
+    for (let lane = 0; lane < LANES.length; lane++) {
+      for (let x = rand(0, 120); x < w; x += rand(150, 280)) {
+        trunks.push({ x, lane, w: rand(16, 30) });
+      }
+    }
+    this.scenery = { w, h, far, trunks };
+    return this.scenery;
+  }
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -299,56 +333,127 @@ export class Arcade {
     const w = this.canvas.width;
     const h = this.canvas.height;
 
-    c.fillStyle = "#06070a";
+    /*
+     * Sherwood at dusk.
+     *
+     * The palette stays the app's — near-black ground, lime for what is safe,
+     * red for what is not — so the range looks like part of Ponsnipe rather
+     * than a game someone bolted on. The forest is the setting, not a repaint.
+     */
+    const sky = c.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, "#0a1410");
+    sky.addColorStop(0.45, "#0b1a14");
+    sky.addColorStop(1, "#06070a");
+    c.fillStyle = sky;
     c.fillRect(0, 0, w, h);
 
+    const scene = this.wood();
+
+    // A far treeline, flat and dark, for depth behind everything else.
+    c.fillStyle = "#081310";
+    for (const t of scene.far) {
+      c.beginPath();
+      c.moveTo(t.x, h * 0.42);
+      c.lineTo(t.x + t.w / 2, h * 0.42 - t.h);
+      c.lineTo(t.x + t.w, h * 0.42);
+      c.closePath();
+      c.fill();
+    }
+
     /*
-     * Targets first, then the wall over the top of them.
+     * Targets, then the hedgerow they rise from.
      *
-     * Drawing in that order is what sells the cover: the part still below the
-     * line is painted and then buried, so a half-risen target genuinely looks
-     * like a head over a wall rather than a circle that got smaller.
+     * Drawn in that order so the part still below the line is painted and
+     * then buried — which is what makes a half-risen butt read as something
+     * rising from cover rather than a circle that got smaller.
      */
     for (const t of this.targets) {
       if (t.out <= 0.02) continue;
       const y = this.centreY(t);
       const hit = t.dead > 0;
-      c.globalAlpha = hit ? Math.max(0, t.dead / 0.35) : 1;
+      const alpha = hit ? Math.max(0, t.dead / 0.35) : 1;
+      c.globalAlpha = alpha;
+
+      // An archery butt: straw roundel, painted rings, ticker across it.
       c.beginPath();
       c.arc(t.x, y, t.r, 0, Math.PI * 2);
-      c.fillStyle = hit ? "#eef1f5" : t.hostile ? "rgba(255,93,93,0.20)" : "rgba(122,224,137,0.20)";
+      c.fillStyle = hit ? "#eef1f5" : "#c9b083";
       c.fill();
+      for (const [frac, col] of [[0.72, t.hostile ? "#ff5d5d" : "#7ae089"], [0.42, "#f5efe0"], [0.16, t.hostile ? "#ff5d5d" : "#7ae089"]] as const) {
+        c.beginPath();
+        c.arc(t.x, y, t.r * frac, 0, Math.PI * 2);
+        c.fillStyle = col;
+        c.fill();
+      }
       c.lineWidth = 2;
       c.strokeStyle = t.hostile ? "#ff5d5d" : "#7ae089";
+      c.beginPath();
+      c.arc(t.x, y, t.r, 0, Math.PI * 2);
       c.stroke();
 
-      c.fillStyle = t.hostile ? "#ff5d5d" : "#7ae089";
-      c.font = "600 12px ui-monospace, monospace";
+      c.fillStyle = "#0b0f14";
+      c.font = "700 11px ui-monospace, monospace";
       c.textAlign = "center";
       c.fillText(t.stock.symbol, t.x, y + 4);
       c.globalAlpha = 1;
     }
 
-    // The walls, painted over whatever is behind them.
-    for (let i = 0; i < LANES.length; i++) {
-      const y = h * LANES[i];
-      c.fillStyle = "#11151c";
-      c.fillRect(0, y, w, h * 0.085);
-      c.fillStyle = "#1b2029";
-      c.fillRect(0, y, w, 3);
-      // The day's move, on the wall rather than on the target, so a ducking
-      // target does not take its own label down with it.
-      c.font = "10px ui-monospace, monospace";
-      c.textAlign = "left";
-      c.fillStyle = "#2a3140";
-      for (let x = 24; x < w; x += 190) c.fillText("RANGE", x, y + 20);
+    // Trunks rising through the hedgerows.
+    for (const tr of scene.trunks) {
+      const base = h * LANES[tr.lane] + h * 0.085;
+      c.fillStyle = "#0e1712";
+      c.fillRect(tr.x, base - h * 0.34, tr.w, h * 0.34);
+      c.fillStyle = "#122019";
+      c.fillRect(tr.x, base - h * 0.34, Math.max(3, tr.w * 0.3), h * 0.34);
     }
 
-    for (const b of this.bullets) {
+    // The hedgerow itself: scalloped, so it reads as undergrowth rather than a
+    // wall with a straight top.
+    for (let i = 0; i < LANES.length; i++) {
+      const y = h * LANES[i];
+      const band = h * 0.085;
+      c.fillStyle = i === 0 ? "#0d1a14" : i === 1 ? "#0f1f17" : "#11241b";
       c.beginPath();
-      c.arc(b.x, b.y, 3.5, 0, Math.PI * 2);
-      c.fillStyle = "#ff5d5d";
+      c.moveTo(0, y + 8);
+      for (let x = 0; x <= w; x += 26) {
+        c.quadraticCurveTo(x + 13, y - 6, x + 26, y + 8);
+      }
+      c.lineTo(w, y + band);
+      c.lineTo(0, y + band);
+      c.closePath();
       c.fill();
+    }
+
+    // Arrows, drawn along their heading. A dot gives no sense of where a
+    // thing is going, which is the only information that lets you dodge it.
+    for (const b of this.bullets) {
+      const a = Math.atan2(b.vy, b.vx);
+      const len = 16;
+      c.save();
+      c.translate(b.x, b.y);
+      c.rotate(a);
+      c.strokeStyle = "#e8d9a8";
+      c.lineWidth = 2;
+      c.beginPath();
+      c.moveTo(-len, 0);
+      c.lineTo(4, 0);
+      c.stroke();
+      c.fillStyle = "#ff5d5d";
+      c.beginPath();
+      c.moveTo(8, 0);
+      c.lineTo(0, -3.5);
+      c.lineTo(0, 3.5);
+      c.closePath();
+      c.fill();
+      // Fletching.
+      c.strokeStyle = "#7ae089";
+      c.beginPath();
+      c.moveTo(-len, -3);
+      c.lineTo(-len + 5, 0);
+      c.moveTo(-len, 3);
+      c.lineTo(-len + 5, 0);
+      c.stroke();
+      c.restore();
     }
 
     // The scope. Everything outside the glass is dark, which is what makes it

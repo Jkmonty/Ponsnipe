@@ -138,7 +138,7 @@ export default function ArcadePage() {
           <span>Ponsnipe</span>
         </Link>
         <span className="arc-sub">
-          Real tickers. The ones down today shoot back.
+          Sherwood. Real tickers on the butts — the ones down today shoot back.
         </span>
       </header>
 
@@ -181,10 +181,11 @@ export default function ArcadePage() {
               </>
             ) : (
               <>
-                <h1>Sniper range</h1>
+                <h1>The greenwood</h1>
                 <p>
-                  Click to fire, right-click to zoom. Green is up today and worth points.
-                  Red is down, and shooting at you.
+                  Click to loose, right-click to steady the scope. Green butts are
+                  shares up today and worth points. Red ones are down, and they shoot
+                  back.
                 </p>
                 <button className="btn btn-primary btn-lg" onClick={play}>
                   Start
