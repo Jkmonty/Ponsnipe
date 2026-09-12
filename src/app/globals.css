@@ -1838,3 +1838,8 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   border-radius: var(--r-sm);
   padding: 1px 6px;
 }
+
+/* The deployer's record. Neutral by default — a repeat deployer is a fact, not
+   an accusation — and only red when most of their launches never traded. */
+.dev-rec { white-space: nowrap; }
+.dev-good { color: var(--lime); border-color: var(--lime-line); background: var(--lime-dim); }

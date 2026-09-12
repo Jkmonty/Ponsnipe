@@ -37,6 +37,8 @@ interface Row {
   sameBlock: number;
   spark: number[];
   bundled: number;
+  devGraduated: number;
+  devTraded: number;
 }
 
 interface Payload {
@@ -388,6 +390,16 @@ const FeedRow = memo(function FeedRow({
               </span>
             )}
             {r.devSold && <span className="pill pill-cold">maker sold</span>}
+            {/*
+              What the person who made this has made before.
+              
+              A coin two seconds old has no history of its own, so its maker's
+              is the only history there is. A deployer on their sixty-fifth
+              launch with three that ever traded is not making coins, and the
+              sixty-sixth looks identical to everything else on this list
+              until somebody says so.
+            */}
+            {r.devLaunches > 1 && <DevRecord r={r} />}
             {/* One operator wearing several wallets. Worth more than the
                 holder count next to it, because it says that count is a
                 costume. */}
@@ -475,6 +487,8 @@ const FeedRow = memo(function FeedRow({
   a.r.progressPct === b.r.progressPct &&
   a.r.snipers === b.r.snipers &&
   a.r.bundled === b.r.bundled &&
+  a.r.devLaunches === b.r.devLaunches &&
+  a.r.devTraded === b.r.devTraded &&
   // Cheap enough: 20 numbers, and it changes at most once a minute.
   a.r.spark.join() === b.r.spark.join() &&
   a.fresh === b.fresh &&
@@ -508,6 +522,33 @@ const HOLD_IDLE_MS = 3000;
  * a burst is precisely when one fetch would have carried all of them anyway.
  */
 const PUSH_MIN_MS = 1500;
+
+/**
+ * The deployer's record, as a badge.
+ *
+ * Graded rather than merely shown: a repeat deployer with graduations has
+ * earned the opposite of suspicion, and colouring both the same would make the
+ * badge decoration. Red is reserved for the case that is actually damning —
+ * many launches, almost none of which anybody ever bought.
+ */
+function DevRecord({ r }: { r: Row }) {
+  const dead = r.devLaunches - r.devTraded;
+  const deadRate = r.devLaunches > 0 ? dead / r.devLaunches : 0;
+  const good = r.devGraduated > 0;
+  // Three or more, and most of them never traded: a pattern, not a run of bad
+  // luck. Below that there is not enough history to say anything.
+  const damning = !good && r.devLaunches >= 3 && deadRate >= 0.6;
+
+  const title = good
+    ? `This deployer has launched ${r.devLaunches} coins and ${r.devGraduated} graduated.`
+    : `This deployer has launched ${r.devLaunches} coins. ${r.devTraded} ever traded at all, and none graduated.`;
+
+  return (
+    <span className={`pill dev-rec${damning ? " pill-hot" : good ? " dev-good" : ""}`} title={title}>
+      dev {r.devLaunches}×{good ? ` · ${r.devGraduated} grad` : dead > 0 ? ` · ${dead} dead` : ""}
+    </span>
+  );
+}
 
 export default function Feed({ onPick }: { onPick: (address: string) => void }) {
   const [data, setData] = useState<Payload | null>(null);
