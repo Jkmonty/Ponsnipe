@@ -28,12 +28,12 @@ export interface Snapshot {
 
 interface Target {
   stock: Stock;
-  /** Lane the target walks along, 0..1 across the field. */
   x: number;
-  y: number;
+  /** Which cover line it is behind. Its height comes from `out`. */
+  lane: number;
   vx: number;
   r: number;
-  /** 0 hidden, 1 fully out of cover. Targets duck rather than vanish. */
+  /** 0 fully behind cover, 1 fully clear of it. */
   out: number;
   rising: boolean;
   /** Seconds until it ducks back, once fully out. */
@@ -43,6 +43,15 @@ interface Target {
   cooldown: number;
   dead: number;
 }
+
+/**
+ * Where the cover sits, as a share of the height.
+ *
+ * Three walls. A target rises from behind one and only the part above the
+ * wall can be hit — which is what makes a half-risen target a hard shot
+ * rather than a slightly smaller one.
+ */
+const LANES = [0.46, 0.63, 0.8];
 
 interface Bullet {
   x: number;
@@ -123,21 +132,39 @@ export class Arcade {
     const w = this.canvas.width;
     const h = this.canvas.height;
     const fromLeft = Math.random() < 0.5;
+    void h;
     this.targets.push({
       stock: s,
       x: fromLeft ? rand(0.08, 0.35) * w : rand(0.65, 0.92) * w,
-      // Three rows of cover, so the eye has somewhere to expect them.
-      y: h * [0.42, 0.58, 0.74][Math.floor(Math.random() * 3)],
-      vx: (fromLeft ? 1 : -1) * rand(18, 46),
-      r: rand(26, 34),
+      lane: Math.floor(Math.random() * LANES.length),
+      vx: (fromLeft ? 1 : -1) * rand(34, 78),
+      r: rand(19, 26),
       out: 0,
       rising: true,
-      dwell: rand(0.7, 1.8),
+      // Short. A target that stands still long enough to line up is a target
+      // nobody misses, and the whole game was too easy because of it.
+      dwell: rand(0.35, 0.95),
       // A share that is down today is hostile. Nothing arbitrary about which.
       hostile: s.changePct < 0,
-      cooldown: rand(0.8, 1.6),
+      cooldown: rand(0.5, 1.1),
       dead: 0,
     });
+  }
+
+  /** Cover line for a lane, in canvas pixels. */
+  private coverY(lane: number): number {
+    return this.canvas.height * LANES[lane];
+  }
+
+  /**
+   * Where a target's centre is right now.
+   *
+   * At out=0 it sits a full body below the wall and nothing shows. At out=1
+   * the whole circle clears it. Everything between is a partial target, and
+   * only the part above the wall can be hit.
+   */
+  private centreY(t: Target): number {
+    return this.coverY(t.lane) + (t.r + 10) - t.out * (2 * t.r + 12);
   }
 
   private step(dt: number) {
@@ -180,21 +207,26 @@ export class Arcade {
         t.out = Math.max(0, t.out - dt * 2.6);
       }
 
-      if (t.hostile && t.out >= 1) {
+      // Shoots the moment it is clear of cover, not once fully up.
+      if (t.hostile && t.out > 0.55) {
         t.cooldown -= dt;
         if (t.cooldown <= 0) {
-          t.cooldown = rand(1.4, 2.6);
+          t.cooldown = rand(0.9, 1.7);
+          const ty = this.centreY(t);
           const dx = this.aim.x - t.x;
-          const dy = this.aim.y - t.y;
+          const dy = this.aim.y - ty;
           const d = Math.hypot(dx, dy) || 1;
-          // Aimed where the scope is, not at it — a shot you cannot dodge is
-          // not difficulty, it is a tax.
-          const speed = 210;
+          /*
+           * Accurate. It still has to travel, so moving the scope beats it —
+           * which is the skill being asked for. Standing still does not.
+           */
+          const speed = 330;
+          const spread = 7;
           this.bullets.push({
             x: t.x,
-            y: t.y,
-            vx: (dx / d) * speed + rand(-40, 40),
-            vy: (dy / d) * speed + rand(-40, 40),
+            y: ty,
+            vx: (dx / d) * speed + rand(-spread, spread),
+            vy: (dy / d) * speed + rand(-spread, spread),
             life: 3,
           });
         }
@@ -209,10 +241,13 @@ export class Arcade {
       b.y += b.vy * dt;
       b.life -= dt;
       // A hit is on the scope's centre — where you are looking is where you are.
-      if (Math.hypot(b.x - this.aim.x, b.y - this.aim.y) < 16) {
+      if (Math.hypot(b.x - this.aim.x, b.y - this.aim.y) < 14) {
         b.life = 0;
         this.lives -= 1;
         this.combo = 0;
+        // Getting hit costs the board, not just the round. Lives alone made
+        // being shot a free mistake until the third one.
+        this.points = Math.max(0, this.points - 250);
         this.onChange(this.snapshot());
       }
     }
@@ -226,8 +261,12 @@ export class Arcade {
     let best: Target | null = null;
     let bestD = Infinity;
     for (const t of this.targets) {
-      if (t.dead > 0 || t.out < 0.8) continue;
-      const d = Math.hypot(t.x - this.aim.x, t.y - this.aim.y);
+      if (t.dead > 0 || t.out <= 0.12) continue;
+      const cy = this.centreY(t);
+      // Above the wall, or it is not there to be shot. A half-risen target is
+      // a smaller target rather than an easier one.
+      if (this.aim.y > this.coverY(t.lane)) continue;
+      const d = Math.hypot(t.x - this.aim.x, cy - this.aim.y);
       if (d < t.r && d < bestD) {
         best = t;
         bestD = d;
@@ -263,33 +302,46 @@ export class Arcade {
     c.fillStyle = "#06070a";
     c.fillRect(0, 0, w, h);
 
-    // Cover: three bands the targets rise from.
-    c.fillStyle = "#0c0e13";
-    for (const y of [0.42, 0.58, 0.74]) {
-      c.fillRect(0, h * y + 16, w, h * 0.11);
-    }
-
+    /*
+     * Targets first, then the wall over the top of them.
+     *
+     * Drawing in that order is what sells the cover: the part still below the
+     * line is painted and then buried, so a half-risen target genuinely looks
+     * like a head over a wall rather than a circle that got smaller.
+     */
     for (const t of this.targets) {
       if (t.out <= 0.02) continue;
-      const y = t.y + (1 - t.out) * 44;
+      const y = this.centreY(t);
       const hit = t.dead > 0;
       c.globalAlpha = hit ? Math.max(0, t.dead / 0.35) : 1;
       c.beginPath();
       c.arc(t.x, y, t.r, 0, Math.PI * 2);
-      c.fillStyle = hit ? "#eef1f5" : t.hostile ? "rgba(255,93,93,0.18)" : "rgba(122,224,137,0.18)";
+      c.fillStyle = hit ? "#eef1f5" : t.hostile ? "rgba(255,93,93,0.20)" : "rgba(122,224,137,0.20)";
       c.fill();
       c.lineWidth = 2;
       c.strokeStyle = t.hostile ? "#ff5d5d" : "#7ae089";
       c.stroke();
 
       c.fillStyle = t.hostile ? "#ff5d5d" : "#7ae089";
-      c.font = "600 13px ui-monospace, monospace";
+      c.font = "600 12px ui-monospace, monospace";
       c.textAlign = "center";
       c.fillText(t.stock.symbol, t.x, y + 4);
-      c.font = "11px ui-monospace, monospace";
-      c.globalAlpha = (hit ? t.dead / 0.35 : 1) * 0.75;
-      c.fillText(`${t.stock.changePct >= 0 ? "+" : ""}${t.stock.changePct.toFixed(1)}%`, t.x, y + t.r + 14);
       c.globalAlpha = 1;
+    }
+
+    // The walls, painted over whatever is behind them.
+    for (let i = 0; i < LANES.length; i++) {
+      const y = h * LANES[i];
+      c.fillStyle = "#11151c";
+      c.fillRect(0, y, w, h * 0.085);
+      c.fillStyle = "#1b2029";
+      c.fillRect(0, y, w, 3);
+      // The day's move, on the wall rather than on the target, so a ducking
+      // target does not take its own label down with it.
+      c.font = "10px ui-monospace, monospace";
+      c.textAlign = "left";
+      c.fillStyle = "#2a3140";
+      for (let x = 24; x < w; x += 190) c.fillText("RANGE", x, y + 20);
     }
 
     for (const b of this.bullets) {
