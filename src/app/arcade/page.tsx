@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Logo from "../Logo";
-import { Arcade, ROUND_MS, type Snapshot, type Stock } from "./game";
+import { World, ROUND_MS, type Snapshot, type Stock } from "./world";
 
 interface BoardRow {
   wallet: string;
@@ -23,7 +23,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 export default function ArcadePage() {
   const holder = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const gameRef = useRef<Arcade | null>(null);
+  const gameRef = useRef<World | null>(null);
 
   const [stocks, setStocks] = useState<Stock[] | null>(null);
   const [s, setS] = useState<Snapshot | null>(null);
@@ -51,16 +51,15 @@ export default function ArcadePage() {
     }
   }, []);
 
-  /** Size the canvas to its box, in device pixels, so nothing is blurry. */
+  /** Give the canvas a CSS box; the renderer handles device pixels itself. */
   const fit = useCallback(() => {
     const el = holder.current;
     const cv = canvasRef.current;
     if (!el || !cv) return;
     const r = el.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    cv.width = Math.round(r.width * dpr);
-    cv.height = Math.round(Math.max(320, r.width * 0.62) * dpr);
-    cv.style.height = `${cv.height / dpr}px`;
+    cv.style.width = `${r.width}px`;
+    cv.style.height = `${Math.max(340, r.width * 0.58)}px`;
+    gameRef.current?.resize();
   }, []);
 
   useEffect(() => {
@@ -75,11 +74,14 @@ export default function ArcadePage() {
     fit();
     gameRef.current?.stop();
     setPosted(null);
-    const g = new Arcade(cv, stocks, setS);
-    g.aim = { x: cv.width / 2, y: cv.height / 2 };
+    const g = new World(cv, stocks, setS);
     gameRef.current = g;
     setS(null);
     g.start();
+    // Pointer lock turns mouse movement into looking around, which is what a
+    // first-person view needs — without it the cursor hits the edge of the
+    // canvas and the aim stops with it.
+    void cv.requestPointerLock?.();
   };
 
   useEffect(() => () => gameRef.current?.stop(), []);
@@ -117,15 +119,9 @@ export default function ArcadePage() {
       .catch(() => setPosted("could not post that score"));
   }, [s?.over, posted, wallet]);
 
+  /* Relative movement, so the view keeps turning past the edge of the window. */
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const g = gameRef.current;
-    const cv = canvasRef.current;
-    if (!g || !cv) return;
-    const r = cv.getBoundingClientRect();
-    g.aim = {
-      x: ((e.clientX - r.left) / r.width) * cv.width,
-      y: ((e.clientY - r.top) / r.height) * cv.height,
-    };
+    gameRef.current?.look(e.movementX || 0, e.movementY || 0);
   };
 
   const live = s && !s.over;
@@ -157,7 +153,7 @@ export default function ArcadePage() {
             // scope does and what anybody who has played one expects.
             e.preventDefault();
             const g = gameRef.current;
-            if (g) g.zoomed = !g.zoomed;
+            if (g) g.scoped = !g.scoped;
           }}
         />
 
@@ -183,9 +179,9 @@ export default function ArcadePage() {
               <>
                 <h1>The greenwood</h1>
                 <p>
-                  Click to loose, right-click to steady the scope. Green butts are
-                  shares up today and worth points. Red ones are down, and they shoot
-                  back.
+                  Move the mouse to look, click to loose, right-click for the scope.
+                  Green butts are shares up today and worth points. Red ones are down,
+                  and they shoot back.
                 </p>
                 <button className="btn btn-primary btn-lg" onClick={play}>
                   Start

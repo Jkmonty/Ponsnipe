@@ -1954,3 +1954,24 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
 .arc-rows li.me { border: 1px solid var(--lime-line); background: var(--lime-dim); }
 .arc-rank { width: 24px; color: var(--t4); }
 .arc-pts { margin-left: auto; color: var(--t1); font-weight: 600; }
+
+/* The 3D range fills its box; three.js owns the pixels inside it. */
+.arc-canvas { display: block; width: 100%; cursor: crosshair; touch-action: none; }
+/* A fixed reticle at the centre, because in first person that is where the
+   shot goes regardless of where the mouse happens to be. */
+.arc-stage::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--t1), var(--t1)) 50% 0 / 1px 8px no-repeat,
+    linear-gradient(var(--t1), var(--t1)) 50% 100% / 1px 8px no-repeat,
+    linear-gradient(var(--t1), var(--t1)) 0 50% / 8px 1px no-repeat,
+    linear-gradient(var(--t1), var(--t1)) 100% 50% / 8px 1px no-repeat;
+  opacity: 0.75;
+}
