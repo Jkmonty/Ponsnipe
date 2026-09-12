@@ -14,8 +14,17 @@ on white.
 
 | File | Size | Where |
 |---|---|---|
-| `pfp.png` | 400×400 | Profile picture |
-| `banner.png` | 1500×500 | Header |
+| `pfp.png` | 400×400 | Profile picture, dark |
+| `banner.png` | 1500×500 | Header, dark |
+| `pfp-white.png` | 400×400 | Profile picture, light |
+| `banner-white.png` | 1500×500 | Header, light |
+
+Use one set or the other. A dark profile picture against a light header reads
+as two brands, which is the only way to get this wrong.
+
+The dark set holds up better at timeline size: X renders a profile picture at
+about 48px against its own white chrome, and the light version puts a pale
+mark on a pale background at exactly the size where contrast matters most.
 
 The mark is centred with a wide margin because X crops the profile picture to
 a circle — anything near the corners is lost. The banner keeps the lockup
@@ -37,25 +46,41 @@ it — it reads as the impersonation account rather than the real one.
 **Location:** `Robinhood Chain` — the field is free text, and it says what
 chain this is for to anybody skimming.
 
-**Bio** (160 characters). Three that say different things:
+**Bio** (160 characters). X keeps line breaks, so the strongest shape is a
+punch followed by the substance.
+
+**The one I would use:**
+
+> Name the ticker. We buy it the second it exists.
+> Every pons launch. Candles to 0.2s. Exits set before entry.
+
+*(105. The first line is the thing no competitor can say — arming a buy on a
+coin that does not exist yet. The second earns it.)*
+
+Others, if that is not the voice:
+
+> Arm a snipe on a coin that doesn't exist yet.
+> Every pons launch, the second it lands.
+
+*(84. Shorter, stranger, more memorable. Leads entirely on the one capability
+nobody else has.)*
+
+> You can't click fast enough.
+> Snipe pons launches by ticker. Exits set before you're in.
+
+*(86. Leads on the reader rather than the product. The most human of the
+three, and the one that works on somebody who has already been beaten to a
+launch.)*
 
 > Every new pons coin, the second it exists. Snipe by ticker before it
 > launches. Set the exit before the entry.
 
-*(118 — the default. Leads with the feed, which is what people can use without
-connecting anything.)*
+*(118. The plainest. Three claims, no rhetoric — right if the audience is
+suspicious of marketing.)*
 
-> The pons terminal. Every launch as it lands, candles down to 0.2s, and a
-> sniper you arm before the coin exists.
-
-*(114 — leads with the product category. Better if the audience already knows
-what a terminal is.)*
-
-> Snipe pons launches by ticker. Take-profit and stop-loss set before you buy,
-> so the exit isn't a decision you make while shaking.
-
-*(133 — leads with the emotional argument, which is the strongest one we have
-and the one no competitor makes.)*
+**Avoid** anything with "fastest", "best" or "#1" in it. Every bot account on
+this timeline says those, so they read as noise, and the first of them is a
+claim somebody will test.
 
 ---
 
