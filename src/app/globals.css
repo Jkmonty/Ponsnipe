@@ -2049,4 +2049,3 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
    crosshair drawn at the centre of the stage is a lie — it is not where the
    shot goes. Hide it and let the cursor be the reticle. */
 .arc-free::after { display: none; }
-.arc-free .arc-scope::after { display: none; }

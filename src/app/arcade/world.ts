@@ -65,7 +65,7 @@ interface Arrow {
 }
 
 /** Where the three rows of cover sit, in world units away from the camera. */
-const LANES = [-14, -28, -44];
+const LANES = [-12, -25, -38];
 /** How near an arrow has to pass to count. Generous: this is an arcade. */
 const HIT_RADIUS = 2.6;
 
@@ -268,48 +268,114 @@ export class World {
    * it is added here.
    */
   private buildBow() {
-    const wood = new T.MeshLambertMaterial({ color: 0x6b4a2a, flatShading: true });
     const g = new T.Group();
-
-    // A yew stave: most of a circle is too round, a shallow arc is a longbow.
-    const stave = new T.Mesh(new T.TorusGeometry(0.52, 0.028, 5, 20, Math.PI * 1.1), wood);
-    stave.rotation.z = -Math.PI * 0.05;
-    g.add(stave);
-    const grip = new T.Mesh(new T.CylinderGeometry(0.045, 0.045, 0.22, 6), wood);
-    grip.position.set(-0.5, 0, 0);
-    grip.rotation.z = Math.PI / 2;
-    g.add(grip);
-    const string = new T.Mesh(
-      new T.CylinderGeometry(0.006, 0.006, 0.98, 3),
-      new T.MeshBasicMaterial({ color: 0xd9d2bc }),
-    );
-    string.position.set(-0.36, 0, 0);
-    g.add(string);
-
-    const shaft = new T.Mesh(
-      new T.CylinderGeometry(0.018, 0.018, 0.95, 4),
-      new T.MeshLambertMaterial({ color: 0xe8d9a8, flatShading: true }),
-    );
-    shaft.geometry.rotateZ(Math.PI / 2);
-    shaft.position.set(-0.1, 0.02, 0);
-    g.add(shaft);
-    this.nock = shaft;
-
     /*
      * Where a bow actually is when you are holding it.
      *
-     * The first version sat small and far off in the corner, which read as a
-     * prop lying in the scene rather than something in your hands. A held
-     * longbow is close enough to be out of focus, big enough to run off the
-     * bottom of the view, and canted rather than upright — you look past the
-     * stave, not over it.
+     * Close enough that the limbs run off the top and bottom of the view,
+     * canted rather than upright, and off to the right so it does not sit in
+     * front of what you are shooting at. The first attempt was a torus
+     * segment with a straight string floating beside it, which read as a
+     * croissant.
      */
-    g.scale.setScalar(1.9);
-    g.position.set(0.5, -0.72, -1.05);
-    g.rotation.set(0.12, -0.34, -0.22);
+    g.scale.setScalar(0.42);
+    g.position.set(0.44, -0.56, -1.1);
+    g.rotation.set(0.02, -0.2, -0.12);
     this.bow = g;
     this.camera.add(g);
     this.scene.add(this.camera);
+
+    // Something in your hands immediately, in case the model never arrives.
+    const stand = this.roughBow();
+    g.add(stand);
+
+    /*
+     * The arrow hangs off the camera, not off the bow.
+     *
+     * It has to point where the shot goes — straight into the screen — and
+     * the bow is canted, so an arrow parented to it comes out crossing the
+     * view diagonally, which is what the first attempt looked like. Keeping
+     * it on the camera means its direction is simply forward.
+     */
+    this.nock = this.makeArrow();
+    /*
+     * Near the line of sight, because that is where a nocked arrow is.
+     *
+     * Offset far to the side it projects as a long diagonal radiating out of
+     * the middle of the screen — correct perspective for a shaft pointing
+     * forward a long way off-axis, and completely wrong for something you are
+     * about to shoot along. Close to the axis it foreshortens into the short
+     * stub you actually see over a bow.
+     */
+    this.nock.position.set(0.12, -0.2, -1.05);
+    this.nock.rotation.set(0, 0.015, 0);
+    this.camera.add(this.nock);
+
+    /*
+     * The real bow: 660 triangles of CC0 low-poly from Quaternius, loaded
+     * after the first frame rather than before it. A round that will not
+     * start until a download finishes is worse than one that starts with a
+     * placeholder and improves a moment later.
+     */
+    void import("three/examples/jsm/loaders/GLTFLoader.js")
+      .then(({ GLTFLoader }) => new GLTFLoader().loadAsync("/arcade/bow.glb"))
+      .then((gltf) => {
+        const m = gltf.scene;
+        /*
+         * The pack's wood is almost black in linear space, which disappears
+         * against a dusk-lit wood. Lambert at a lifted colour matches the
+         * flat-shaded look of everything else here, and the string is left
+         * unlit so it stays a visible line rather than a dark smudge.
+         */
+        m.traverse((o) => {
+          const mesh = o as T.Mesh;
+          if (!mesh.isMesh) return;
+          const name = (mesh.material as T.Material)?.name ?? "";
+          mesh.material =
+            name === "White"
+              ? new T.MeshBasicMaterial({ color: 0xe3dcc4 })
+              : new T.MeshLambertMaterial({
+                  color: name === "LightWood" ? 0x9c6b3f : 0x5d3c22,
+                  flatShading: true,
+                });
+        });
+        // Centre it on its own bounding box so the grip, not the origin,
+        // is what sits where we put it.
+        const box = new T.Box3().setFromObject(m);
+        m.position.sub(box.getCenter(new T.Vector3()));
+        g.remove(stand);
+        g.add(m);
+      })
+      .catch(() => {
+        // Keep the placeholder. A bow that failed to download is not a
+        // reason to be unable to play.
+      });
+  }
+
+  /** The fallback bow, and the nocked arrow's shape. */
+  private roughBow(): T.Group {
+    const wood = new T.MeshLambertMaterial({ color: 0x6b4a2a, flatShading: true });
+    const g = new T.Group();
+    const stave = new T.Mesh(new T.TorusGeometry(0.95, 0.05, 5, 20, Math.PI * 1.1), wood);
+    stave.rotation.z = -Math.PI * 0.05;
+    g.add(stave);
+    const string = new T.Mesh(
+      new T.CylinderGeometry(0.008, 0.008, 1.8, 3),
+      new T.MeshBasicMaterial({ color: 0xd9d2bc }),
+    );
+    string.position.set(-0.66, 0, 0);
+    g.add(string);
+    return g;
+  }
+
+  /** A shaft lying along the view, tip away from you. */
+  private makeArrow(): T.Mesh {
+    const shaft = new T.Mesh(
+      new T.CylinderGeometry(0.012, 0.012, 1.1, 5),
+      new T.MeshLambertMaterial({ color: 0xe8d9a8, flatShading: true }),
+    );
+    shaft.geometry.rotateX(Math.PI / 2);
+    return shaft;
   }
 
   /** A run of sharpened stakes along the far edge, closing the range in. */
@@ -378,7 +444,7 @@ export class World {
   private hedge(z: number) {
     const mat = new T.MeshLambertMaterial({ color: 0x1e4a30, flatShading: true });
     for (let x = -80; x < 80; x += rand(3.2, 5.2)) {
-      const r = rand(1.6, 2.6);
+      const r = rand(1.4, 2.2);
       const m = new T.Mesh(new T.IcosahedronGeometry(r, 0), mat);
       m.position.set(x, r * 0.55, z + rand(-0.8, 0.8));
       m.scale.y = 0.75;
@@ -429,21 +495,42 @@ export class World {
    * target, and shipping a typeface to render six characters would cost more
    * than the rest of the wood put together.
    */
+  /**
+   * The face of a butt: an archery roundel with the ticker across it.
+   *
+   * It was a rectangle stretched onto a disc, which cropped the rings off and
+   * left a pale smudge that vanished against the trees. Concentric rings in
+   * the stock's own colour read as a target at any distance, and say which
+   * way the share is going before the letters are legible — which matters,
+   * because the red ones shoot back.
+   */
   private label(text: string, colour: string): T.Texture {
+    const S = 256;
     const cv = document.createElement("canvas");
-    cv.width = 256;
-    cv.height = 128;
+    cv.width = S;
+    cv.height = S;
     const c = cv.getContext("2d")!;
-    c.fillStyle = "#efe4c8";
-    c.fillRect(0, 0, 256, 128);
-    c.strokeStyle = colour;
-    c.lineWidth = 10;
-    c.strokeRect(5, 5, 246, 118);
-    c.fillStyle = "#12181f";
-    c.font = "bold 54px ui-monospace, monospace";
+    const rings: [number, string][] = [
+      [126, colour],
+      [104, "#f4edda"],
+      [82, colour],
+      [60, "#f4edda"],
+      [34, "#e8b54a"],
+    ];
+    for (const [r, fill] of rings) {
+      c.beginPath();
+      c.arc(S / 2, S / 2, r, 0, Math.PI * 2);
+      c.fillStyle = fill;
+      c.fill();
+    }
+    // A band behind the letters, so the ticker survives the rings under it.
+    c.fillStyle = "rgba(12, 18, 24, 0.82)";
+    c.fillRect(0, 104, S, 48);
+    c.fillStyle = "#f8f4e6";
+    c.font = "bold 42px ui-monospace, SFMono-Regular, monospace";
     c.textAlign = "center";
     c.textBaseline = "middle";
-    c.fillText(text.slice(0, 6), 128, 68);
+    c.fillText(text.slice(0, 6), S / 2, 129);
     const tex = new T.CanvasTexture(cv);
     tex.colorSpace = T.SRGBColorSpace;
     return tex;
@@ -460,33 +547,42 @@ export class World {
     const ringColour = hostile ? "#ff5d5d" : "#7ae089";
     // The butt: a straw roundel on a post, facing the shooter.
     const face = new T.Mesh(
-      new T.CircleGeometry(2.6, 20),
-      new T.MeshLambertMaterial({
+      new T.CircleGeometry(3.4, 22),
+      // Unlit: a target you cannot read is not a target, and the range is
+      // lit for dusk. Both sides, so one that spawns turned slightly away is
+      // still something to shoot rather than an invisible edge.
+      new T.MeshBasicMaterial({
         map: this.label(stock.symbol, ringColour),
-        // Both sides, so a butt that spawns turned slightly away is still a
-        // target rather than an invisible one.
         side: T.DoubleSide,
       }),
     );
-    face.position.y = 3.4;
+    /*
+     * High enough to clear the hedge it hides behind.
+     *
+     * At the old height the bottom half of every face sat inside the cover
+     * permanently, so a target was a crescent you could not read the ticker
+     * on. Cover should hide a butt while it is down and let it stand clear
+     * when it is up — not crop it forever.
+     */
+    face.position.y = 5.2;
     group.add(face);
 
     const rim = new T.Mesh(
-      new T.TorusGeometry(2.65, 0.2, 6, 22),
+      new T.TorusGeometry(3.45, 0.24, 6, 24),
       new T.MeshLambertMaterial({ color: new T.Color(ringColour), flatShading: true }),
     );
-    rim.position.y = 3.4;
+    rim.position.y = 5.2;
     group.add(rim);
 
     const post = new T.Mesh(
-      new T.CylinderGeometry(0.16, 0.2, 3.6, 5),
+      new T.CylinderGeometry(0.18, 0.24, 5.4, 5),
       new T.MeshLambertMaterial({ color: 0x4a3a28, flatShading: true }),
     );
-    post.position.y = 1.6;
+    post.position.y = 2.7;
     group.add(post);
 
     const x = rand(-30, 30);
-    group.position.set(x, -4.5, z);
+    group.position.set(x, -9, z);
     this.scene.add(group);
 
     this.butts.push({
@@ -577,8 +673,8 @@ export class World {
     if (this.bow) {
       this.bow.visible = !this.scoped;
       const kick = (1 - this.drawn) * (1 - this.drawn);
-      this.bow.position.set(0.5 + kick * 0.1, -0.72 - kick * 0.05, -1.05 + kick * 0.14);
-      if (this.nock) this.nock.visible = this.drawn > 0.55;
+      this.bow.position.set(0.44 + kick * 0.06, -0.56 - kick * 0.03, -1.1 + kick * 0.1);
+      if (this.nock) this.nock.visible = !this.scoped && this.drawn > 0.55;
     }
     this.msLeft -= dt * 1000;
     if (this.msLeft <= 0 || this.lives <= 0) {
@@ -616,7 +712,7 @@ export class World {
         b.out = Math.max(0, b.out - dt * 2.4);
       }
       // Rises from behind the hedge rather than fading in.
-      b.group.position.set(b.x, -4.5 + b.out * 4.5, LANES[b.lane]);
+      b.group.position.set(b.x, -9 + b.out * 9, LANES[b.lane]);
 
       if (b.hostile && b.out > 0.6) {
         b.cooldown -= dt;
@@ -667,15 +763,23 @@ export class World {
 
       if (near < HIT_RADIUS) {
         a.life = 0;
-        this.health = Math.max(0, this.health - 34);
-        this.combo = 0;
-        this.points = Math.max(0, this.points - 250);
-        this.hurt = 0.5;
-        this.sfx?.hurt();
-        if (this.health <= 0) {
-          this.lives = 0;
+        /*
+         * A moment's grace after being hit.
+         *
+         * Three reds firing together emptied the bar in under ten seconds of
+         * a sixty second round, which is not difficulty, it is not getting to
+         * play. The arrow still dies, so volleys are still punished — they
+         * just cannot all land at once.
+         */
+        if (this.hurt <= 0) {
+          this.health = Math.max(0, this.health - 18);
+          this.combo = 0;
+          this.points = Math.max(0, this.points - 250);
+          this.hurt = 0.7;
+          this.sfx?.hurt();
+          if (this.health <= 0) this.lives = 0;
+          this.onChange(this.snapshot());
         }
-        this.onChange(this.snapshot());
       } else if (a.mesh.position.z > this.camera.position.z + 3) {
         // Gone past and behind: it missed, and saying so is what makes a near
         // miss feel like one.
@@ -691,7 +795,7 @@ export class World {
   }
 
   private loose(b: Butt) {
-    const from = b.group.position.clone().add(new T.Vector3(0, 3.4, 0));
+    const from = b.group.position.clone().add(new T.Vector3(0, 5.2, 0));
     const to = this.camera.position.clone();
     const vel = to.sub(from).normalize().multiplyScalar(rand(34, 42));
     const mesh = new T.Mesh(

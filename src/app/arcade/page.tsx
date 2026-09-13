@@ -221,7 +221,14 @@ export default function ArcadePage() {
         </span>
       </header>
 
-      <div className={`arc-stage${locked ? "" : " arc-free"}`} ref={holder}>
+      {/*
+        The centre reticle is only honest in two of the three states: locked,
+        where the view turns under a fixed crosshair, and scoped, where the
+        shot goes down the middle whatever the cursor is doing. Free and
+        unscoped, the cursor is the crosshair and a second one in the middle
+        of the screen points at nothing.
+      */}
+      <div className={`arc-stage${locked || scoped ? "" : " arc-free"}`} ref={holder}>
         <canvas
           ref={canvasRef}
           className="arc-canvas"
