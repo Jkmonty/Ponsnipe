@@ -53,7 +53,11 @@ export async function poolBalance(): Promise<PoolInfo | null> {
     g.__ponsPool = { at: Date.now(), data };
     return data;
   } catch {
-    // A failed read is not a zero pool. Keep whatever was last known.
-    return hit?.data ?? null;
+    // A failed read is not a zero pool. Keep whatever was last known, and
+    // remember the failure for the TTL so an RPC outage costs one read a
+    // minute rather than one per visitor.
+    const data = hit?.data ?? null;
+    g.__ponsPool = { at: Date.now(), data };
+    return data;
   }
 }

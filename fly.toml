@@ -14,6 +14,10 @@ primary_region = "lhr"          # London. `fly platform regions` lists the rest.
   # ever sees what was present when the image was made.
   [build.args]
     NEXT_PUBLIC_REPO_URL = "https://github.com/JKmonty/ponsnipe"
+    # The fee wallet's balance is the prize pool shown on the front door.
+    NEXT_PUBLIC_FEE_WALLET = ""
+    # The X account, linked from the site footer.
+    NEXT_PUBLIC_X_URL = ""
 
 [env]
   PORT = "3000"

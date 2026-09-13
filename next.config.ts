@@ -31,6 +31,17 @@ const nextConfig: NextConfig = {
    */
 
   /*
+   * The arcade became the range when the site grew a front door. Permanent,
+   * so anything that bookmarked or posted the old path keeps working.
+   */
+  async redirects() {
+    return [
+      { source: "/arcade", destination: "/range", permanent: true },
+      { source: "/arcade/sounds", destination: "/range/sounds", permanent: true },
+    ];
+  },
+
+  /*
    * Security headers.
    *
    * These matter more here than on a normal site: a trading key lives in the
@@ -52,17 +63,6 @@ const nextConfig: NextConfig = {
    * for hot reload, and a CSP that has to be loosened for development is a CSP
    * nobody trusts in production.
    */
-  /*
-   * The arcade became the range when the site grew a front door. Permanent,
-   * so anything that bookmarked or posted the old path keeps working.
-   */
-  async redirects() {
-    return [
-      { source: "/arcade", destination: "/range", permanent: true },
-      { source: "/arcade/sounds", destination: "/range/sounds", permanent: true },
-    ];
-  },
-
   async headers() {
     if (process.env.NODE_ENV !== "production") return [];
     const csp = [

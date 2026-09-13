@@ -55,9 +55,6 @@
 .site .ghost { background: rgba(255, 255, 255, 0.02); border-color: rgba(233, 239, 230, 0.16); color: var(--moon); }
 .site .ghost:hover:not(:disabled) { background: rgba(255, 255, 255, 0.05); }
 
-/* Column. */
-.site .col { width: min(1180px, 100% - var(--sp-8)); margin: 0 auto; }
-
 /* ── nav ─────────────────────────────────────────────────────────────────── */
 .site .snav {
   height: 68px;
@@ -247,7 +244,7 @@
 .site .board-row:nth-child(3) { animation-delay: 120ms; }
 .site .board-row:nth-child(4) { animation-delay: 180ms; }
 .site .board-row .n { color: var(--t3); font-size: 12px; }
-.site .board-row:first-of-type .n { color: var(--gold); }
+.site .board-row:nth-child(2) .n { color: var(--gold); }
 .site .board-row .w { color: var(--t1); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .site .board-row .p { color: var(--lime); font-weight: 500; }
 .site .board-empty { padding: 16px; color: var(--t3); font-size: 13px; margin: 0; }
@@ -326,6 +323,9 @@
 .site .honest span { color: var(--moss); }
 
 /* ── the range page ──────────────────────────────────────────────────────── */
+/* The terminal stylesheet gives both .arc and .bench min-height: 100vh, which
+   under the site nav and footer guarantees dead scroll. */
+.site .range, .site .bench { min-height: 0; }
 .site .range { padding: 0 0 var(--sp-8); }
 .site .range-head { width: min(1220px, 100%); display: flex; align-items: center; gap: var(--sp-5); padding: var(--sp-4) 0 var(--sp-2); }
 .site .range-head h1 { font-size: clamp(28px, 4vw, 40px); margin: 0; }

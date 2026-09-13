@@ -228,13 +228,13 @@ export default function Dashboard() {
             what a screen reader or a search engine gets; the image is what a
             person sees.
           */}
-          <a className="lockup" href="/" title="Front door">
+          <a className="lockup" href="/" title="Front door" aria-label="Ponsnipe, front door">
             <Logo size={34} />
             <img
               className="wordmark"
               src="/brand/wordmark.webp"
               srcSet="/brand/wordmark.webp 1x, /brand/wordmark@2x.webp 2x"
-              alt="Ponsnipe"
+              alt=""
               decoding="async"
             />
             <h1 className="sr-only">Ponsnipe</h1>

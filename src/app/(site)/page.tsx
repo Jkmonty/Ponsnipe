@@ -19,16 +19,42 @@ export const metadata: Metadata = {
     "Every pons launch on Robinhood Chain the second it exists, exits set before entry, and a range where today's tickers are the targets.",
 };
 
+/** How long any one data source may hold the page. The sections have quiet states; the page does not wait for them. */
+const DEADLINE_MS = 2000;
+
 /**
  * Nothing on this page blocks on a network call. Each live section gets its
- * data through here and falls back to a quiet state, never a spinner.
+ * data through here and falls back to a quiet state, never a spinner: a
+ * throw, or a source slower than the deadline, both yield the fallback.
+ *
+ * Everything passed here is a plain data read. Do not put a redirect() or
+ * notFound() inside: Next signals those by throwing, and this would swallow
+ * them.
  */
 async function safely<T>(work: () => Promise<T> | T, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), DEADLINE_MS);
+  });
   try {
-    return await work();
+    return await Promise.race([Promise.resolve().then(work), deadline]);
   } catch {
     return fallback;
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+const STRIP_TTL_MS = 30_000;
+const g = globalThis as typeof globalThis & { __ponsStrip?: { at: number; data: FeedRow[] } };
+
+/** The five newest launches, cached half a minute: the strip's age column tolerates that, and the feed query is the heaviest read in the app. */
+async function newestLaunches(): Promise<FeedRow[]> {
+  const hit = g.__ponsStrip;
+  if (hit && Date.now() - hit.at < STRIP_TTL_MS) return hit.data;
+  const { rows } = await readFeed({ maxAgeMin: 180, limit: 5 });
+  g.__ponsStrip = { at: Date.now(), data: rows };
+  return rows;
 }
 
 /**
@@ -45,7 +71,7 @@ export default async function Landing() {
     safely<Score[]>(() => top(3, week), []),
     safely<Pin[]>(async () => pickPins(await loadTargets()), []),
     safely<PoolInfo | null>(() => poolBalance(), null),
-    safely<FeedRow[]>(async () => (await readFeed({ maxAgeMin: 180, limit: 5 })).rows, []),
+    safely<FeedRow[]>(() => newestLaunches(), []),
   ]);
 
   return (

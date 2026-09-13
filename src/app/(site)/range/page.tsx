@@ -236,147 +236,147 @@ export default function ArcadePage() {
 
       <div className="range-grid">
 
-      {/*
-        The centre reticle is only honest in two of the three states: locked,
-        where the view turns under a fixed crosshair, and scoped, where the
-        shot goes down the middle whatever the cursor is doing. Free and
-        unscoped, the cursor is the crosshair and a second one in the middle
-        of the screen points at nothing.
-      */}
-      <div className={`arc-stage${locked || scoped ? "" : " arc-free"}`} ref={holder}>
-        <canvas
-          ref={canvasRef}
-          className="arc-canvas"
-          onPointerMove={move}
-          onPointerDown={(e) => {
-            /*
-             * Hold right to raise the scope, left to loose.
-             *
-             * This used to hang off `contextmenu`, which was the bug: once
-             * pointer lock is granted the browser stops dispatching that event
-             * entirely, so the scope silently did nothing for anyone whose
-             * browser granted the lock — which is everyone, on HTTPS. The
-             * button is read from pointerdown instead, which always arrives.
-             */
-            if (e.button === 2) {
-              scope(true);
-              return;
-            }
-            if (e.button !== 0) return;
-            move(e);
-            gameRef.current?.fire();
-          }}
-          onPointerUp={(e) => e.button === 2 && scope(false)}
-          onPointerLeave={() => scope(false)}
-          onContextMenu={(e) => e.preventDefault()}
-        />
-
-        {(!s || s.over) && (
-          <div className="arc-overlay">
-            {!stocks ? (
-              <p>loading targets…</p>
-            ) : !stocks.length ? (
-              <p>No stock targets available right now.</p>
-            ) : s?.over ? (
-              <>
-                <h1>{s.points.toLocaleString()}</h1>
-                <p>
-                  {s.hits} hits from {s.shots} shots
-                  {s.shots > 0 && ` · ${Math.round((s.hits / s.shots) * 100)}%`}
-                </p>
-                {posted && <p className="arc-posted">{posted}</p>}
-                <button className="btn btn-primary btn-lg" onClick={play}>
-                  Again
-                </button>
-              </>
-            ) : (
-              <>
-                <h1>Sherwood Shooting Range</h1>
-                <p>
-                  Move to look, click to loose, hold right to raise the scope.
-                  Green butts are shares up today and worth points. Red ones are down
-                  on the day, and they shoot back — three arrows and you are finished.
-                </p>
-                <button className="btn btn-primary btn-lg" onClick={play}>
-                  Start
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
         {/*
-          The scope, drawn over the canvas rather than inside it.
-          
-          The three-dimensional part of a scope is the narrower field of view,
-          which the camera already does. What is left is the glass: everything
-          outside the circle blacked out, a ring, and crosshairs. That is a
-          border and two gradients, and doing it in CSS keeps it crisp at any
-          size instead of being redrawn every frame.
+          The centre reticle is only honest in two of the three states: locked,
+          where the view turns under a fixed crosshair, and scoped, where the
+          shot goes down the middle whatever the cursor is doing. Free and
+          unscoped, the cursor is the crosshair and a second one in the middle
+          of the screen points at nothing.
         */}
-        {live && scoped && <div className="arc-scope" aria-hidden="true" />}
-
-        {/*
-          Being shot, made obvious.
-
-          A number dropping in the corner is not something you notice while
-          you are looking down the middle of the screen for the next target,
-          which is exactly when you are being shot at. Red closing in from the
-          edges is in your peripheral vision whether you look at it or not —
-          and it stays faintly on once the bar is nearly empty, so "nearly
-          dead" is a state you can feel rather than a figure you have to check.
-        */}
-        {live && (s.hurt > 0 || s.health <= 34) && (
-          <div
-            className="arc-damage"
-            aria-hidden="true"
-            style={{ opacity: Math.max(s.hurt, s.health <= 34 ? 0.3 : 0) }}
+        <div className={`arc-stage${locked || scoped ? "" : " arc-free"}`} ref={holder}>
+          <canvas
+            ref={canvasRef}
+            className="arc-canvas"
+            onPointerMove={move}
+            onPointerDown={(e) => {
+              /*
+               * Hold right to raise the scope, left to loose.
+               *
+               * This used to hang off `contextmenu`, which was the bug: once
+               * pointer lock is granted the browser stops dispatching that event
+               * entirely, so the scope silently did nothing for anyone whose
+               * browser granted the lock — which is everyone, on HTTPS. The
+               * button is read from pointerdown instead, which always arrives.
+               */
+              if (e.button === 2) {
+                scope(true);
+                return;
+              }
+              if (e.button !== 0) return;
+              move(e);
+              gameRef.current?.fire();
+            }}
+            onPointerUp={(e) => e.button === 2 && scope(false)}
+            onPointerLeave={() => scope(false)}
+            onContextMenu={(e) => e.preventDefault()}
           />
-        )}
 
-        {/*
-          The hit marker, at the centre of the view where the shot went. Keyed
-          by the hit counter so the animation restarts on every hit rather
-          than playing once and sitting still through a run of them.
-        */}
-        {live && mark && (
-          <div
-            key={mark.n}
-            className={`arc-mark${mark.kill ? " kill" : ""}`}
-            aria-hidden="true"
-          />
-        )}
-
-        {live && (
-          <>
-            <div className="arc-hud">
-              <span className="arc-score">{s.points.toLocaleString()}</span>
-              {s.combo > 1 && <span className="arc-combo">×{s.combo}</span>}
-              <span className="arc-time">{Math.ceil(s.msLeft / 1000)}s</span>
+          {(!s || s.over) && (
+            <div className="arc-overlay">
+              {!stocks ? (
+                <p>loading targets…</p>
+              ) : !stocks.length ? (
+                <p>No stock targets available right now.</p>
+              ) : s?.over ? (
+                <>
+                  <h1>{s.points.toLocaleString()}</h1>
+                  <p>
+                    {s.hits} hits from {s.shots} shots
+                    {s.shots > 0 && ` · ${Math.round((s.hits / s.shots) * 100)}%`}
+                  </p>
+                  {posted && <p className="arc-posted">{posted}</p>}
+                  <button className="btn btn-primary btn-lg" onClick={play}>
+                    Again
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h1>Sherwood Shooting Range</h1>
+                  <p>
+                    Move to look, click to loose, hold right to raise the scope.
+                    Green butts are shares up today and worth points. Red ones are down
+                    on the day, and they shoot back — three arrows and you are finished.
+                  </p>
+                  <button className="btn btn-primary btn-lg" onClick={play}>
+                    Start
+                  </button>
+                </>
+              )}
             </div>
-            <div className="arc-health" aria-label={`Health ${s.health}%`}>
-              <i style={{ width: `${Math.max(0, Math.min(100, s.health))}%` }} />
-            </div>
-          </>
-        )}
-      </div>
+          )}
 
-      <section className="arc-board" id="board">
-        <h2>This week</h2>
-        {board.length === 0 ? (
-          <p className="arc-empty">Nobody has posted a score yet.</p>
-        ) : (
-          <ol className="arc-rows">
-            {board.slice(0, 20).map((r, i) => (
-              <li key={r.wallet} className={r.wallet.toLowerCase() === wallet.toLowerCase() ? "me" : ""}>
-                <span className="arc-rank">{i + 1}</span>
-                <span className="mono">{r.name || short(r.wallet)}</span>
-                <span className="arc-pts num">{r.points.toLocaleString()}</span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+          {/*
+            The scope, drawn over the canvas rather than inside it.
+            
+            The three-dimensional part of a scope is the narrower field of view,
+            which the camera already does. What is left is the glass: everything
+            outside the circle blacked out, a ring, and crosshairs. That is a
+            border and two gradients, and doing it in CSS keeps it crisp at any
+            size instead of being redrawn every frame.
+          */}
+          {live && scoped && <div className="arc-scope" aria-hidden="true" />}
+
+          {/*
+            Being shot, made obvious.
+
+            A number dropping in the corner is not something you notice while
+            you are looking down the middle of the screen for the next target,
+            which is exactly when you are being shot at. Red closing in from the
+            edges is in your peripheral vision whether you look at it or not —
+            and it stays faintly on once the bar is nearly empty, so "nearly
+            dead" is a state you can feel rather than a figure you have to check.
+          */}
+          {live && (s.hurt > 0 || s.health <= 34) && (
+            <div
+              className="arc-damage"
+              aria-hidden="true"
+              style={{ opacity: Math.max(s.hurt, s.health <= 34 ? 0.3 : 0) }}
+            />
+          )}
+
+          {/*
+            The hit marker, at the centre of the view where the shot went. Keyed
+            by the hit counter so the animation restarts on every hit rather
+            than playing once and sitting still through a run of them.
+          */}
+          {live && mark && (
+            <div
+              key={mark.n}
+              className={`arc-mark${mark.kill ? " kill" : ""}`}
+              aria-hidden="true"
+            />
+          )}
+
+          {live && (
+            <>
+              <div className="arc-hud">
+                <span className="arc-score">{s.points.toLocaleString()}</span>
+                {s.combo > 1 && <span className="arc-combo">×{s.combo}</span>}
+                <span className="arc-time">{Math.ceil(s.msLeft / 1000)}s</span>
+              </div>
+              <div className="arc-health" aria-label={`Health ${s.health}%`}>
+                <i style={{ width: `${Math.max(0, Math.min(100, s.health))}%` }} />
+              </div>
+            </>
+          )}
+        </div>
+
+        <section className="arc-board" id="board">
+          <h2>This week</h2>
+          {board.length === 0 ? (
+            <p className="arc-empty">Nobody has posted a score yet.</p>
+          ) : (
+            <ol className="arc-rows">
+              {board.slice(0, 20).map((r, i) => (
+                <li key={r.wallet} className={r.wallet.toLowerCase() === wallet.toLowerCase() ? "me" : ""}>
+                  <span className="arc-rank">{i + 1}</span>
+                  <span className="mono">{r.name || short(r.wallet)}</span>
+                  <span className="arc-pts num">{r.points.toLocaleString()}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
       </div>
     </main>
   );

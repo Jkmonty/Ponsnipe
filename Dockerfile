@@ -35,9 +35,15 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # NEXT_PUBLIC_* is inlined into the client bundle by `next build`, so it has to
 # exist HERE, at build time. Setting it as a runtime secret does nothing at all
 # — the value never reaches the browser, which is exactly what happened the
-# first time this was wired up.
+# first time this was wired up. NEXT_PUBLIC_REPO_URL is the header's source
+# link, NEXT_PUBLIC_FEE_WALLET is the wallet whose balance is the front door's
+# prize pool, and NEXT_PUBLIC_X_URL is the footer's X link.
 ARG NEXT_PUBLIC_REPO_URL=""
 ENV NEXT_PUBLIC_REPO_URL=$NEXT_PUBLIC_REPO_URL
+ARG NEXT_PUBLIC_FEE_WALLET=""
+ENV NEXT_PUBLIC_FEE_WALLET=$NEXT_PUBLIC_FEE_WALLET
+ARG NEXT_PUBLIC_X_URL=""
+ENV NEXT_PUBLIC_X_URL=$NEXT_PUBLIC_X_URL
 
 RUN npm run build
 

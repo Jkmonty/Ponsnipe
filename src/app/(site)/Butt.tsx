@@ -20,7 +20,7 @@ export default function Butt({
     <div
       className={`butt ${className}`.trim()}
       style={size ? { width: size, height: size } : undefined}
-      aria-hidden="true"
+      aria-hidden={children ? undefined : "true"}
     >
       {children}
     </div>
