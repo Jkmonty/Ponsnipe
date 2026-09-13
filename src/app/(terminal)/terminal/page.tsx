@@ -1,9 +1,9 @@
-import Dashboard from "./Dashboard";
-import { WalletProvider } from "./WalletContext";
+import Dashboard from "@/app/Dashboard";
+import { WalletProvider } from "@/app/WalletContext";
 
 export const dynamic = "force-dynamic";
 
-export default function Page() {
+export default function TerminalPage() {
   /*
    * The wallet sits above the dashboard rather than inside the trade panel,
    * because two things need it now: the connect button in the header and the

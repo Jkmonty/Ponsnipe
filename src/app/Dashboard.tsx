@@ -228,7 +228,7 @@ export default function Dashboard() {
             what a screen reader or a search engine gets; the image is what a
             person sees.
           */}
-          <div className="lockup">
+          <a className="lockup" href="/" title="Front door">
             <Logo size={34} />
             <img
               className="wordmark"
@@ -238,7 +238,7 @@ export default function Dashboard() {
               decoding="async"
             />
             <h1 className="sr-only">Ponsnipe</h1>
-          </div>
+          </a>
           {/*
             The tagline is artwork again.
 
