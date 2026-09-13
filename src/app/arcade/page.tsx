@@ -319,6 +319,24 @@ export default function ArcadePage() {
         {live && scoped && <div className="arc-scope" aria-hidden="true" />}
 
         {/*
+          Being shot, made obvious.
+
+          A number dropping in the corner is not something you notice while
+          you are looking down the middle of the screen for the next target,
+          which is exactly when you are being shot at. Red closing in from the
+          edges is in your peripheral vision whether you look at it or not —
+          and it stays faintly on once the bar is nearly empty, so "nearly
+          dead" is a state you can feel rather than a figure you have to check.
+        */}
+        {live && (s.hurt > 0 || s.health <= 34) && (
+          <div
+            className="arc-damage"
+            aria-hidden="true"
+            style={{ opacity: Math.max(s.hurt, s.health <= 34 ? 0.3 : 0) }}
+          />
+        )}
+
+        {/*
           The hit marker, at the centre of the view where the shot went. Keyed
           by the hit counter so the animation restarts on every hit rather
           than playing once and sitting still through a run of them.

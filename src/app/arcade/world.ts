@@ -34,6 +34,8 @@ export interface Snapshot {
   /** Bumped on every hit, so the marker can flash without a callback. */
   mark: number;
   markKill: boolean;
+  /** How much of the flinch is left, 0..1, for the damage vignette. */
+  hurt: number;
 }
 
 export const ROUND_MS = 60_000;
@@ -71,6 +73,8 @@ interface Arrow {
 const LANES = [-12, -25, -38];
 /** How near an arrow has to pass to count. Generous: this is an arcade. */
 const HIT_RADIUS = 2.6;
+/** How long the flinch lasts, and the window in which nothing else can land. */
+const HURT_TIME = 0.7;
 
 export class World {
   private renderer: T.WebGLRenderer;
@@ -155,6 +159,7 @@ export class World {
       over: this.over,
       mark: this.mark,
       markKill: this.markKill,
+      hurt: Math.max(0, Math.min(1, this.hurt / HURT_TIME)),
     };
   }
 
@@ -842,7 +847,7 @@ export class World {
           this.health = Math.max(0, this.health - 18);
           this.combo = 0;
           this.points = Math.max(0, this.points - 250);
-          this.hurt = 0.7;
+          this.hurt = HURT_TIME;
           this.sfx?.hurt();
           if (this.health <= 0) this.lives = 0;
           this.onChange(this.snapshot());

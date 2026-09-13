@@ -2078,3 +2078,22 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
   22% { opacity: 1; transform: rotate(45deg) scale(1.1); }
   100% { opacity: 0; transform: rotate(45deg) scale(1.35); }
 }
+
+/* Taking an arrow: red closing in from the edges.
+   An inset radial gradient, transparent well past the middle so it never
+   obscures the target you are shooting at — the whole point is that it reads
+   in peripheral vision without taking the centre of the screen away. */
+.arc-damage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    rgba(190, 20, 30, 0) 42%,
+    rgba(190, 20, 30, 0.32) 74%,
+    rgba(150, 8, 18, 0.72) 100%
+  );
+  /* Snap on, fade off: a hit should arrive, not swell. */
+  transition: opacity 260ms ease-out;
+}
