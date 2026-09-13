@@ -28,6 +28,8 @@ export default function ArcadePage() {
   const sfxRef = useRef<Sfx | null>(null);
   /** Mirrors the game's scope state, so the overlay can follow it. */
   const [scoped, setScoped] = useState(false);
+  /** The hit marker: which hit it belongs to, and whether it was a red one. */
+  const [mark, setMark] = useState<{ n: number; kill: boolean } | null>(null);
 
   const [stocks, setStocks] = useState<Stock[] | null>(null);
   const [s, setS] = useState<Snapshot | null>(null);
@@ -144,6 +146,21 @@ export default function ArcadePage() {
     },
     [],
   );
+
+  /*
+   * Flash the hit marker.
+   *
+   * The game bumps a counter on every hit rather than calling out, so this is
+   * driven by the same snapshot as everything else. Keying the timer on the
+   * counter means two hits in quick succession restart the flash instead of
+   * the second one being swallowed by the first one's timeout.
+   */
+  useEffect(() => {
+    if (!s?.mark) return;
+    setMark({ n: s.mark, kill: s.markKill });
+    const id = setTimeout(() => setMark(null), 220);
+    return () => clearTimeout(id);
+  }, [s?.mark, s?.markKill]);
 
   /* Post the run once, when the round ends. */
   useEffect(() => {
@@ -300,6 +317,19 @@ export default function ArcadePage() {
           size instead of being redrawn every frame.
         */}
         {live && scoped && <div className="arc-scope" aria-hidden="true" />}
+
+        {/*
+          The hit marker, at the centre of the view where the shot went. Keyed
+          by the hit counter so the animation restarts on every hit rather
+          than playing once and sitting still through a run of them.
+        */}
+        {live && mark && (
+          <div
+            key={mark.n}
+            className={`arc-mark${mark.kill ? " kill" : ""}`}
+            aria-hidden="true"
+          />
+        )}
 
         {live && (
           <>

@@ -31,6 +31,9 @@ export interface Snapshot {
   combo: number;
   msLeft: number;
   over: boolean;
+  /** Bumped on every hit, so the marker can flash without a callback. */
+  mark: number;
+  markKill: boolean;
 }
 
 export const ROUND_MS = 60_000;
@@ -100,6 +103,8 @@ export class World {
   private bow: T.Group | null = null;
   private nock: T.Mesh | null = null;
   private drawn = 1;
+  private mark = 0;
+  private markKill = false;
   /**
    * Where on the screen the shot goes, in clip space.
    *
@@ -113,7 +118,15 @@ export class World {
   private cursor = new T.Vector2(0.5, 0.5);
   /** True until something tells us the browser gave us a locked pointer. */
   pointerAiming = true;
-  sfx: { loose(): void; thunk(): void; miss(): void; hurt(): void; chime(n: number): void; horn(): void } | null = null;
+  sfx: {
+    loose(): void;
+    thunk(): void;
+    miss(): void;
+    hurt(): void;
+    chime(n: number): void;
+    horn(): void;
+    marker(kill?: boolean): void;
+  } | null = null;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -140,6 +153,8 @@ export class World {
       combo: this.combo,
       msLeft: this.msLeft,
       over: this.over,
+      mark: this.mark,
+      markKill: this.markKill,
     };
   }
 
@@ -538,7 +553,19 @@ export class World {
 
   private spawn() {
     if (!this.stocks.length) return;
-    const stock = this.stocks[Math.floor(Math.random() * this.stocks.length)];
+    /*
+     * Half the range should be shooting back.
+     *
+     * Hostility is real: a butt is red because the share is down today. But
+     * on a green day that left almost nothing firing, and the game stopped
+     * being a game. So the draw is biased — still a real ticker that really
+     * is down, just picked for more often than chance would.
+     */
+    const down = this.stocks.filter((x) => x.changePct < 0);
+    const up = this.stocks.filter((x) => x.changePct >= 0);
+    const wantHostile = down.length > 0 && (up.length === 0 || Math.random() < 0.45);
+    const pool = wantHostile ? down : up.length ? up : this.stocks;
+    const stock = pool[Math.floor(Math.random() * pool.length)];
     const hostile = stock.changePct < 0;
     const lane = Math.floor(Math.random() * LANES.length);
     const z = LANES[lane];
@@ -595,8 +622,16 @@ export class World {
       vx: (Math.random() < 0.5 ? 1 : -1) * rand(1.6, 4.2),
       out: 0,
       rising: true,
-      dwell: rand(0.4, 1.1),
-      cooldown: rand(0.6, 1.3),
+      /*
+       * A red that never fires is scenery.
+       *
+       * The first shot was on a 0.6-1.3s timer while a butt stood up for only
+       * 0.4-1.1s, so most of them sank back into cover without ever loosing —
+       * which is why the reds seemed harmless. They now stand long enough to
+       * shoot, and shoot soon enough to matter.
+       */
+      dwell: hostile ? rand(1.3, 2.4) : rand(0.5, 1.2),
+      cooldown: hostile ? rand(0.25, 0.6) : rand(0.6, 1.3),
       dead: 0,
     });
   }
@@ -610,8 +645,25 @@ export class World {
   aimAt(fx: number, fy: number) {
     const x = Math.max(0, Math.min(1, fx));
     const y = Math.max(0, Math.min(1, fy));
-    this.aim.set(x * 2 - 1, -(y * 2 - 1));
+    const dx = x - this.cursor.x;
+    const dy = y - this.cursor.y;
     this.cursor.set(x, y);
+
+    /*
+     * Scoped, the cursor pans the view; unscoped, it *is* the aim.
+     *
+     * This is why shooting stopped working through the scope. Raising it
+     * swung the view to the cursor and put the shot back down the middle —
+     * and then the very next mouse movement called this, which reset the aim
+     * to wherever the cursor happened to be. So the reticle in the middle of
+     * the glass said one thing and the arrow went somewhere else entirely.
+     */
+    if (this.scoped) {
+      this.aim.set(0, 0);
+      this.turn(-dx * 0.9, -dy * 0.5);
+      return;
+    }
+    this.aim.set(x * 2 - 1, -(y * 2 - 1));
   }
 
   /**
@@ -650,12 +702,17 @@ export class World {
     this.pitch = Math.max(-0.32, Math.min(0.28, Math.asin(Math.max(-1, Math.min(1, d.y)))));
   }
 
-  /** Look. Yaw and pitch are clamped so the range stays in front of you. */
+  /** Turn the head by an amount in radians, clamped to keep the range ahead. */
+  private turn(dyaw: number, dpitch: number) {
+    this.yaw = Math.max(-0.85, Math.min(0.85, this.yaw + dyaw));
+    this.pitch = Math.max(-0.32, Math.min(0.28, this.pitch + dpitch));
+  }
+
+  /** Look, from a locked pointer's relative movement in pixels. */
   look(dx: number, dy: number) {
-    this.pointerAiming = false;
     this.aim.set(0, 0);
-    this.yaw = Math.max(-0.85, Math.min(0.85, this.yaw - dx * (this.scoped ? 0.0009 : 0.0022)));
-    this.pitch = Math.max(-0.32, Math.min(0.28, this.pitch - dy * (this.scoped ? 0.0009 : 0.0022)));
+    const k = this.scoped ? 0.0009 : 0.0022;
+    this.turn(-dx * k, -dy * k);
   }
 
   private step(dt: number) {
@@ -687,9 +744,19 @@ export class World {
 
     this.spawnIn -= dt;
     if (this.spawnIn <= 0) {
-      this.spawn();
+      /*
+       * Butts come up in volleys, not one at a time.
+       *
+       * Singles meant the range was almost always empty and there was never a
+       * choice to make: shoot the one thing that is up. Two or three at once —
+       * a red and a green together, or two reds on different lanes — is where
+       * the decision is, because the red one is shooting at you while you
+       * line up the green one that is worth more.
+       */
       const progress = 1 - this.msLeft / ROUND_MS;
-      this.spawnIn = rand(0.55, 1.5) * (1 - progress * 0.5);
+      const volley = 1 + (Math.random() < 0.35 + progress * 0.4 ? 1 : 0) + (Math.random() < progress * 0.45 ? 1 : 0);
+      for (let i = 0; i < volley; i++) this.spawn();
+      this.spawnIn = rand(0.5, 1.2) * (1 - progress * 0.45);
     }
 
     for (const b of this.butts) {
@@ -717,7 +784,7 @@ export class World {
       if (b.hostile && b.out > 0.6) {
         b.cooldown -= dt;
         if (b.cooldown <= 0) {
-          b.cooldown = rand(1.1, 2.0);
+          b.cooldown = rand(0.7, 1.3);
           this.loose(b);
         }
       }
@@ -798,9 +865,11 @@ export class World {
     const from = b.group.position.clone().add(new T.Vector3(0, 5.2, 0));
     const to = this.camera.position.clone();
     const vel = to.sub(from).normalize().multiplyScalar(rand(34, 42));
+    // Unlit and pale, because an arrow you cannot see coming is not a
+    // challenge, it is just damage arriving.
     const mesh = new T.Mesh(
-      new T.CylinderGeometry(0.06, 0.06, 1.6, 4),
-      new T.MeshLambertMaterial({ color: 0xe8d9a8, flatShading: true }),
+      new T.CylinderGeometry(0.09, 0.05, 2.2, 4),
+      new T.MeshBasicMaterial({ color: 0xffd9a0 }),
     );
     mesh.geometry.rotateX(Math.PI / 2);
     mesh.position.copy(from);
@@ -875,6 +944,9 @@ export class World {
     b.dead = 0.6;
     this.hits += 1;
     this.combo += 1;
+    this.mark += 1;
+    this.markKill = b.hostile;
+    this.sfx?.marker(b.hostile);
     const move = Math.abs(b.stock.changePct);
     const base = Math.round(40 + move * 60);
     this.points += Math.round((b.hostile ? base * 1.6 : base) * (1 + this.combo * 0.08));

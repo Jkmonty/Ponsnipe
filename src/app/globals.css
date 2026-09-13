@@ -2049,3 +2049,32 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
    crosshair drawn at the centre of the stage is a lie — it is not where the
    shot goes. Hide it and let the cursor be the reticle. */
 .arc-free::after { display: none; }
+
+/* The hit marker: four short strokes making an X around the reticle. Drawn
+   with gradients rather than four elements, and rotated 45 degrees so the
+   strokes sit diagonally off the crosshair instead of on top of it. */
+.arc-mark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  pointer-events: none;
+  z-index: 4;
+  transform: rotate(45deg);
+  --ink: rgba(255, 255, 255, 0.95);
+  background:
+    linear-gradient(var(--ink), var(--ink)) 50% 0 / 2px 10px no-repeat,
+    linear-gradient(var(--ink), var(--ink)) 50% 100% / 2px 10px no-repeat,
+    linear-gradient(var(--ink), var(--ink)) 0 50% / 10px 2px no-repeat,
+    linear-gradient(var(--ink), var(--ink)) 100% 50% / 10px 2px no-repeat;
+  animation: arc-mark 220ms ease-out forwards;
+}
+/* A red one is a kill, the same way every shooter does it. */
+.arc-mark.kill { --ink: rgba(255, 96, 96, 0.98); }
+@keyframes arc-mark {
+  0% { opacity: 0; transform: rotate(45deg) scale(0.55); }
+  22% { opacity: 1; transform: rotate(45deg) scale(1.1); }
+  100% { opacity: 0; transform: rotate(45deg) scale(1.35); }
+}
