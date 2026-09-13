@@ -8,8 +8,7 @@
  * sixty times a second has no business being React state.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import Logo from "../Logo";
+import Butt from "../Butt";
 import { World, ROUND_MS, type Snapshot, type Stock } from "./world";
 import { Sfx } from "./sfx";
 
@@ -226,17 +225,16 @@ export default function ArcadePage() {
   const live = s && !s.over;
 
   return (
-    <main className="arc">
-      <header className="arc-top">
-        <Link href="/" className="arc-home">
-          <Logo size={26} />
-          <span>Ponsnipe</span>
-        </Link>
-        <span className="arc-sub">
-          Sherwood Shooting Range — real tickers on the butts, and the ones down
-          today shoot back.
-        </span>
-      </header>
+    <main className="arc range">
+      <div className="range-head">
+        <Butt size={44} />
+        <div>
+          <h1 className="display">Sherwood Shooting Range</h1>
+          <p>Real tickers on the butts, and the ones down today shoot back.</p>
+        </div>
+      </div>
+
+      <div className="range-grid">
 
       {/*
         The centre reticle is only honest in two of the three states: locked,
@@ -363,7 +361,7 @@ export default function ArcadePage() {
         )}
       </div>
 
-      <section className="arc-board">
+      <section className="arc-board" id="board">
         <h2>This week</h2>
         {board.length === 0 ? (
           <p className="arc-empty">Nobody has posted a score yet.</p>
@@ -379,6 +377,7 @@ export default function ArcadePage() {
           </ol>
         )}
       </section>
+      </div>
     </main>
   );
 }

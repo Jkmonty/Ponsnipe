@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import Logo from "../../Logo";
+import Logo from "@/app/Logo";
 import { Sfx } from "../sfx";
 import {
   LOOSES,
@@ -102,7 +102,7 @@ export default function SoundBench() {
   return (
     <main className="bench">
       <header className="bench-top">
-        <Link href="/arcade" className="bench-home">
+        <Link href="/range" className="bench-home">
           <Logo size={26} />
           <span>Sherwood Shooting Range</span>
         </Link>
@@ -213,7 +213,7 @@ export default function SoundBench() {
       </section>
 
       <section className="bench-row">
-        <Link href="/arcade" className="btn btn-primary btn-lg">
+        <Link href="/range" className="btn btn-primary btn-lg">
           Back to the range
         </Link>
       </section>
