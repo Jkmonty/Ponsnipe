@@ -31,3 +31,6 @@ next-env.d.ts
 # permission grants for one machine, and this repo is meant to be published.
 .claude/settings.local.json
 .claude/launch.json
+
+# brainstorming mockups (superpowers visual companion)
+.superpowers/
