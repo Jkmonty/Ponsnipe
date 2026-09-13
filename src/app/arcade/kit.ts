@@ -99,7 +99,7 @@ export const MARKERS: Variant<[boolean]>[] = [
   {
     id: "tight",
     label: "Tight",
-    note: "3.0kHz, three partials, short. Bright and dry — the default.",
+    note: "3.0kHz, three partials, short. Bright and dry, with a little ring.",
     build: (kill) => [
       ...tick(0, 3000, 0.3, 0.085, PARTIALS_METAL, 0.5),
       ...(kill ? tick(0.055, 2100, 0.26, 0.085, PARTIALS_METAL, 0.5) : []),
@@ -126,7 +126,7 @@ export const MARKERS: Variant<[boolean]>[] = [
   {
     id: "clack",
     label: "Clack",
-    note: "Mostly transient, barely any tone. A hard clack rather than a ring.",
+    note: "Mostly transient, barely any tone. A hard clack rather than a ring — the default.",
     build: (kill) => [
       ...tick(0, 2400, 0.26, 0.028, [[1, 1], [1.61, 0.4]], 1.3),
       ...(kill ? tick(0.045, 1700, 0.24, 0.028, [[1, 1], [1.61, 0.4]], 1.3) : []),
@@ -215,7 +215,16 @@ export interface Picks {
   thunk: number;
 }
 
-export const DEFAULT_PICKS: Picks = { marker: 0, loose: 0, thunk: 0 };
+/**
+ * Chosen by ear on the bench at /arcade/sounds: clack, snap, body.
+ *
+ * The marker is the shortest and driest of the four — 15ms, almost entirely
+ * transient, barely any tone under it. Which is the right answer for a sound
+ * that fires at the same instant as the arrow landing: the less of it there
+ * is, the more clearly it reads as a separate event rather than part of the
+ * thud.
+ */
+export const DEFAULT_PICKS: Picks = { marker: 3, loose: 0, thunk: 0 };
 
 export const PICKS_KEY = "ponsnipe.arcade.sfx.v1";
 
