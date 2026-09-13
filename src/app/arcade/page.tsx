@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Logo from "../Logo";
 import { World, ROUND_MS, type Snapshot, type Stock } from "./world";
+import { Sfx } from "./sfx";
 
 interface BoardRow {
   wallet: string;
@@ -24,6 +25,9 @@ export default function ArcadePage() {
   const holder = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<World | null>(null);
+  const sfxRef = useRef<Sfx | null>(null);
+  /** Mirrors the game's scope state, so the overlay can follow it. */
+  const [scoped, setScoped] = useState(false);
 
   const [stocks, setStocks] = useState<Stock[] | null>(null);
   const [s, setS] = useState<Snapshot | null>(null);
@@ -77,8 +81,13 @@ export default function ArcadePage() {
     gameRef.current?.stop();
     setPosted(null);
     setLocked(true);
+    // Audio can only start from a gesture, and this is one.
+    sfxRef.current ??= new Sfx();
+    sfxRef.current.resume();
     const g = new World(cv, stocks, setS);
+    g.sfx = sfxRef.current;
     gameRef.current = g;
+    setScoped(false);
     setS(null);
     g.start();
     /*
@@ -98,7 +107,13 @@ export default function ArcadePage() {
     }
   };
 
-  useEffect(() => () => gameRef.current?.stop(), []);
+  useEffect(
+    () => () => {
+      gameRef.current?.stop();
+      sfxRef.current?.close();
+    },
+    [],
+  );
 
   /* Post the run once, when the round ends. */
   useEffect(() => {
@@ -163,7 +178,8 @@ export default function ArcadePage() {
           <span>Ponsnipe</span>
         </Link>
         <span className="arc-sub">
-          Sherwood. Real tickers on the butts — the ones down today shoot back.
+          Sherwood Shooting Range — real tickers on the butts, and the ones down
+          today shoot back.
         </span>
       </header>
 
@@ -182,7 +198,10 @@ export default function ArcadePage() {
             // scope does and what anybody who has played one expects.
             e.preventDefault();
             const g = gameRef.current;
-            if (g) g.scoped = !g.scoped;
+            if (g) {
+              g.scoped = !g.scoped;
+              setScoped(g.scoped);
+            }
           }}
         />
 
@@ -206,11 +225,11 @@ export default function ArcadePage() {
               </>
             ) : (
               <>
-                <h1>The greenwood</h1>
+                <h1>Sherwood Shooting Range</h1>
                 <p>
-                  Move the mouse to look, click to loose, right-click for the scope.
-                  Green butts are shares up today and worth points. Red ones are down,
-                  and they shoot back.
+                  Move to look, click to loose, right-click to raise the scope.
+                  Green butts are shares up today and worth points. Red ones are down
+                  on the day, and they shoot back — three arrows and you are finished.
                 </p>
                 <button className="btn btn-primary btn-lg" onClick={play}>
                   Start
@@ -220,13 +239,28 @@ export default function ArcadePage() {
           </div>
         )}
 
+        {/*
+          The scope, drawn over the canvas rather than inside it.
+          
+          The three-dimensional part of a scope is the narrower field of view,
+          which the camera already does. What is left is the glass: everything
+          outside the circle blacked out, a ring, and crosshairs. That is a
+          border and two gradients, and doing it in CSS keeps it crisp at any
+          size instead of being redrawn every frame.
+        */}
+        {live && scoped && <div className="arc-scope" aria-hidden="true" />}
+
         {live && (
-          <div className="arc-hud">
-            <span className="arc-score">{s.points.toLocaleString()}</span>
-            <span className="arc-lives">{"●".repeat(Math.max(0, s.lives))}</span>
-            {s.combo > 1 && <span className="arc-combo">×{s.combo}</span>}
-            <span className="arc-time">{Math.ceil(s.msLeft / 1000)}s</span>
-          </div>
+          <>
+            <div className="arc-hud">
+              <span className="arc-score">{s.points.toLocaleString()}</span>
+              {s.combo > 1 && <span className="arc-combo">×{s.combo}</span>}
+              <span className="arc-time">{Math.ceil(s.msLeft / 1000)}s</span>
+            </div>
+            <div className="arc-health" aria-label={`Health ${s.health}%`}>
+              <i style={{ width: `${Math.max(0, Math.min(100, s.health))}%` }} />
+            </div>
+          </>
         )}
       </div>
 

@@ -1975,3 +1975,72 @@ textarea.input { height: auto; padding: var(--sp-3); resize: vertical; line-heig
     linear-gradient(var(--t1), var(--t1)) 100% 50% / 8px 1px no-repeat;
   opacity: 0.75;
 }
+
+/* The scope glass.
+
+   The circle is one element sized off the stage's own height, and the darkness
+   outside it is that element's box-shadow spread far enough to cover the rest.
+   That keeps the mask exactly concentric with the circle at any stage size,
+   which a radial-gradient in viewport units does not. */
+.arc-scope {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 2;
+}
+.arc-scope::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  height: 86%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 3px solid rgba(197, 160, 74, 0.55);
+  box-shadow:
+    0 0 0 9999px rgba(6, 7, 10, 0.97),
+    inset 0 0 70px rgba(0, 0, 0, 0.8);
+}
+/* The hairlines, stopping short of the middle so the reticle still reads. */
+.arc-scope::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(var(--hair), var(--hair)) 50% 0 / 1px 42% no-repeat,
+    linear-gradient(var(--hair), var(--hair)) 50% 100% / 1px 42% no-repeat,
+    linear-gradient(var(--hair), var(--hair)) 0 50% / 42% 1px no-repeat,
+    linear-gradient(var(--hair), var(--hair)) 100% 50% / 42% 1px no-repeat;
+  --hair: rgba(226, 232, 240, 0.45);
+}
+
+/* Health, as a bar rather than a count of lives — an arrow takes a third of
+   it, so a bar says how close the next one is to finishing you. */
+.arc-health {
+  position: absolute;
+  left: var(--sp-3);
+  bottom: var(--sp-3);
+  z-index: 3;
+  width: 220px;
+  max-width: 45%;
+  height: 9px;
+  border: 1px solid var(--line-1);
+  border-radius: 99px;
+  background: rgba(6, 7, 10, 0.6);
+  overflow: hidden;
+  pointer-events: none;
+}
+.arc-health i {
+  display: block;
+  height: 100%;
+  /* The gradient is pinned to the full width of the track, not to the fill, so
+     a draining bar walks back down it: green at full, gold, then red when one
+     more arrow finishes you. */
+  background: linear-gradient(90deg, var(--down), var(--gold) 55%, var(--lime));
+  background-size: 220px 100%;
+  background-position: left center;
+  background-repeat: no-repeat;
+  transition: width 0.18s ease-out;
+}

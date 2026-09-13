@@ -23,6 +23,8 @@ export interface Stock {
 
 export interface Snapshot {
   points: number;
+  /** 0-100. A bar reads as a state you are in; three dots read as a counter. */
+  health: number;
   lives: number;
   hits: number;
   shots: number;
@@ -63,7 +65,9 @@ interface Arrow {
 }
 
 /** Where the three rows of cover sit, in world units away from the camera. */
-const LANES = [-22, -34, -48];
+const LANES = [-14, -28, -44];
+/** How near an arrow has to pass to count. Generous: this is an arcade. */
+const HIT_RADIUS = 2.6;
 
 export class World {
   private renderer: T.WebGLRenderer;
@@ -81,6 +85,7 @@ export class World {
   private pitch = 0;
 
   points = 0;
+  health = 100;
   lives = START_LIVES;
   hits = 0;
   shots = 0;
@@ -88,6 +93,13 @@ export class World {
   msLeft = ROUND_MS;
   over = false;
   scoped = false;
+  /** Seconds of red flash left after taking an arrow. */
+  hurt = 0;
+  /** The bow in your hands, and how far through nocking the next arrow it is. */
+  private bow: T.Group | null = null;
+  private nock: T.Mesh | null = null;
+  private drawn = 1;
+  sfx: { loose(): void; thunk(): void; miss(): void; hurt(): void; chime(n: number): void; horn(): void } | null = null;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -97,7 +109,9 @@ export class World {
     this.renderer = new T.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     this.camera = new T.PerspectiveCamera(FOV_WIDE, 1, 0.1, 400);
-    this.camera.position.set(0, 3.2, 6);
+    // Back from the first hedge, so there is ground between you and the
+    // nearest butt and the range reads as a range rather than a wall.
+    this.camera.position.set(0, 3.6, 20);
     this.buildWorld();
     this.resize();
   }
@@ -105,6 +119,7 @@ export class World {
   private snapshot(): Snapshot {
     return {
       points: this.points,
+      health: this.health,
       lives: this.lives,
       hits: this.hits,
       shots: this.shots,
@@ -146,11 +161,194 @@ export class World {
 
     for (const z of LANES) this.hedge(z);
     for (let i = 0; i < 90; i++) {
-      this.tree(rand(-90, 90), rand(-140, -8));
+      this.tree(rand(-90, 90), rand(-150, -8));
     }
     for (let i = 0; i < 40; i++) {
-      this.rock(rand(-70, 70), rand(-90, -6));
+      this.rock(rand(-70, 70), rand(-95, -6));
     }
+
+    /*
+     * The things that make it a range in Sherwood rather than a wood.
+     *
+     * A shooting range is a made place: someone put the butts there, stacked
+     * the straw, hung the pennants and lit a fire. Without them it is just
+     * trees with targets in, which is what the first pass looked like.
+     */
+    this.palisade(-58);
+    for (let i = 0; i < 14; i++) this.bale(rand(-40, 40), rand(-46, -10));
+    for (const x of [-24, -8, 8, 24]) this.pennant(x, -52);
+    this.campfire(-16, 8);
+    this.campfire(19, 4);
+
+    this.oak(-36, -22);
+    this.oak(34, -30);
+    this.tower(-62, -132);
+    this.buildBow();
+  }
+
+  /**
+   * A great oak, the size the Major Oak actually is.
+   *
+   * The ordinary trees are cones on sticks and read as woodland. One tree that
+   * dwarfs them, with a trunk you could hide behind and boughs that spread
+   * rather than point, is the difference between a forest and *that* forest.
+   */
+  private oak(x: number, z: number) {
+    const bark = new T.MeshLambertMaterial({ color: 0x4a3826, flatShading: true });
+    const leaf = new T.MeshLambertMaterial({ color: 0x2c5233, flatShading: true });
+    const trunk = new T.Mesh(new T.CylinderGeometry(1.6, 2.8, 11, 7), bark);
+    trunk.position.set(x, 5.5, z);
+    this.scene.add(trunk);
+    // Boughs out and up, each carrying its own mass of leaves.
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + rand(-0.3, 0.3);
+      const len = rand(5, 8);
+      const bough = new T.Mesh(new T.CylinderGeometry(0.35, 0.8, len, 5), bark);
+      bough.position.set(x + Math.cos(a) * len * 0.35, 10 + rand(0, 2), z + Math.sin(a) * len * 0.35);
+      bough.rotation.set(Math.sin(a) * 0.8, 0, -Math.cos(a) * 0.8);
+      this.scene.add(bough);
+      const crown = new T.Mesh(new T.IcosahedronGeometry(rand(4, 5.6), 0), leaf);
+      crown.position.set(x + Math.cos(a) * len * 0.8, 12.5 + rand(0, 2.5), z + Math.sin(a) * len * 0.8);
+      this.scene.add(crown);
+    }
+    const top = new T.Mesh(new T.IcosahedronGeometry(6, 0), leaf);
+    top.position.set(x, 16, z);
+    this.scene.add(top);
+  }
+
+  /**
+   * Nottingham, far enough off to be a shape in the fog.
+   *
+   * It never gets close enough to need detail, and it gives the eye somewhere
+   * to land past the palisade — a horizon with something on it, rather than a
+   * colour that stops.
+   */
+  private tower(x: number, z: number) {
+    const stone = new T.MeshLambertMaterial({ color: 0x2a3b34, flatShading: true });
+    for (const [dx, h, r] of [
+      [0, 34, 5],
+      [-11, 24, 4],
+      [12, 27, 4.5],
+    ] as const) {
+      const keep = new T.Mesh(new T.CylinderGeometry(r, r * 1.15, h, 8), stone);
+      keep.position.set(x + dx, h / 2, z);
+      this.scene.add(keep);
+      const cap = new T.Mesh(new T.ConeGeometry(r * 1.2, r * 1.4, 8), stone);
+      cap.position.set(x + dx, h + r * 0.7, z);
+      this.scene.add(cap);
+    }
+    const wall = new T.Mesh(new T.BoxGeometry(46, 14, 4), stone);
+    wall.position.set(x, 7, z + 3);
+    this.scene.add(wall);
+  }
+
+  /**
+   * The longbow, in your hands.
+   *
+   * Nothing else says which century this is as immediately as seeing the bow
+   * you are shooting. It hangs off the camera rather than the scene, so it
+   * stays put in the corner of the view however you turn — the standard way a
+   * first-person weapon is held, and far cheaper than animating an arm.
+   *
+   * Children of a camera only render if the camera is itself in the scene, so
+   * it is added here.
+   */
+  private buildBow() {
+    const wood = new T.MeshLambertMaterial({ color: 0x6b4a2a, flatShading: true });
+    const g = new T.Group();
+
+    // A yew stave: most of a circle is too round, a shallow arc is a longbow.
+    const stave = new T.Mesh(new T.TorusGeometry(0.52, 0.028, 5, 20, Math.PI * 1.1), wood);
+    stave.rotation.z = Math.PI * 0.45;
+    g.add(stave);
+    const grip = new T.Mesh(new T.CylinderGeometry(0.045, 0.045, 0.22, 6), wood);
+    grip.position.set(-0.5, 0, 0);
+    grip.rotation.z = Math.PI / 2;
+    g.add(grip);
+    const string = new T.Mesh(
+      new T.CylinderGeometry(0.006, 0.006, 0.98, 3),
+      new T.MeshBasicMaterial({ color: 0xd9d2bc }),
+    );
+    string.position.set(-0.36, 0, 0);
+    g.add(string);
+
+    const shaft = new T.Mesh(
+      new T.CylinderGeometry(0.018, 0.018, 0.95, 4),
+      new T.MeshLambertMaterial({ color: 0xe8d9a8, flatShading: true }),
+    );
+    shaft.geometry.rotateZ(Math.PI / 2);
+    shaft.position.set(-0.1, 0.02, 0);
+    g.add(shaft);
+    this.nock = shaft;
+
+    // Low and to the right, angled across the view the way a held bow sits.
+    g.position.set(0.62, -0.42, -1.35);
+    g.rotation.set(0.08, -0.5, 0.12);
+    this.bow = g;
+    this.camera.add(g);
+    this.scene.add(this.camera);
+  }
+
+  /** A run of sharpened stakes along the far edge, closing the range in. */
+  private palisade(z: number) {
+    const mat = new T.MeshLambertMaterial({ color: 0x4a3a28, flatShading: true });
+    for (let x = -70; x < 70; x += 1.9) {
+      const h = rand(5.5, 7);
+      const post = new T.Mesh(new T.CylinderGeometry(0.45, 0.55, h, 5), mat);
+      post.position.set(x, h / 2, z + rand(-0.3, 0.3));
+      this.scene.add(post);
+      const tip = new T.Mesh(new T.ConeGeometry(0.5, 1.1, 5), mat);
+      tip.position.set(post.position.x, h + 0.5, post.position.z);
+      this.scene.add(tip);
+    }
+  }
+
+  /** Straw bales, the thing a real butt is actually made of. */
+  private bale(x: number, z: number) {
+    const m = new T.Mesh(
+      new T.BoxGeometry(rand(2.4, 3.4), rand(1.4, 2), rand(1.6, 2.2)),
+      new T.MeshLambertMaterial({ color: 0xb8a06a, flatShading: true }),
+    );
+    m.position.set(x, 0.9, z);
+    m.rotation.y = rand(-0.4, 0.4);
+    this.scene.add(m);
+  }
+
+  /** A pennant on a pole. Lincoln green, because of course. */
+  private pennant(x: number, z: number) {
+    const pole = new T.Mesh(
+      new T.CylinderGeometry(0.14, 0.16, 11, 5),
+      new T.MeshLambertMaterial({ color: 0x5a4630, flatShading: true }),
+    );
+    pole.position.set(x, 5.5, z);
+    this.scene.add(pole);
+    const flag = new T.Mesh(
+      new T.PlaneGeometry(3.2, 1.5),
+      new T.MeshLambertMaterial({ color: 0x2e7d4f, side: T.DoubleSide, flatShading: true }),
+    );
+    flag.position.set(x + 1.7, 9.6, z);
+    this.scene.add(flag);
+  }
+
+  /** A camp fire, for the warm light a green wood otherwise lacks. */
+  private campfire(x: number, z: number) {
+    const ring = new T.Mesh(
+      new T.TorusGeometry(1.5, 0.32, 5, 9),
+      new T.MeshLambertMaterial({ color: 0x4a4f46, flatShading: true }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(x, 0.25, z);
+    this.scene.add(ring);
+    const flame = new T.Mesh(
+      new T.ConeGeometry(0.9, 2.2, 5),
+      new T.MeshBasicMaterial({ color: 0xffa338 }),
+    );
+    flame.position.set(x, 1.2, z);
+    this.scene.add(flame);
+    // A point light rather than a decal, so it actually reaches the ground.
+    const l = new T.PointLight(0xff9a3c, 60, 26, 2);
+    l.position.set(x, 2.2, z);
+    this.scene.add(l);
   }
 
   /** A run of low bushes the butts rise from behind. */
@@ -239,14 +437,19 @@ export class World {
     const ringColour = hostile ? "#ff5d5d" : "#7ae089";
     // The butt: a straw roundel on a post, facing the shooter.
     const face = new T.Mesh(
-      new T.CircleGeometry(1.9, 18),
-      new T.MeshLambertMaterial({ map: this.label(stock.symbol, ringColour), flatShading: true }),
+      new T.CircleGeometry(2.6, 20),
+      new T.MeshLambertMaterial({
+        map: this.label(stock.symbol, ringColour),
+        // Both sides, so a butt that spawns turned slightly away is still a
+        // target rather than an invisible one.
+        side: T.DoubleSide,
+      }),
     );
     face.position.y = 3.4;
     group.add(face);
 
     const rim = new T.Mesh(
-      new T.TorusGeometry(1.95, 0.16, 6, 20),
+      new T.TorusGeometry(2.65, 0.2, 6, 22),
       new T.MeshLambertMaterial({ color: new T.Color(ringColour), flatShading: true }),
     );
     rim.position.y = 3.4;
@@ -298,10 +501,27 @@ export class World {
 
   private step(dt: number) {
     if (this.over) return;
+    if (this.hurt > 0) this.hurt = Math.max(0, this.hurt - dt);
+
+    /*
+     * Nocking the next arrow.
+     *
+     * `drawn` runs 0 → 1 after each shot. The bow kicks back and the arrow is
+     * gone at the start of it and back on the string by the end, which is the
+     * only thing telling you the shot registered when it misses everything.
+     */
+    if (this.drawn < 1) this.drawn = Math.min(1, this.drawn + dt * 2.4);
+    if (this.bow) {
+      this.bow.visible = !this.scoped;
+      const kick = (1 - this.drawn) * (1 - this.drawn);
+      this.bow.position.set(0.62 + kick * 0.12, -0.42 - kick * 0.06, -1.35 + kick * 0.18);
+      if (this.nock) this.nock.visible = this.drawn > 0.55;
+    }
     this.msLeft -= dt * 1000;
     if (this.msLeft <= 0 || this.lives <= 0) {
       this.msLeft = Math.max(0, this.msLeft);
       this.over = true;
+      this.sfx?.horn();
       this.onChange(this.snapshot());
       return;
     }
@@ -362,19 +582,42 @@ export class World {
     });
 
     for (const a of this.arrows) {
+      const before = a.mesh.position.clone();
       a.mesh.position.addScaledVector(a.vel, dt);
       a.mesh.lookAt(a.mesh.position.clone().add(a.vel));
       a.life -= dt;
-      // Past the camera plane and close to the eye is a hit.
-      if (a.mesh.position.z > this.camera.position.z - 0.8) {
-        const miss = a.mesh.position.distanceTo(this.camera.position);
+
+      /*
+       * Closest approach along the step, not the distance at the end of it.
+       *
+       * An arrow moves half a metre a frame near the end of its flight, so
+       * testing only where it finished lets it tunnel straight past your head
+       * between two frames and count as a miss. That is why nothing was ever
+       * hitting: the shots were arriving, they were just never measured at
+       * the moment they were close.
+       */
+      const seg = a.mesh.position.clone().sub(before);
+      const toEye = this.camera.position.clone().sub(before);
+      const len2 = seg.lengthSq() || 1;
+      const t = Math.max(0, Math.min(1, toEye.dot(seg) / len2));
+      const near = before.clone().addScaledVector(seg, t).distanceTo(this.camera.position);
+
+      if (near < HIT_RADIUS) {
         a.life = 0;
-        if (miss < 2.2) {
-          this.lives -= 1;
-          this.combo = 0;
-          this.points = Math.max(0, this.points - 250);
-          this.onChange(this.snapshot());
+        this.health = Math.max(0, this.health - 34);
+        this.combo = 0;
+        this.points = Math.max(0, this.points - 250);
+        this.hurt = 0.5;
+        this.sfx?.hurt();
+        if (this.health <= 0) {
+          this.lives = 0;
         }
+        this.onChange(this.snapshot());
+      } else if (a.mesh.position.z > this.camera.position.z + 3) {
+        // Gone past and behind: it missed, and saying so is what makes a near
+        // miss feel like one.
+        a.life = 0;
+        this.sfx?.miss();
       }
     }
     this.arrows = this.arrows.filter((a) => {
@@ -401,15 +644,38 @@ export class World {
   /** Fire down the centre of the view. */
   fire(): boolean {
     if (this.over) return false;
+    /*
+     * One arrow at a time.
+     *
+     * A longbow is not a machine gun, and without this the honest answer to
+     * every target is to click as fast as the mouse allows. Making you wait
+     * for the nock is what turns aiming into a decision.
+     */
+    if (this.drawn < 0.5) return false;
     this.shots += 1;
+    /*
+     * Matrices first.
+     *
+     * Rotation is written in the render loop, and a shot fired between frames
+     * raycasts through whatever the camera's world matrix last said — which is
+     * where you were looking a frame ago, not where the reticle is. That is
+     * why shooting appeared not to work: the ray was real and pointed slightly
+     * wrong, so it missed everything that looked dead centre.
+     */
+    this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+    this.camera.updateMatrixWorld(true);
     this.raycaster.setFromCamera(new T.Vector2(0, 0), this.camera);
     const faces = this.butts.filter((b) => b.dead <= 0 && b.out > 0.15).map((b) => b.face);
+    this.drawn = 0;
+    this.sfx?.loose();
     const hit = this.raycaster.intersectObjects(faces, false)[0];
     if (!hit) {
       this.combo = 0;
       this.onChange(this.snapshot());
       return false;
     }
+    this.sfx?.thunk();
+    if (this.combo >= 1) this.sfx?.chime(this.combo);
     const b = this.butts.find((x) => x.face === hit.object)!;
     b.dead = 0.6;
     this.hits += 1;
