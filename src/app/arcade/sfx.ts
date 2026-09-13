@@ -27,6 +27,8 @@
  * should be three slightly different noises, and no amount of detuning one
  * recording does what three recordings do.
  */
+import { LOOSES, MARKERS, THUNKS, loadPicks, type Picks, type Spec } from "./kit";
+
 const KIT: Record<string, number> = {
   hurt: 3,
   miss: 2,
@@ -40,6 +42,13 @@ export class Sfx {
   private kit = new Map<string, AudioBuffer[]>();
   private loading = false;
   muted = false;
+  /**
+   * Which variant of each tunable sound to use.
+   *
+   * Set by the tuning page at /arcade/sounds and read back here, so a choice
+   * made there is heard in the next round rather than only on that page.
+   */
+  picks: Picks = loadPicks();
 
   /** Call from a click. Safe to call repeatedly. */
   resume() {
@@ -104,6 +113,26 @@ export class Sfx {
     src.connect(g).connect(this.bus);
     src.start(this.t + at);
     return true;
+  }
+
+  /**
+   * Play a spec: the layers of one sound, at one moment.
+   *
+   * This is the only path the tunable sounds take, which is what makes the
+   * tuning page trustworthy — it plays these same objects through this same
+   * method, so what is auditioned is what ships.
+   */
+  playSpec(spec: Spec, at = 0) {
+    if (!this.ctx || this.muted) return;
+    const t0 = this.t + at;
+    for (const l of spec) {
+      const when = t0 + (l.at ?? 0);
+      if (l.kind === "tone") {
+        this.tone(when, l.from, l.to ?? l.from, l.dur, l.gain, l.wave ?? "sine", l.attack ?? 0.006);
+      } else {
+        this.noise(when, l.dur, l.gain, l.from, l.to ?? l.from, l.filter ?? "bandpass", l.q ?? 1);
+      }
+    }
   }
 
   private get t(): number {
@@ -185,85 +214,28 @@ export class Sfx {
     return 1 + (Math.random() * 2 - 1) * spread;
   }
 
-  /**
-   * Loosing an arrow.
+  /*
+   * The three tunable sounds.
    *
-   * Four things happen at once and none of them is the same length: the
-   * string snaps, the stave thumps low and woody, the shaft scrapes off the
-   * rest, and the whole lot recedes as a falling hiss.
-   *
-   * The recorded take that used to sit under this was cloth, and cloth is
-   * what it sounded like. This is built instead, where the transient can be
-   * made as sharp as it needs to be — the snap is the sound; everything else
-   * is the body behind it.
+   * Each is a row in a table in kit.ts with several candidates, and each
+   * plays whichever candidate is currently chosen. The reasoning about what
+   * any of them is made of lives beside the numbers there, not here — here
+   * they are only a lookup.
    */
+
+  /** Loosing an arrow: the string, the stave and the shaft leaving. */
   loose() {
-    if (!this.ctx || this.muted) return;
-    const t = this.t;
-    const v = this.vary();
-    // The snap: brief, hard, high.
-    this.noise(t, 0.028, 0.42, 3200 * v, 1200, "bandpass", 0.9);
-    // The stave: the weight behind it.
-    this.tone(t, 168 * v, 62, 0.2, 0.3, "triangle", 0.002);
-    this.tone(t + 0.004, 402 * v, 210, 0.085, 0.11, "sine", 0.001);
-    // The shaft going away.
-    this.noise(t + 0.025, 0.26, 0.1, 3800, 900, "bandpass", 0.7);
+    this.playSpec(LOOSES[this.picks.loose].build());
   }
 
-  /** Arrow into a straw butt: a dull thud with a dry rattle over it. */
+  /** The arrow landing. Kept low and quiet, under the marker. */
   thunk() {
-    if (!this.ctx) return;
-    const t = this.t;
-    const v = this.vary(0.1);
-    /*
-     * Low and quiet, deliberately.
-     *
-     * This fires at the same instant as the hit marker, and the marker is
-     * the sound that has to land. Three effects stacking on one hit is how
-     * you get mush instead of a confirmation, so this keeps only the body —
-     * enough to feel the arrow arrive, nothing in the marker's band.
-     */
-    this.tone(t, 190 * v, 56, 0.11, 0.15, "triangle", 0.002);
-    this.noise(t, 0.07, 0.1, 700 * v, 220, "lowpass", 1.2);
+    this.playSpec(THUNKS[this.picks.thunk].build());
   }
 
-  /**
-   * The hit marker.
-   *
-   * The sound everyone knows from shooters is a very short, very dry,
-   * bright metallic tick — about fifty milliseconds, nearly all of its
-   * energy between two and six kilohertz, no tail at all. It carries over
-   * gunfire because it sits in a band nothing else occupies and is finished
-   * before anything can mask it.
-   *
-   * Three partials at inharmonic ratios are what make it read as metal
-   * rather than as a beep: struck metal does not ring in whole-number
-   * multiples, and a single sine at 3kHz sounds like a microwave. A tiny
-   * filtered-noise transient at the front supplies the strike itself.
-   *
-   * Built here rather than sampled. The original is Activision's and not
-   * ours to ship; this is the same species of sound, made from scratch.
-   */
+  /** The hit marker, and a second lower tick when it was a kill. */
   marker(kill = false) {
-    if (!this.ctx || this.muted) return;
-    const t = this.t;
-    const tick = (at: number, base: number, level: number) => {
-      // The strike.
-      this.noise(at, 0.012, level * 0.5, 5200, 3000, "highpass", 0.7);
-      // The body: three close, deliberately unrelated partials.
-      for (const [mult, g] of [
-        [1, 1],
-        [1.48, 0.55],
-        [1.97, 0.3],
-      ] as const) {
-        this.tone(at, base * mult, base * mult * 0.94, 0.085, level * g, "triangle", 0.001);
-      }
-    };
-
-    tick(t, 3000, 0.3);
-    // A kill is the same tick answered a little lower — recognisable as a
-    // kill without having to look away from where you are aiming.
-    if (kill) tick(t + 0.055, 2100, 0.26);
+    this.playSpec(MARKERS[this.picks.marker].build(kill));
   }
 
   /** A miss: the shaft going past into the trees. */
