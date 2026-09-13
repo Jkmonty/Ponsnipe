@@ -259,7 +259,7 @@ export class World {
 
     // A yew stave: most of a circle is too round, a shallow arc is a longbow.
     const stave = new T.Mesh(new T.TorusGeometry(0.52, 0.028, 5, 20, Math.PI * 1.1), wood);
-    stave.rotation.z = Math.PI * 0.45;
+    stave.rotation.z = -Math.PI * 0.05;
     g.add(stave);
     const grip = new T.Mesh(new T.CylinderGeometry(0.045, 0.045, 0.22, 6), wood);
     grip.position.set(-0.5, 0, 0);
@@ -281,9 +281,18 @@ export class World {
     g.add(shaft);
     this.nock = shaft;
 
-    // Low and to the right, angled across the view the way a held bow sits.
-    g.position.set(0.62, -0.42, -1.35);
-    g.rotation.set(0.08, -0.5, 0.12);
+    /*
+     * Where a bow actually is when you are holding it.
+     *
+     * The first version sat small and far off in the corner, which read as a
+     * prop lying in the scene rather than something in your hands. A held
+     * longbow is close enough to be out of focus, big enough to run off the
+     * bottom of the view, and canted rather than upright — you look past the
+     * stave, not over it.
+     */
+    g.scale.setScalar(1.9);
+    g.position.set(0.5, -0.72, -1.05);
+    g.rotation.set(0.12, -0.34, -0.22);
     this.bow = g;
     this.camera.add(g);
     this.scene.add(this.camera);
@@ -514,7 +523,7 @@ export class World {
     if (this.bow) {
       this.bow.visible = !this.scoped;
       const kick = (1 - this.drawn) * (1 - this.drawn);
-      this.bow.position.set(0.62 + kick * 0.12, -0.42 - kick * 0.06, -1.35 + kick * 0.18);
+      this.bow.position.set(0.5 + kick * 0.1, -0.72 - kick * 0.05, -1.05 + kick * 0.14);
       if (this.nock) this.nock.visible = this.drawn > 0.55;
     }
     this.msLeft -= dt * 1000;
@@ -668,15 +677,43 @@ export class World {
     const faces = this.butts.filter((b) => b.dead <= 0 && b.out > 0.15).map((b) => b.face);
     this.drawn = 0;
     this.sfx?.loose();
-    const hit = this.raycaster.intersectObjects(faces, false)[0];
-    if (!hit) {
+    let target = this.raycaster.intersectObjects(faces, false)[0]?.object as T.Mesh | undefined;
+
+    /*
+     * Aim assist, and why an arcade needs it.
+     *
+     * A raycast down the exact centre pixel is how a simulation decides a hit.
+     * It is far stricter than it looks: the reticle is 22 pixels across, a
+     * butt forty units away is barely wider, and a shot that visibly clipped
+     * the straw returns nothing. That reads as "shooting doesn't work" even
+     * though every shot was real.
+     *
+     * So if the ray misses, take the nearest face within a small angle of
+     * where you were looking. Every arcade shooter does this; the ones that
+     * feel accurate are the ones doing the most of it.
+     */
+    if (!target) {
+      const dir = this.raycaster.ray.direction;
+      let best = Math.cos(0.045); // ~2.6 degrees
+      for (const f of faces) {
+        const to = f.getWorldPosition(new T.Vector3()).sub(this.camera.position).normalize();
+        const dot = to.dot(dir);
+        if (dot > best) {
+          best = dot;
+          target = f;
+        }
+      }
+    }
+
+    if (!target) {
       this.combo = 0;
+      this.sfx?.miss();
       this.onChange(this.snapshot());
       return false;
     }
     this.sfx?.thunk();
     if (this.combo >= 1) this.sfx?.chime(this.combo);
-    const b = this.butts.find((x) => x.face === hit.object)!;
+    const b = this.butts.find((x) => x.face === target)!;
     b.dead = 0.6;
     this.hits += 1;
     this.combo += 1;

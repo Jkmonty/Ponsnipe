@@ -87,6 +87,16 @@ export default function ArcadePage() {
     const g = new World(cv, stocks, setS);
     g.sfx = sfxRef.current;
     gameRef.current = g;
+    /*
+     * A handle on the running game.
+     *
+     * The loop is driven by requestAnimationFrame, which a browser does not
+     * run while the page is not being painted — so a headless check can see
+     * the page but never a single frame of the game. With this, the round can
+     * be stepped and shot by hand from the console, which is the only way to
+     * test the thing that actually goes wrong: whether a shot registers.
+     */
+    (window as unknown as { __arcade?: World }).__arcade = g;
     setScoped(false);
     setS(null);
     g.start();
@@ -156,6 +166,14 @@ export default function ArcadePage() {
    * fallback steers towards wherever the cursor is instead, which keeps every
    * part of the range reachable.
    */
+  /** Raise or lower the scope, keeping the game and the overlay in step. */
+  const scope = (on: boolean) => {
+    const g = gameRef.current;
+    if (!g || g.scoped === on) return;
+    g.scoped = on;
+    setScoped(on);
+  };
+
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const g = gameRef.current;
     const cv = canvasRef.current;
@@ -189,20 +207,26 @@ export default function ArcadePage() {
           className="arc-canvas"
           onPointerMove={move}
           onPointerDown={(e) => {
-            if (e.button === 2) return;
+            /*
+             * Hold right to raise the scope, left to loose.
+             *
+             * This used to hang off `contextmenu`, which was the bug: once
+             * pointer lock is granted the browser stops dispatching that event
+             * entirely, so the scope silently did nothing for anyone whose
+             * browser granted the lock — which is everyone, on HTTPS. The
+             * button is read from pointerdown instead, which always arrives.
+             */
+            if (e.button === 2) {
+              scope(true);
+              return;
+            }
+            if (e.button !== 0) return;
             move(e);
             gameRef.current?.fire();
           }}
-          onContextMenu={(e) => {
-            // Right-click zooms rather than opening a menu, which is what a
-            // scope does and what anybody who has played one expects.
-            e.preventDefault();
-            const g = gameRef.current;
-            if (g) {
-              g.scoped = !g.scoped;
-              setScoped(g.scoped);
-            }
-          }}
+          onPointerUp={(e) => e.button === 2 && scope(false)}
+          onPointerLeave={() => scope(false)}
+          onContextMenu={(e) => e.preventDefault()}
         />
 
         {(!s || s.over) && (
@@ -227,7 +251,7 @@ export default function ArcadePage() {
               <>
                 <h1>Sherwood Shooting Range</h1>
                 <p>
-                  Move to look, click to loose, right-click to raise the scope.
+                  Move to look, click to loose, hold right to raise the scope.
                   Green butts are shares up today and worth points. Red ones are down
                   on the day, and they shoot back — three arrows and you are finished.
                 </p>
