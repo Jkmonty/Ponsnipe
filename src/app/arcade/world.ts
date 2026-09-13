@@ -944,7 +944,14 @@ export class World {
       return false;
     }
     this.sfx?.thunk();
-    if (this.combo >= 1) this.sfx?.chime(this.combo);
+    /*
+     * The chime marks a streak, not a hit.
+     *
+     * It used to sound on every single one, which put a third voice on top
+     * of the marker and the arrow landing and turned a confirmation into
+     * noise. Every fifth makes it mean something when it does arrive.
+     */
+    if (this.combo >= 5 && this.combo % 5 === 0) this.sfx?.chime(this.combo);
     const b = this.butts.find((x) => x.face === target)!;
     b.dead = 0.6;
     this.hits += 1;

@@ -28,11 +28,7 @@
  * recording does what three recordings do.
  */
 const KIT: Record<string, number> = {
-  loose: 2,
-  thunk: 3,
-  wood: 3,
   hurt: 3,
-  marker: 3,
   miss: 2,
 };
 
@@ -192,28 +188,26 @@ export class Sfx {
   /**
    * Loosing an arrow.
    *
-   * Three layers: the string snapping, the stave thumping low and woody, and
-   * the shaft hissing away off the rest a moment later.
+   * Four things happen at once and none of them is the same length: the
+   * string snaps, the stave thumps low and woody, the shaft scrapes off the
+   * rest, and the whole lot recedes as a falling hiss.
+   *
+   * The recorded take that used to sit under this was cloth, and cloth is
+   * what it sounded like. This is built instead, where the transient can be
+   * made as sharp as it needs to be — the snap is the sound; everything else
+   * is the body behind it.
    */
   loose() {
-    if (!this.ctx) return;
+    if (!this.ctx || this.muted) return;
     const t = this.t;
     const v = this.vary();
-    /*
-     * Recording plus synthesis, deliberately.
-     *
-     * The recorded take gives the string and the fletching — the fast, messy
-     * detail no oscillator gets right. What it has no way of carrying is the
-     * low thump of a stave the size of a person, so that stays synthesised
-     * underneath it. Neither half sounds like a bow alone.
-     */
-    const real = this.sample("loose", 0.75);
-    this.tone(t, 190 * v, 72, 0.17, real ? 0.13 : 0.22, "triangle", 0.003);
-    if (!real) {
-      this.noise(t, 0.05, 0.34, 2600 * v, 700, "bandpass", 0.8);
-      this.tone(t + 0.005, 460 * v, 300, 0.07, 0.08, "sine");
-      this.noise(t + 0.03, 0.22, 0.07, 4200, 1400, "highpass", 0.6);
-    }
+    // The snap: brief, hard, high.
+    this.noise(t, 0.028, 0.42, 3200 * v, 1200, "bandpass", 0.9);
+    // The stave: the weight behind it.
+    this.tone(t, 168 * v, 62, 0.2, 0.3, "triangle", 0.002);
+    this.tone(t + 0.004, 402 * v, 210, 0.085, 0.11, "sine", 0.001);
+    // The shaft going away.
+    this.noise(t + 0.025, 0.26, 0.1, 3800, 900, "bandpass", 0.7);
   }
 
   /** Arrow into a straw butt: a dull thud with a dry rattle over it. */
@@ -221,34 +215,55 @@ export class Sfx {
     if (!this.ctx) return;
     const t = this.t;
     const v = this.vary(0.1);
-    // Straw mostly, and the frame it is packed into now and then.
-    if (this.sample(Math.random() < 0.75 ? "thunk" : "wood", 0.9, 0.1)) return;
-    this.tone(t, 210 * v, 58, 0.13, 0.3, "triangle", 0.002);
-    this.noise(t, 0.09, 0.26, 1100 * v, 260, "bandpass", 1.4);
-    this.noise(t + 0.01, 0.14, 0.1, 3200, 900, "highpass", 0.7);
+    /*
+     * Low and quiet, deliberately.
+     *
+     * This fires at the same instant as the hit marker, and the marker is
+     * the sound that has to land. Three effects stacking on one hit is how
+     * you get mush instead of a confirmation, so this keeps only the body —
+     * enough to feel the arrow arrive, nothing in the marker's band.
+     */
+    this.tone(t, 190 * v, 56, 0.11, 0.15, "triangle", 0.002);
+    this.noise(t, 0.07, 0.1, 700 * v, 220, "lowpass", 1.2);
   }
 
   /**
    * The hit marker.
    *
-   * Two very short, very bright blips a few milliseconds apart. The reason
-   * this sound cuts through everything else in a shooter is that it sits in a
-   * band nothing else occupies and is over before anything can mask it. A
-   * kill drops the second blip instead of raising it, so the two are
-   * distinguishable without looking at the screen.
+   * The sound everyone knows from shooters is a very short, very dry,
+   * bright metallic tick — about fifty milliseconds, nearly all of its
+   * energy between two and six kilohertz, no tail at all. It carries over
+   * gunfire because it sits in a band nothing else occupies and is finished
+   * before anything can mask it.
+   *
+   * Three partials at inharmonic ratios are what make it read as metal
+   * rather than as a beep: struck metal does not ring in whole-number
+   * multiples, and a single sine at 3kHz sounds like a microwave. A tiny
+   * filtered-noise transient at the front supplies the strike itself.
+   *
+   * Built here rather than sampled. The original is Activision's and not
+   * ours to ship; this is the same species of sound, made from scratch.
    */
   marker(kill = false) {
-    if (!this.ctx) return;
+    if (!this.ctx || this.muted) return;
     const t = this.t;
-    // A light metal strike is the tick; a kill gets a second one just after,
-    // which is what turns it from a hit into an unmistakable kill.
-    if (this.sample("marker", kill ? 0.85 : 0.6, 0.12)) {
-      if (kill) this.sample("marker", 0.7, 0.12, 0.05);
-      return;
-    }
-    this.tone(t, 2400, 2300, 0.035, 0.2, "square", 0.001);
-    this.tone(t + 0.035, kill ? 1500 : 3100, kill ? 1400 : 3000, 0.045, 0.17, "square", 0.001);
-    this.noise(t, 0.03, 0.09, 6000, 4000, "highpass", 0.8);
+    const tick = (at: number, base: number, level: number) => {
+      // The strike.
+      this.noise(at, 0.012, level * 0.5, 5200, 3000, "highpass", 0.7);
+      // The body: three close, deliberately unrelated partials.
+      for (const [mult, g] of [
+        [1, 1],
+        [1.48, 0.55],
+        [1.97, 0.3],
+      ] as const) {
+        this.tone(at, base * mult, base * mult * 0.94, 0.085, level * g, "triangle", 0.001);
+      }
+    };
+
+    tick(t, 3000, 0.3);
+    // A kill is the same tick answered a little lower — recognisable as a
+    // kill without having to look away from where you are aiming.
+    if (kill) tick(t + 0.055, 2100, 0.26);
   }
 
   /** A miss: the shaft going past into the trees. */

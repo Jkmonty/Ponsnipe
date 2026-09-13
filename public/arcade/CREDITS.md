@@ -14,25 +14,31 @@ therefore a commercial work.
 
 ## Sound
 
-From Kenney's audio packs, both CC0 1.0 — https://kenney.nl/assets/impact-sounds
-and https://kenney.nl/assets/rpg-audio. Renamed by role, three takes of most
-things so the same waveform is never heard twice running.
+Two recorded sounds remain, both CC0 from Kenney's
+[Impact Sounds](https://kenney.nl/assets/impact-sounds) and
+[RPG Audio](https://kenney.nl/assets/rpg-audio) packs, renamed by role.
 
 | File | Original | Used for |
 |---|---|---|
-| `sfx/loose0-1.ogg` | RPG Audio `cloth1`, `cloth3` | bowstring and fletching on release |
-| `sfx/thunk0-2.ogg` | Impact `impactSoft_heavy_000-002` | arrow into a straw butt |
-| `sfx/wood0-2.ogg` | Impact `impactWood_medium_000-002` | arrow into the butt's frame |
 | `sfx/hurt0-2.ogg` | Impact `impactPunch_heavy_000-002` | taking an arrow |
-| `sfx/marker0-2.ogg` | Impact `impactMetal_light_000-002` | hit marker tick |
 | `sfx/miss0-1.ogg` | RPG Audio `knifeSlice`, `knifeSlice2` | a shaft going past into the trees |
 
-149 KB for the set, fetched only on `/arcade` and only once the player presses
-Start. The horn, the combo chime and the low body of the bow release are still
-synthesised in `src/app/arcade/sfx.ts` — a tuned sound that has to rise with a
-counter cannot be a fixed recording, and no small sample carries the thump of a
-stave the size of a person. Every recorded sound falls back to its synthesised
-version if the download fails.
+Three takes of the hit, so the same waveform is never heard twice running.
+Around 60 KB, fetched only on `/arcade` and only once Start is pressed, and
+every one falls back to a synthesised version if the download fails.
+
+Recorded takes for the bow release, the arrow landing and the hit marker were
+tried and dropped. The release take was cloth, and sounded like cloth. The
+marker wanted to be one specific sound — the short dry metallic tick every
+shooter uses — which is easier to build exactly than to find: about forty
+milliseconds, nearly all its energy near 4 kHz, three partials at deliberately
+inharmonic ratios so it reads as struck metal rather than as a beep. The
+original of that sound is Activision's and not ours to ship; this is the same
+species of sound, built from scratch in `src/app/arcade/sfx.ts`.
+
+The arrow landing is synthesised too, and deliberately low and quiet — it
+fires at the same instant as the marker, and three effects stacking on one hit
+is how a confirmation turns into mush.
 
 ## Everything else
 
