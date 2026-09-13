@@ -5,6 +5,7 @@ import { top, weekEnds, weekOf, type Score } from "@/lib/arcade";
 import { poolBalance, type PoolInfo } from "@/lib/pool";
 import { loadTargets, pickPins, type Pin } from "@/lib/targets";
 import Hero from "./Hero";
+import PaperSniper from "./PaperSniper";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,18 @@ export default async function Landing() {
   return (
     <main className="site-main">
       <Hero pins={pins} board={board} endsAt={weekEnds(week)} pool={pool} />
+
+      <section className="sect" id="paper">
+        <p className="lab sect-lab">Paper sniper</p>
+        <h2 className="display sect-h2">Eight real launches. Two seconds old each.</h2>
+        <p className="sect-sub">
+          Snipe or skip, with only what was knowable at the moment each one appeared. Then it
+          tells you what actually happened, because this index holds the answer.
+        </p>
+        <div className="site-paper">
+          <PaperSniper />
+        </div>
+      </section>
     </main>
   );
 }
