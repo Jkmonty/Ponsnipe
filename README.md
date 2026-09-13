@@ -104,6 +104,11 @@ npm run dev       # http://127.0.0.1:3000
 
 Then in the browser: **set up a wallet** → fund it → **Buy**.
 
+On a hosted instance (`PUBLIC_MODE=1`) the root is a landing page built around
+the paper sniper and the range, and the terminal is at `/terminal`. On a local
+install the root goes straight to the terminal, because there is nobody to
+introduce it to.
+
 The app starts in **DRY-RUN**: it does everything except sign transactions, and
 logs what it would have done. Leave it there until you have watched it decide
 for a while. The toggle in the header switches to live.
