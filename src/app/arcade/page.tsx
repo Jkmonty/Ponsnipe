@@ -117,6 +117,26 @@ export default function ArcadePage() {
     }
   };
 
+  /*
+   * Believe the browser, not the request.
+   *
+   * requestPointerLock can be refused, or silently never take effect, and the
+   * two aiming modes are completely different — one turns the view and shoots
+   * down the middle, the other leaves the view still and shoots through the
+   * cursor. Guessing wrong means every shot goes somewhere the player did not
+   * point, so the mode is read from pointerLockElement whenever it changes.
+   */
+  useEffect(() => {
+    const sync = () => {
+      const on = document.pointerLockElement === canvasRef.current;
+      setLocked(on);
+      const g = gameRef.current;
+      if (g) g.pointerAiming = !on;
+    };
+    document.addEventListener("pointerlockchange", sync);
+    return () => document.removeEventListener("pointerlockchange", sync);
+  }, []);
+
   useEffect(
     () => () => {
       gameRef.current?.stop();
@@ -170,8 +190,8 @@ export default function ArcadePage() {
   const scope = (on: boolean) => {
     const g = gameRef.current;
     if (!g || g.scoped === on) return;
-    g.scoped = on;
-    setScoped(on);
+    g.setScoped(on);
+    setScoped(g.scoped);
   };
 
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -201,7 +221,7 @@ export default function ArcadePage() {
         </span>
       </header>
 
-      <div className="arc-stage" ref={holder}>
+      <div className={`arc-stage${locked ? "" : " arc-free"}`} ref={holder}>
         <canvas
           ref={canvasRef}
           className="arc-canvas"

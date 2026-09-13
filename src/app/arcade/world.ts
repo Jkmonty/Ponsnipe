@@ -92,6 +92,7 @@ export class World {
   combo = 0;
   msLeft = ROUND_MS;
   over = false;
+  /** Read it, but set it through setScoped so the view can follow. */
   scoped = false;
   /** Seconds of red flash left after taking an arrow. */
   hurt = 0;
@@ -99,6 +100,19 @@ export class World {
   private bow: T.Group | null = null;
   private nock: T.Mesh | null = null;
   private drawn = 1;
+  /**
+   * Where on the screen the shot goes, in clip space.
+   *
+   * Centre under pointer lock, because the view turns and the reticle does
+   * not. The cursor's own position when the lock was refused — which is the
+   * bug this exists to fix: the shot used to go down the middle of the screen
+   * whatever the crosshair was sitting on, so every carefully aimed shot
+   * missed and the game looked like it was ignoring the mouse.
+   */
+  private aim = new T.Vector2(0, 0);
+  private cursor = new T.Vector2(0.5, 0.5);
+  /** True until something tells us the browser gave us a locked pointer. */
+  pointerAiming = true;
   sfx: { loose(): void; thunk(): void; miss(): void; hurt(): void; chime(n: number): void; horn(): void } | null = null;
 
   constructor(
@@ -498,12 +512,52 @@ export class World {
    * moves through, so both ways of aiming can reach exactly the same places.
    */
   aimAt(fx: number, fy: number) {
-    this.yaw = (0.5 - Math.max(0, Math.min(1, fx))) * 1.7;
-    this.pitch = (0.5 - Math.max(0, Math.min(1, fy))) * 0.6 - 0.02;
+    const x = Math.max(0, Math.min(1, fx));
+    const y = Math.max(0, Math.min(1, fy));
+    this.aim.set(x * 2 - 1, -(y * 2 - 1));
+    this.cursor.set(x, y);
+  }
+
+  /**
+   * Raise or lower the scope.
+   *
+   * Unlocked, the view is fixed and the cursor does the aiming — so zooming
+   * in on the middle of the screen would zoom past whatever you were actually
+   * pointing at. Raising the scope therefore swings the view to the cursor
+   * once, and from then on the scope is the middle of the screen like it is
+   * in every other shooter. Lowering it puts the view back.
+   */
+  setScoped(on: boolean) {
+    if (this.scoped === on) return;
+    this.scoped = on;
+    if (this.pointerAiming) {
+      if (on) {
+        this.aimFromCursor();
+        this.aim.set(0, 0);
+      } else {
+        this.yaw = 0;
+        this.pitch = 0;
+        this.aimAt(this.cursor.x, this.cursor.y);
+      }
+    }
+  }
+
+  /** Turn the head to wherever the cursor is pointing, once. */
+  private aimFromCursor() {
+    this.camera.updateMatrixWorld(true);
+    this.raycaster.setFromCamera(
+      new T.Vector2(this.cursor.x * 2 - 1, -(this.cursor.y * 2 - 1)),
+      this.camera,
+    );
+    const d = this.raycaster.ray.direction;
+    this.yaw = Math.max(-0.85, Math.min(0.85, Math.atan2(-d.x, -d.z)));
+    this.pitch = Math.max(-0.32, Math.min(0.28, Math.asin(Math.max(-1, Math.min(1, d.y)))));
   }
 
   /** Look. Yaw and pitch are clamped so the range stays in front of you. */
   look(dx: number, dy: number) {
+    this.pointerAiming = false;
+    this.aim.set(0, 0);
     this.yaw = Math.max(-0.85, Math.min(0.85, this.yaw - dx * (this.scoped ? 0.0009 : 0.0022)));
     this.pitch = Math.max(-0.32, Math.min(0.28, this.pitch - dy * (this.scoped ? 0.0009 : 0.0022)));
   }
@@ -673,7 +727,7 @@ export class World {
      */
     this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
     this.camera.updateMatrixWorld(true);
-    this.raycaster.setFromCamera(new T.Vector2(0, 0), this.camera);
+    this.raycaster.setFromCamera(this.aim, this.camera);
     const faces = this.butts.filter((b) => b.dead <= 0 && b.out > 0.15).map((b) => b.face);
     this.drawn = 0;
     this.sfx?.loose();
