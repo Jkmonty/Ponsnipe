@@ -4,8 +4,12 @@ import { env } from "@/lib/env";
 import { top, weekEnds, weekOf, type Score } from "@/lib/arcade";
 import { poolBalance, type PoolInfo } from "@/lib/pool";
 import { loadTargets, pickPins, type Pin } from "@/lib/targets";
+import { readFeed, type FeedRow } from "@/lib/feed/query";
 import Hero from "./Hero";
 import PaperSniper from "./PaperSniper";
+import RangeWindow from "./RangeWindow";
+import TerminalStrip from "./TerminalStrip";
+import HonestNumbers from "./HonestNumbers";
 
 export const dynamic = "force-dynamic";
 
@@ -37,10 +41,11 @@ export default async function Landing() {
   if (!env.publicMode) redirect("/terminal");
 
   const week = weekOf();
-  const [board, pins, pool] = await Promise.all([
+  const [board, pins, pool, feed] = await Promise.all([
     safely<Score[]>(() => top(3, week), []),
     safely<Pin[]>(async () => pickPins(await loadTargets()), []),
     safely<PoolInfo | null>(() => poolBalance(), null),
+    safely<FeedRow[]>(async () => (await readFeed({ maxAgeMin: 180, limit: 5 })).rows, []),
   ]);
 
   return (
@@ -58,6 +63,9 @@ export default async function Landing() {
           <PaperSniper />
         </div>
       </section>
+      <RangeWindow hasPool={pool !== null} />
+      <TerminalStrip rows={feed} />
+      <HonestNumbers />
     </main>
   );
 }
