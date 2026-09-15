@@ -1,16 +1,14 @@
-import Link from "next/link";
-
 /**
- * Three measured claims, and the door to the full app.
+ * Three measured claims.
  *
  * The numbers are the ones the README and the roadmap already make: they are
- * measured, not chosen for this page. The feed itself sits higher up, so this
- * section only has to say what the terminal does that the feed cannot show.
+ * measured, not chosen for this page. The feed and the panel sit higher up,
+ * so this section only has to say what the engine under them does.
  */
 export default function TerminalClaims() {
   return (
     <section className="sect">
-      <p className="lab sect-lab">The terminal</p>
+      <p className="lab sect-lab">Under the hood</p>
       <h2 className="display sect-h2">Measured, not promised.</h2>
       <div className="claims">
         <div className="claim">
@@ -25,11 +23,6 @@ export default function TerminalClaims() {
           <b className="display">before entry</b>
           <span className="lab">when the exit is set</span>
         </div>
-      </div>
-      <div>
-        <Link href="/terminal" className="btn hbtn ghost">
-          Open the terminal
-        </Link>
       </div>
     </section>
   );

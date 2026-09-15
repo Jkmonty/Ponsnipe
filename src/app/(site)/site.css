@@ -69,12 +69,8 @@
 .site .snav-links { margin-left: auto; display: flex; align-items: center; gap: var(--sp-6); font-size: 14px; }
 .site .snav-links a { text-decoration: none; color: var(--moss); }
 .site .snav-links a:hover { color: var(--moon); }
-.site .snav-cta { color: var(--moon); }
-.site .snav-short { display: none; }
 @media (max-width: 720px) {
   .site .snav-links { gap: var(--sp-4); }
-  .site .snav-long, .site .snav-board { display: none; }
-  .site .snav-short { display: inline; }
 }
 
 /* ── footer ──────────────────────────────────────────────────────────────── */

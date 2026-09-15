@@ -2,11 +2,12 @@ import Link from "next/link";
 import Logo from "@/app/Logo";
 
 /**
- * Mark, wordmark, four links, one button.
+ * Mark, wordmark, two links.
  *
- * No Connect here: the landing page has nothing for a wallet to do. The one
- * button-styled item is the terminal, which is where a wallet becomes useful.
- * On narrow screens the middle collapses to Range, Play, Terminal.
+ * Sniper is the feed and the panel on the front page; Range is the game, with
+ * the board beside it. Nothing else: the terminal route shows a visitor the
+ * same feed and panel without the hero, so it earns no link, and Connect
+ * lives with the panel, where a wallet is useful.
  */
 export default function SiteNav() {
   return (
@@ -22,14 +23,8 @@ export default function SiteNav() {
         />
       </Link>
       <nav className="snav-links" aria-label="Site">
+        <Link href="/#feed">Sniper</Link>
         <Link href="/range">Range</Link>
-        <Link href="/#feed">Feed</Link>
-        <Link href="/range#board" className="snav-board">
-          Board
-        </Link>
-        <Link href="/terminal" className="btn btn-sm snav-cta">
-          Terminal
-        </Link>
       </nav>
     </header>
   );

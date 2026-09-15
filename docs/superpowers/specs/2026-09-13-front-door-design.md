@@ -13,9 +13,11 @@ strip lower down went with it, since the full feed sits above; the three
 measured claims stay. `/play` is gone; `/api/paper` remains. Later the same
 day the range window section came off the page too: the hero's target is now
 the link to the range, showing "Enter the range" on hover, with the Draw the
-bow button kept for keyboards, screen readers and phones. References to the
-paper sniper, the strip and the range window below describe the original
-design.*
+bow button kept for keyboards, screen readers and phones. The nav is now two
+links, Sniper and Range; Board went because the board sits on the range page,
+and Terminal went because a visitor's terminal is the same feed and panel the
+front page already carries. References to the paper sniper, the strip, the
+range window and the four-link nav below describe the original design.*
 
 ## What this is
 
