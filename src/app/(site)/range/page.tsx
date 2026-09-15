@@ -264,10 +264,34 @@ export default function ArcadePage() {
               }
               if (e.button !== 0) return;
               move(e);
-              gameRef.current?.fire();
+              /*
+               * A finger is also the aim, so there is no holding a draw on
+               * touch without losing the thing you were aiming at — one tap
+               * looses immediately, at a solid fixed pull. A mouse can hold
+               * still while the button is down, so it gets the real draw:
+               * begin it here, and loose it on release below.
+               */
+              if (e.pointerType === "touch") {
+                gameRef.current?.touchFire();
+              } else {
+                gameRef.current?.beginDraw();
+              }
             }}
-            onPointerUp={(e) => e.button === 2 && scope(false)}
-            onPointerLeave={() => scope(false)}
+            onPointerUp={(e) => {
+              if (e.button === 2) {
+                scope(false);
+                return;
+              }
+              if (e.button === 0 && e.pointerType !== "touch") gameRef.current?.releaseDraw();
+            }}
+            onPointerLeave={() => {
+              scope(false);
+              // The mouse leaving mid-draw ends it the same way letting go
+              // does: loosed if it had reached something worth loosing,
+              // abandoned otherwise. Either way it should not be left
+              // drawing forever with the pointer gone.
+              gameRef.current?.releaseDraw();
+            }}
             onContextMenu={(e) => e.preventDefault()}
           />
 
@@ -357,6 +381,16 @@ export default function ArcadePage() {
               <div className="arc-health" aria-label={`Health ${s.health}%`}>
                 <i style={{ width: `${Math.max(0, Math.min(100, s.health))}%` }} />
               </div>
+              {/*
+                The draw meter: only on screen while actually drawing, so an
+                idle view is not cluttered by an empty bar sitting there doing
+                nothing.
+              */}
+              {s.draw > 0 && (
+                <div className="arc-draw" aria-hidden="true">
+                  <i style={{ width: `${Math.round(Math.max(0, Math.min(1, s.draw)) * 100)}%` }} />
+                </div>
+              )}
             </>
           )}
         </div>

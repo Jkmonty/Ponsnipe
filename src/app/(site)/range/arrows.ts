@@ -13,6 +13,16 @@ export interface Arrow {
   stuck: number;
   /** Radians per second it rolls about its own shaft, for a nocked-fletching look. */
   spin: number;
+  /**
+   * True if this shot was fired by a tap rather than a mouse click.
+   *
+   * A thumb is not a mouse — it is also the thing doing the aiming, so a
+   * touch shot needs more help finding its target. Carried on the arrow
+   * itself, since `stepArrows` is what actually applies the aim-assist cone
+   * and it only has the arrows to consult, not the input that fired them.
+   * Absent (or false) for an enemy's own shot, which is never touch-fired.
+   */
+  touch?: boolean;
 }
 
 /** A shaft lying along the view, tip away from you. */
@@ -57,6 +67,18 @@ export const ARROW_LIFE = 6;
 export function drawSpeed(draw: number): number {
   const d = Math.max(0, Math.min(1, draw));
   return DRAW_MIN_SPEED + (DRAW_MAX_SPEED - DRAW_MIN_SPEED) * d;
+}
+
+/**
+ * How far the aim wanders after holding a full draw too long.
+ *
+ * Without this, the best play is to hold at full draw forever and loose only
+ * on a certainty, which is not archery and is not a game. An archer's arm
+ * starts to go after about a second and a half, so this does too.
+ */
+export function drawShake(heldSeconds: number): number {
+  const over = Math.max(0, heldSeconds - 1.4);
+  return Math.min(0.0175, over * 0.011);
 }
 
 /**
@@ -186,7 +208,7 @@ export function stepArrows(
     a.vel.y -= GRAVITY * dt;
 
     if (a.mine && steerable.length) {
-      const maxAngle = assistAngle(false);
+      const maxAngle = assistAngle(!!a.touch);
       const dir = a.vel.clone().normalize();
       let best: T.Object3D | undefined;
       let bestAngle = maxAngle;

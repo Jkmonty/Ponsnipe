@@ -17,7 +17,15 @@
 import * as T from "three";
 import { buildWood, rand } from "./scene";
 import { LANES, makeButt, type Butt } from "./butts";
-import { makeArrowMesh, looseEnemyArrow, stepArrows, drawSpeed, ARROW_LIFE, type Arrow } from "./arrows";
+import {
+  makeArrowMesh,
+  looseEnemyArrow,
+  stepArrows,
+  drawSpeed,
+  drawShake,
+  ARROW_LIFE,
+  type Arrow,
+} from "./arrows";
 
 export interface Stock {
   symbol: string;
@@ -39,6 +47,8 @@ export interface Snapshot {
   markKill: boolean;
   /** How much of the flinch is left, 0..1, for the damage vignette. */
   hurt: number;
+  /** How far the string is drawn back right now, 0..1. 0 whenever not drawing. */
+  draw: number;
 }
 
 export const ROUND_MS = 60_000;
@@ -49,6 +59,20 @@ const FOV_SCOPE = 26;
 
 /** How long the flinch lasts, and the window in which nothing else can land. */
 const HURT_TIME = 0.7;
+
+/** How long a full pull takes, held down. */
+const DRAW_TIME = 0.7;
+/** Short of this, letting go abandons the shot rather than loosing a feeble one. */
+const MIN_LOOSE_DRAW = 0.15;
+/** How much the field of view narrows at a full draw, on top of the scope. */
+const DRAW_FOV_NARROW = 4;
+/** The camera kick on release, and how long it takes to settle back down. */
+const RELEASE_KICK = (0.9 * Math.PI) / 180;
+const RELEASE_KICK_TIME = 0.2;
+/** How long the nock takes to refill after a shot — the rate-of-fire limit. */
+const NOCK_TIME = 0.42;
+/** What a tap on a touchscreen looses at — a solid, deliberate pull with no wait. */
+const TOUCH_DRAW = 0.8;
 
 export class World {
   private renderer: T.WebGLRenderer;
@@ -81,6 +105,14 @@ export class World {
   private bow: T.Group | null = null;
   private nock: T.Mesh | null = null;
   private drawn = 1;
+  /** How far the string is pulled back, 0..1. Separate from `drawn`, the nock's own refill. */
+  private draw = 0;
+  /** True while the draw is being held; false the instant it looses or is abandoned. */
+  private drawing = false;
+  /** Seconds the current (or just-released) draw has been held, for `drawShake`. */
+  private heldSeconds = 0;
+  /** 1 right after a release, decaying to 0 over `RELEASE_KICK_TIME` — the recoil settling. */
+  private kick = 0;
   private mark = 0;
   private markKill = false;
   /**
@@ -104,6 +136,8 @@ export class World {
     chime(n: number): void;
     horn(): void;
     marker(kill?: boolean): void;
+    /** As the string comes back, 0..1. Optional: not every sound bench build has it. */
+    creak?(draw: number): void;
   } | null = null;
 
   constructor(
@@ -154,6 +188,7 @@ export class World {
       mark: this.mark,
       markKill: this.markKill,
       hurt: Math.max(0, Math.min(1, this.hurt / HURT_TIME)),
+      draw: this.draw,
     };
   }
 
@@ -384,12 +419,36 @@ export class World {
      * gone at the start of it and back on the string by the end, which is the
      * only thing telling you the shot registered when it misses everything.
      */
-    if (this.drawn < 1) this.drawn = Math.min(1, this.drawn + dt * 2.4);
+    if (this.drawn < 1) this.drawn = Math.min(1, this.drawn + dt / NOCK_TIME);
+
+    /*
+     * Holding the draw.
+     *
+     * A separate thing from nocking: the nock is the rate-of-fire gate that
+     * keeps this from being a machine gun, and only once it is full can a new
+     * draw even begin (see `beginDraw`). This is what happens after that —
+     * the deliberate pull that makes a full draw something you wait for.
+     */
+    if (this.drawing) {
+      this.heldSeconds += dt;
+      this.draw = Math.min(1, this.draw + dt / DRAW_TIME);
+      this.sfx?.creak?.(this.draw);
+    }
+    if (this.kick > 0) this.kick = Math.max(0, this.kick - dt / RELEASE_KICK_TIME);
+
     if (this.bow) {
       this.bow.visible = !this.scoped;
-      const kick = (1 - this.drawn) * (1 - this.drawn);
-      this.bow.position.set(0.44 + kick * 0.06, -0.56 - kick * 0.03, -1.1 + kick * 0.1);
-      if (this.nock) this.nock.visible = !this.scoped && this.drawn > 0.55;
+      const nockKick = (1 - this.drawn) * (1 - this.drawn);
+      this.bow.position.set(0.44 + nockKick * 0.06, -0.56 - nockKick * 0.03, -1.1 + nockKick * 0.1);
+      // The bow bends as the string comes back: the whole rig cants a little
+      // further, rather than just the string moving, so the draw reads in the
+      // shape of the bow and not only in the meter.
+      this.bow.rotation.set(0.02, -0.2 - this.draw * 0.06, -0.12);
+      if (this.nock) {
+        this.nock.visible = !this.scoped && this.drawn > 0.55;
+        // Pulled back toward the eye as the draw builds, forward again as it eases off.
+        this.nock.position.set(0.12, -0.2, -1.05 + this.draw * 0.16);
+      }
     }
     this.msLeft -= dt * 1000;
     if (this.msLeft <= 0 || this.lives <= 0) {
@@ -547,8 +606,61 @@ export class World {
     this.onChange(this.snapshot());
   }
 
-  /** Loose an arrow down the centre of the view. */
-  fire(): boolean {
+  /**
+   * Start pulling the string back.
+   *
+   * Gated on the nock being completely full, not just past the rate-of-fire
+   * threshold `fire` itself uses — you cannot begin a new draw while the
+   * last arrow is still on its way back onto the string.
+   */
+  beginDraw(): void {
+    if (this.over || this.drawing || this.drawn < 1) return;
+    this.drawing = true;
+    this.draw = 0;
+    this.heldSeconds = 0;
+  }
+
+  /**
+   * Let go of a held draw.
+   *
+   * Reaching `MIN_LOOSE_DRAW` looses the arrow at whatever strength the draw
+   * had reached; short of that, there is nothing to loose and the draw is
+   * simply abandoned — closer to a string slipping off a slack finger than a
+   * shot. Either way the draw itself resets, ready to begin again once the
+   * nock is full.
+   */
+  releaseDraw(): boolean {
+    if (!this.drawing) return false;
+    this.drawing = false;
+    const draw = this.draw;
+    const heldSeconds = this.heldSeconds;
+    this.draw = 0;
+    this.heldSeconds = 0;
+    if (draw < MIN_LOOSE_DRAW) return false;
+    const shot = this.fire(draw, false, heldSeconds);
+    if (shot) this.kick = 1;
+    return shot;
+  }
+
+  /**
+   * A tap on a touchscreen.
+   *
+   * A thumb is also the thing doing the aiming, so there is no holding a
+   * draw without losing the aim along with it — one tap looses immediately,
+   * at a solid fixed pull rather than the flinch-quick snap a bare click
+   * would otherwise give you.
+   */
+  touchFire(): boolean {
+    return this.fire(TOUCH_DRAW, true);
+  }
+
+  /**
+   * Loose an arrow down the centre of the view, at `draw` strength.
+   *
+   * The single place a shot is actually loosed — `releaseDraw` and
+   * `touchFire` both end up here rather than each flying their own arrow.
+   */
+  fire(draw = 1, touch = false, heldSeconds = 0): boolean {
     if (this.over) return false;
     /*
      * One arrow at a time.
@@ -571,7 +683,6 @@ export class World {
     this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
     this.camera.updateMatrixWorld(true);
     this.raycaster.setFromCamera(this.aim, this.camera);
-    const draw = this.drawn;
     this.drawn = 0;
     this.sfx?.loose();
 
@@ -592,12 +703,26 @@ export class World {
      * the matrix note above still matters.
      */
     const from = this.nock?.getWorldPosition(new T.Vector3()) ?? this.camera.position.clone();
-    const vel = this.raycaster.ray.direction.clone().multiplyScalar(drawSpeed(draw));
+    const dir = this.raycaster.ray.direction.clone();
+    /*
+     * The cost of an overheld draw.
+     *
+     * `drawShake` is 0 until well past a full draw, so a normal shot — held
+     * for less than the time it takes to actually pull the string back — is
+     * never touched by this. Only holding at full draw and waiting for a
+     * certainty wanders the aim, which is the whole point of it existing.
+     */
+    const shake = drawShake(heldSeconds);
+    if (shake > 0) {
+      const wobble = new T.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize();
+      dir.applyAxisAngle(wobble, shake * Math.random()).normalize();
+    }
+    const vel = dir.multiplyScalar(drawSpeed(draw));
     const mesh = makeArrowMesh();
     mesh.position.copy(from);
     mesh.lookAt(from.clone().add(vel));
     this.scene.add(mesh);
-    this.arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5) });
+    this.arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5), touch });
     return true;
   }
 
@@ -622,11 +747,15 @@ export class World {
       this.step(dt);
 
       // Ease the field of view rather than snapping it: a scope that changes
-      // magnification instantly reads as a glitch.
-      const want = this.scoped ? FOV_SCOPE : FOV_WIDE;
+      // magnification instantly reads as a glitch. Drawing narrows it too, a
+      // little — the world closing in as the shot comes together.
+      const want = this.scoped ? FOV_SCOPE : FOV_WIDE - this.draw * DRAW_FOV_NARROW;
       this.camera.fov += (want - this.camera.fov) * Math.min(1, dt * 9);
       this.camera.updateProjectionMatrix();
-      this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+      // The release kick rides on top of the aimed pitch rather than changing
+      // it, so it settles back to exactly where you were looking rather than
+      // leaving the view drifted.
+      this.camera.rotation.set(this.pitch - this.kick * RELEASE_KICK, this.yaw, 0, "YXZ");
 
       this.renderer.render(this.scene, this.camera);
       since += dt;

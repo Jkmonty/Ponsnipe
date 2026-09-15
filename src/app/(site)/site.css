@@ -365,6 +365,32 @@
 .site .range-grid .arc-board { width: auto; }
 .site .range-grid .arc-rows li:nth-child(odd) { background: var(--forest-1); }
 
+/* The draw meter: a thin lime bar, opposite the health bar, that fills as the
+   string comes back. Only rendered while actually drawing, so its own CSS
+   never has to hide an empty track. */
+.site .arc-draw {
+  position: absolute;
+  right: var(--sp-3);
+  bottom: var(--sp-3);
+  z-index: 3;
+  width: 140px;
+  max-width: 35%;
+  height: 7px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: rgba(6, 7, 10, 0.6);
+  overflow: hidden;
+  pointer-events: none;
+}
+.site .arc-draw i {
+  display: block;
+  height: 100%;
+  background: var(--lime);
+  /* No easing: the meter is the truth of how far the string is back right
+     now, not a smoothed impression of it. */
+  transition: none;
+}
+
 /* ── responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 940px) {
   .site .claims, .site .honest { grid-template-columns: 1fr; gap: var(--sp-5); }

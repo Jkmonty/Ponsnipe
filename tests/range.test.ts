@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as T from "three";
 import {
   drawSpeed,
+  drawShake,
   assistAngle,
   stepArrows,
   DRAW_MIN_SPEED,
@@ -149,4 +150,16 @@ test("two arrows landing on the same face in one tick score only once", () => {
 
   assert.equal(hits, 1, "the second arrow must not score a butt the first already killed this tick");
   assert.ok(a1.stuck > 0 && a2.stuck > 0, "both arrows still physically land, only one is credited");
+});
+
+test("a steady draw does not shake, and a long one does", () => {
+  assert.equal(drawShake(0), 0);
+  assert.equal(drawShake(1.4), 0);
+  assert.ok(drawShake(2) > 0, "past the hold limit the arm should wander");
+  assert.ok(drawShake(3) > drawShake(2), "and wander further the longer it is held");
+});
+
+test("the shake is capped, so a long hold is worse but never hopeless", () => {
+  assert.equal(drawShake(3), drawShake(30));
+  assert.ok(drawShake(30) <= 0.0175, "one degree is the most it may wander");
 });
