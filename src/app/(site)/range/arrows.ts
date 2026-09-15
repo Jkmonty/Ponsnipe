@@ -128,6 +128,13 @@ function collectTargets(scene: T.Scene): { steerable: T.Object3D[]; all: T.Objec
   return { steerable, all, player };
 }
 
+/** Drop an arrow's mesh from the scene and free its GPU-side resources. */
+function disposeArrow(scene: T.Scene, mesh: T.Mesh): void {
+  scene.remove(mesh);
+  mesh.geometry.dispose();
+  (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => m.dispose());
+}
+
 /**
  * Advance every arrow one frame: gravity, steering for the player's own
  * shots, movement, spin, and collision against the butts, the ground and
@@ -149,10 +156,13 @@ export function stepArrows(
   scene: T.Scene,
   onHit: (a: Arrow, hit: T.Object3D) => void,
 ): void {
-  // Oldest first, so a heavy volley cannot pile the array past the cap.
+  // Oldest first, so a heavy volley cannot pile the array past the cap. Real
+  // flight time keeps far more arrows alive at once than the old instant hit
+  // ever did, so this cap gets exercised for real rather than being a
+  // theoretical ceiling.
   while (arrows.length > MAX_ARROWS) {
     const a = arrows.shift()!;
-    scene.remove(a.mesh);
+    disposeArrow(scene, a.mesh);
   }
 
   // Positions read below (butts move every frame) must be this frame's,
@@ -230,9 +240,23 @@ export function stepArrows(
       const ray = new T.Raycaster(before, seg.clone().normalize(), 0, segLen);
       const hit = ray.intersectObjects(all, false)[0];
       if (hit) {
+        const obj = hit.object;
+        /*
+         * A butt can only be scored once per frame.
+         *
+         * `steerable`/`all` are snapshotted once at the top of this call, so
+         * two arrows landing on the same face in the same tick would both
+         * find it here and both fire `onHit` — the second scoring against a
+         * butt the first already killed. Claiming the tag the instant a hit
+         * resolves (rather than waiting for world.ts's once-a-frame refresh,
+         * which runs before this loop, not during it) makes a second arrow
+         * this same tick see the face as already spoken for.
+         */
+        const alreadyClaimed = obj.userData.arrowTarget === false;
+        if (obj.userData.arrowTarget) obj.userData.arrowTarget = false;
         a.mesh.position.copy(hit.point);
         a.stuck = dt;
-        onHit(a, hit.object);
+        if (!alreadyClaimed) onHit(a, obj);
         continue;
       }
     }
@@ -252,7 +276,7 @@ export function stepArrows(
     const a = arrows[i];
     const done = a.stuck > 0 ? a.stuck >= STUCK_FADE : a.life <= 0;
     if (done) {
-      scene.remove(a.mesh);
+      disposeArrow(scene, a.mesh);
       arrows.splice(i, 1);
     }
   }
