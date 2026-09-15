@@ -16,8 +16,8 @@
  */
 import * as T from "three";
 import { buildWood, rand } from "./scene";
-import { LANES, HIT_RADIUS, makeButt, type Butt } from "./butts";
-import { makeArrowMesh, looseEnemyArrow, type Arrow } from "./arrows";
+import { LANES, makeButt, type Butt } from "./butts";
+import { makeArrowMesh, looseEnemyArrow, stepArrows, drawSpeed, ARROW_LIFE, type Arrow } from "./arrows";
 
 export interface Stock {
   symbol: string;
@@ -117,9 +117,28 @@ export class World {
     // Back from the first hedge, so there is ground between you and the
     // nearest butt and the range reads as a range rather than a wall.
     this.camera.position.set(0, 3.6, 20);
-    buildWood(this.scene);
+    // stepArrows finds the player by this flag, so a hostile arrow's
+    // proximity check has an Object3D to measure against.
+    this.camera.userData.isPlayer = true;
+    const wood = buildWood(this.scene);
+    this.tagGround(wood.root);
     this.buildBow();
     this.resize();
+  }
+
+  /**
+   * Mark the one mesh in the wood an arrow can stick into short of a butt.
+   *
+   * scene.ts builds the whole wood, ground included, without any of it
+   * knowing that arrows exist — so the ground is picked out here by shape
+   * (a big flat plane) rather than by scene.ts tagging itself for a concern
+   * that lives in this file.
+   */
+  private tagGround(root: T.Group) {
+    for (const child of root.children) {
+      if (!(child instanceof T.Mesh) || !(child.geometry instanceof T.PlaneGeometry)) continue;
+      if (child.geometry.parameters.width > 100) child.userData.arrowGround = true;
+    }
   }
 
   private snapshot(): Snapshot {
@@ -268,6 +287,9 @@ export class World {
     const lane = Math.floor(Math.random() * LANES.length);
     const x = rand(-30, 30);
     const butt = makeButt(stock, lane, x);
+    // stepArrows steers the player's own shots toward whatever carries this
+    // flag, and raycasts every arrow's flight against it.
+    butt.face.userData.arrowTarget = true;
     this.scene.add(butt.group);
     this.butts.push(butt);
   }
@@ -416,6 +438,10 @@ export class World {
       }
       // Rises from behind the hedge rather than fading in.
       b.group.position.set(b.x, -9 + b.out * 9, LANES[b.lane]);
+      // Only a butt that is actually up and not already falling is
+      // something a flying arrow should be steered toward or able to hit —
+      // the same condition fire() used to filter its raycast targets by.
+      b.face.userData.arrowTarget = b.dead <= 0 && b.out > 0.15;
 
       if (b.hostile && b.out > 0.6) {
         b.cooldown -= dt;
@@ -443,61 +469,85 @@ export class World {
       return false;
     });
 
-    for (const a of this.arrows) {
-      const before = a.mesh.position.clone();
-      a.mesh.position.addScaledVector(a.vel, dt);
-      a.mesh.lookAt(a.mesh.position.clone().add(a.vel));
-      a.life -= dt;
-
-      /*
-       * Closest approach along the step, not the distance at the end of it.
-       *
-       * An arrow moves half a metre a frame near the end of its flight, so
-       * testing only where it finished lets it tunnel straight past your head
-       * between two frames and count as a miss. That is why nothing was ever
-       * hitting: the shots were arriving, they were just never measured at
-       * the moment they were close.
-       */
-      const seg = a.mesh.position.clone().sub(before);
-      const toEye = this.camera.position.clone().sub(before);
-      const len2 = seg.lengthSq() || 1;
-      const t = Math.max(0, Math.min(1, toEye.dot(seg) / len2));
-      const near = before.clone().addScaledVector(seg, t).distanceTo(this.camera.position);
-
-      if (near < HIT_RADIUS) {
-        a.life = 0;
-        /*
-         * A moment's grace after being hit.
-         *
-         * Three reds firing together emptied the bar in under ten seconds of
-         * a sixty second round, which is not difficulty, it is not getting to
-         * play. The arrow still dies, so volleys are still punished — they
-         * just cannot all land at once.
-         */
-        if (this.hurt <= 0) {
-          this.health = Math.max(0, this.health - 18);
-          this.combo = 0;
-          this.points = Math.max(0, this.points - 250);
-          this.hurt = HURT_TIME;
-          this.sfx?.hurt();
-          if (this.health <= 0) this.lives = 0;
-          this.onChange(this.snapshot());
-        }
-      } else if (a.mesh.position.z > this.camera.position.z + 3) {
-        // Gone past and behind: it missed, and saying so is what makes a near
-        // miss feel like one.
-        a.life = 0;
-        this.sfx?.miss();
-      }
-    }
-    this.arrows = this.arrows.filter((a) => {
-      if (a.life > 0) return true;
-      this.scene.remove(a.mesh);
-      return false;
-    });
+    /*
+     * One integrator for both sides.
+     *
+     * The player's shots and a hostile butt's shots are the same kind of
+     * object flying under the same gravity, so they are stepped, spun and
+     * collision-tested together here rather than in two loops that would
+     * have to be kept in sync by hand — which is exactly how the segment
+     * test below would have ended up covering only one of them.
+     */
+    stepArrows(this.arrows, dt, this.scene, (a, hit) => this.onArrowHit(a, hit));
   }
 
-  /** Fire down the centre of the view. */
+  /**
+   * What an arrow's flight resolved to: a butt, the ground, the player, or
+   * nothing at all.
+   *
+   * This is where the scoring used to live inside `fire()`, moved here
+   * unchanged because a shot's outcome is no longer known the instant it is
+   * loosed — only once the arrow actually arrives somewhere.
+   */
+  private onArrowHit(a: Arrow, hit: T.Object3D) {
+    if (a.mine) {
+      const b = this.butts.find((x) => x.face === hit);
+      if (!b) {
+        // Landed in the dirt, or flew clean past everything: a miss, same
+        // as the old instant hitscan's miss.
+        this.combo = 0;
+        this.sfx?.miss();
+        this.onChange(this.snapshot());
+        return;
+      }
+      this.sfx?.thunk();
+      /*
+       * The chime marks a streak, not a hit.
+       *
+       * It used to sound on every single one, which put a third voice on top
+       * of the marker and the arrow landing and turned a confirmation into
+       * noise. Every fifth makes it mean something when it does arrive.
+       */
+      if (this.combo >= 5 && this.combo % 5 === 0) this.sfx?.chime(this.combo);
+      b.dead = 0.6;
+      this.hits += 1;
+      this.combo += 1;
+      this.mark += 1;
+      this.markKill = b.hostile;
+      this.sfx?.marker(b.hostile);
+      const move = Math.abs(b.stock.changePct);
+      const base = Math.round(40 + move * 60);
+      this.points += Math.round((b.hostile ? base * 1.6 : base) * (1 + this.combo * 0.08));
+      this.onChange(this.snapshot());
+      return;
+    }
+
+    if (hit === this.scene) {
+      // Gone past and behind without hitting anything: it missed, and
+      // saying so is what makes a near miss feel like one.
+      this.sfx?.miss();
+      return;
+    }
+    if (hit !== this.camera) return; // a hostile shot stuck a butt or the ground: nothing to do
+    /*
+     * A moment's grace after being hit.
+     *
+     * Three reds firing together emptied the bar in under ten seconds of
+     * a sixty second round, which is not difficulty, it is not getting to
+     * play. The arrow still dies, so volleys are still punished — they
+     * just cannot all land at once.
+     */
+    if (this.hurt > 0) return;
+    this.health = Math.max(0, this.health - 18);
+    this.combo = 0;
+    this.points = Math.max(0, this.points - 250);
+    this.hurt = HURT_TIME;
+    this.sfx?.hurt();
+    if (this.health <= 0) this.lives = 0;
+    this.onChange(this.snapshot());
+  }
+
+  /** Loose an arrow down the centre of the view. */
   fire(): boolean {
     if (this.over) return false;
     /*
@@ -521,63 +571,33 @@ export class World {
     this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
     this.camera.updateMatrixWorld(true);
     this.raycaster.setFromCamera(this.aim, this.camera);
-    const faces = this.butts.filter((b) => b.dead <= 0 && b.out > 0.15).map((b) => b.face);
+    const draw = this.drawn;
     this.drawn = 0;
     this.sfx?.loose();
-    let target = this.raycaster.intersectObjects(faces, false)[0]?.object as T.Mesh | undefined;
 
     /*
      * Aim assist, and why an arcade needs it.
      *
-     * A raycast down the exact centre pixel is how a simulation decides a hit.
-     * It is far stricter than it looks: the reticle is 22 pixels across, a
-     * butt forty units away is barely wider, and a shot that visibly clipped
-     * the straw returns nothing. That reads as "shooting doesn't work" even
-     * though every shot was real.
+     * A raycast down the exact centre pixel used to be how this decided a
+     * hit outright: it was far stricter than it looked, since the reticle is
+     * 22 pixels across and a butt forty units away is barely wider, so a
+     * shot that visibly clipped the straw still returned nothing. That read
+     * as "shooting doesn't work" even though every shot was real.
      *
-     * So if the ray misses, take the nearest face within a small angle of
-     * where you were looking. Every arcade shooter does this; the ones that
-     * feel accurate are the ones doing the most of it.
+     * A flying arrow cannot be snapped onto a target the instant it leaves
+     * the string — there is nothing to snap yet, it has not gone anywhere.
+     * So the forgiveness moved from this raycast into `stepArrows`, which
+     * steers a loosed arrow toward a nearby target over its flight instead.
+     * This is still where the direction comes from, though, which is why
+     * the matrix note above still matters.
      */
-    if (!target) {
-      const dir = this.raycaster.ray.direction;
-      let best = Math.cos(0.045); // ~2.6 degrees
-      for (const f of faces) {
-        const to = f.getWorldPosition(new T.Vector3()).sub(this.camera.position).normalize();
-        const dot = to.dot(dir);
-        if (dot > best) {
-          best = dot;
-          target = f;
-        }
-      }
-    }
-
-    if (!target) {
-      this.combo = 0;
-      this.sfx?.miss();
-      this.onChange(this.snapshot());
-      return false;
-    }
-    this.sfx?.thunk();
-    /*
-     * The chime marks a streak, not a hit.
-     *
-     * It used to sound on every single one, which put a third voice on top
-     * of the marker and the arrow landing and turned a confirmation into
-     * noise. Every fifth makes it mean something when it does arrive.
-     */
-    if (this.combo >= 5 && this.combo % 5 === 0) this.sfx?.chime(this.combo);
-    const b = this.butts.find((x) => x.face === target)!;
-    b.dead = 0.6;
-    this.hits += 1;
-    this.combo += 1;
-    this.mark += 1;
-    this.markKill = b.hostile;
-    this.sfx?.marker(b.hostile);
-    const move = Math.abs(b.stock.changePct);
-    const base = Math.round(40 + move * 60);
-    this.points += Math.round((b.hostile ? base * 1.6 : base) * (1 + this.combo * 0.08));
-    this.onChange(this.snapshot());
+    const from = this.nock?.getWorldPosition(new T.Vector3()) ?? this.camera.position.clone();
+    const vel = this.raycaster.ray.direction.clone().multiplyScalar(drawSpeed(draw));
+    const mesh = makeArrowMesh();
+    mesh.position.copy(from);
+    mesh.lookAt(from.clone().add(vel));
+    this.scene.add(mesh);
+    this.arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5) });
     return true;
   }
 
