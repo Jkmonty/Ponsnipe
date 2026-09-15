@@ -60,12 +60,20 @@ export default function Hero({
 
         <div className="hero-side">
           {/*
-            The target is the door to the range. Hover and it says so; the
-            button on the left says the same thing for anyone who does not
-            hover, and for a thumb on a phone where the butt sits faint behind
-            the headline.
+            The target is the door to the range: one big link, no button on
+            it. A handwritten note bobs beside it and says so, inside the same
+            link. The button on the left says the same thing for a keyboard
+            or a thumb on a phone, where the butt sits faint behind the
+            headline and the note is hidden.
           */}
           <Link href="/range" className="butt-link" aria-label="Enter the range">
+            <span className="butt-note" aria-hidden="true">
+              <span className="butt-note-text">enter the range</span>
+              <svg className="butt-note-arrow" viewBox="0 0 120 110" fill="none">
+                <path d="M14 6 C 8 40, 10 78, 100 88" />
+                <path d="M84 64 L 112 88 L 84 106" />
+              </svg>
+            </span>
             <Butt className="butt-hero">
               <span className="butt-arrow" />
               {pins.slice(0, 3).map((p, i) => (
@@ -75,7 +83,6 @@ export default function Hero({
                   {p.changePct.toFixed(1)}%
                 </span>
               ))}
-              <span className="butt-cta btn btn-primary">Enter the range</span>
             </Butt>
           </Link>
           <BoardCard rows={board} endsAt={endsAt} pool={pool} />

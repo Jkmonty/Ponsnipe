@@ -282,27 +282,40 @@
 .site .site-cols .feed { top: var(--sp-4); }
 
 /* ── the target is the door ──────────────────────────────────────────────────
-   The hero's butt links to the range. Hover lifts it and shows the words; the
-   pins stay, since they are the reason the target is worth looking at. */
-.site .butt-link { display: block; text-decoration: none; color: inherit; border-radius: 50%; }
+   The hero's butt links to the range, with nothing drawn on it. Hover lifts
+   it; the pins stay, since they are the reason the target is worth looking
+   at. A handwritten note bobs at its upper left and points in. */
+.site .butt-link { position: relative; display: block; text-decoration: none; color: inherit; border-radius: 50%; }
 .site .butt-link .butt-hero { transition: transform var(--med), box-shadow var(--med); }
 .site .butt-link:hover .butt-hero,
 .site .butt-link:focus-visible .butt-hero {
   transform: rotate(-6deg) translateY(-6px);
   box-shadow: 0 70px 130px -40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.1), 0 0 60px -10px rgba(195, 245, 60, 0.35);
 }
-.site .butt-cta {
+.site .butt-note {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%) rotate(6deg);
-  opacity: 0;
+  right: calc(100% - 28px);
+  top: 4%;
+  width: 200px;
+  color: var(--gold);
   pointer-events: none;
-  white-space: nowrap;
-  transition: opacity var(--med);
+  animation: bob 2.6s ease-in-out infinite;
 }
-.site .butt-link:hover .butt-cta,
-.site .butt-link:focus-visible .butt-cta { opacity: 1; }
+.site .butt-note-text {
+  display: block;
+  font-family: var(--font-hand), "Segoe Print", "Comic Sans MS", cursive;
+  font-size: 30px;
+  line-height: 1;
+  white-space: nowrap;
+  transform: rotate(-4deg);
+  transform-origin: left bottom;
+}
+.site .butt-note-arrow { display: block; width: 120px; height: 110px; margin: 6px 0 0 36px; }
+.site .butt-note-arrow path { stroke: currentColor; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-9px); }
+}
 
 /* ── the terminal section ────────────────────────────────────────────────── */
 .site .claims { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-6); }
@@ -363,12 +376,12 @@
     opacity: 0.22;
     z-index: -1;
   }
-  .site .butt-arrow, .site .pin { display: none; }
+  .site .butt-arrow, .site .pin, .site .butt-note { display: none; }
   .site .board { width: 100%; }
   .site .hero-cta .hbtn { width: 100%; }
 }
 
 /* Everything honours reduced motion. Nothing animates behind text anyway. */
 @media (prefers-reduced-motion: reduce) {
-  .site .pin, .site .board-row { animation: none; }
+  .site .pin, .site .board-row, .site .butt-note { animation: none; }
 }

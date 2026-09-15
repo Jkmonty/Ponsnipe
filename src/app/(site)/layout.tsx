@@ -1,4 +1,4 @@
-import { Fraunces, JetBrains_Mono } from "next/font/google";
+import { Fraunces, JetBrains_Mono, Patrick_Hand } from "next/font/google";
 import "./site.css";
 import SiteNav from "./SiteNav";
 import SiteFooter from "./SiteFooter";
@@ -9,6 +9,14 @@ import SiteFooter from "./SiteFooter";
  * font-src 'self'. If the container build ever runs without network, swap
  * these two calls for next/font/local with the files committed under ./fonts.
  */
+/* The one handwritten note on the site, pointing at the target. */
+const hand = Patrick_Hand({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-hand",
+  display: "swap",
+});
+
 const display = Fraunces({
   subsets: ["latin"],
   weight: "variable",
@@ -34,7 +42,7 @@ const mono = JetBrains_Mono({
  */
 export default function SiteLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className={`site ${display.variable} ${mono.variable}`}>
+    <div className={`site ${display.variable} ${mono.variable} ${hand.variable}`}>
       <SiteNav />
       {children}
       <SiteFooter />
