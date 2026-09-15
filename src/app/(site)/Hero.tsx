@@ -59,16 +59,25 @@ export default function Hero({
         </div>
 
         <div className="hero-side">
-          <Butt className="butt-hero">
-            <span className="butt-arrow" />
-            {pins.slice(0, 3).map((p, i) => (
-              <span key={p.symbol} className={`pin pin-${i + 1} ${p.up ? "pin-up" : "pin-dn"}`}>
-                <i>{p.symbol}</i>
-                {p.changePct >= 0 ? "+" : ""}
-                {p.changePct.toFixed(1)}%
-              </span>
-            ))}
-          </Butt>
+          {/*
+            The target is the door to the range. Hover and it says so; the
+            button on the left says the same thing for anyone who does not
+            hover, and for a thumb on a phone where the butt sits faint behind
+            the headline.
+          */}
+          <Link href="/range" className="butt-link" aria-label="Enter the range">
+            <Butt className="butt-hero">
+              <span className="butt-arrow" />
+              {pins.slice(0, 3).map((p, i) => (
+                <span key={p.symbol} className={`pin pin-${i + 1} ${p.up ? "pin-up" : "pin-dn"}`}>
+                  <i>{p.symbol}</i>
+                  {p.changePct >= 0 ? "+" : ""}
+                  {p.changePct.toFixed(1)}%
+                </span>
+              ))}
+              <span className="butt-cta btn btn-primary">Enter the range</span>
+            </Butt>
+          </Link>
           <BoardCard rows={board} endsAt={endsAt} pool={pool} />
         </div>
       </div>

@@ -281,24 +281,28 @@
 .site .site-cols { width: 100%; }
 .site .site-cols .feed { top: var(--sp-4); }
 
-/* ── the range window ────────────────────────────────────────────────────── */
-.site .rwin {
-  position: relative;
-  overflow: hidden;
-  border-radius: var(--r-panel);
-  border: 1px solid var(--hair-w);
-  min-height: 340px;
-  background: radial-gradient(900px 300px at 50% 115%, #101c14, var(--forest-0) 70%);
-  display: grid;
-  place-items: center;
+/* ── the target is the door ──────────────────────────────────────────────────
+   The hero's butt links to the range. Hover lifts it and shows the words; the
+   pins stay, since they are the reason the target is worth looking at. */
+.site .butt-link { display: block; text-decoration: none; color: inherit; border-radius: 50%; }
+.site .butt-link .butt-hero { transition: transform var(--med), box-shadow var(--med); }
+.site .butt-link:hover .butt-hero,
+.site .butt-link:focus-visible .butt-hero {
+  transform: rotate(-6deg) translateY(-6px);
+  box-shadow: 0 70px 130px -40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.1), 0 0 60px -10px rgba(195, 245, 60, 0.35);
 }
-.site .rwin .butt { position: absolute; opacity: 0.85; }
-.site .rwin .b1 { width: 120px; height: 120px; left: 18%; top: 28%; }
-.site .rwin .b2 { width: 74px; height: 74px; left: 48%; top: 18%; opacity: 0.6; }
-.site .rwin .b3 { width: 150px; height: 150px; right: 14%; top: 32%; }
-.site .rwin .trees { height: 90px; }
-.site .rwin-cta { position: relative; z-index: 1; }
-.site .rwin-cap { color: var(--moss); font-size: 15px; margin: 0; }
+.site .butt-cta {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(6deg);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity var(--med);
+}
+.site .butt-link:hover .butt-cta,
+.site .butt-link:focus-visible .butt-cta { opacity: 1; }
 
 /* ── the terminal section ────────────────────────────────────────────────── */
 .site .claims { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-6); }

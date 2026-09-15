@@ -6,7 +6,6 @@ import { poolBalance, type PoolInfo } from "@/lib/pool";
 import { loadTargets, pickPins, type Pin } from "@/lib/targets";
 import Hero from "./Hero";
 import LiveSection from "./LiveSection";
-import RangeWindow from "./RangeWindow";
 import TerminalClaims from "./TerminalClaims";
 import HonestNumbers from "./HonestNumbers";
 
@@ -67,7 +66,6 @@ export default async function Landing() {
     <main className="site-main">
       <Hero pins={pins} board={board} endsAt={weekEnds(week)} pool={pool} />
       <LiveSection />
-      <RangeWindow hasPool={pool !== null} />
       <TerminalClaims />
       <HonestNumbers />
     </main>

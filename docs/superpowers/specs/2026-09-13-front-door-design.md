@@ -10,8 +10,12 @@ section it occupied now carries the terminal's public view, the live feed
 beside the trade panel, wired together as the terminal wires them, so a
 visitor can watch launches and arm a snipe from the front door. The launch
 strip lower down went with it, since the full feed sits above; the three
-measured claims stay. `/play` is gone; `/api/paper` remains. References to
-the paper sniper and the strip below describe the original design.*
+measured claims stay. `/play` is gone; `/api/paper` remains. Later the same
+day the range window section came off the page too: the hero's target is now
+the link to the range, showing "Enter the range" on hover, with the Draw the
+bow button kept for keyboards, screen readers and phones. References to the
+paper sniper, the strip and the range window below describe the original
+design.*
 
 ## What this is
 
