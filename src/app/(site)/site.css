@@ -52,6 +52,9 @@
 /* Buttons: the terminal's .btn, sized for a page rather than a panel. */
 .site .hbtn { height: 48px; padding: 0 22px; font-size: 15px; width: auto; text-decoration: none; }
 .site .hbtn.btn-primary { box-shadow: 0 8px 24px -12px rgba(195, 245, 60, 0.6); }
+/* Links inherit their colour on the site, which would otherwise beat the
+   lime button's dark ink. Say it again, one notch more specifically. */
+.site a.btn-primary, .site a.btn-primary:hover { color: var(--lime-ink); }
 .site .ghost { background: rgba(255, 255, 255, 0.02); border-color: rgba(233, 239, 230, 0.16); color: var(--moon); }
 .site .ghost:hover:not(:disabled) { background: rgba(255, 255, 255, 0.05); }
 
@@ -66,11 +69,18 @@
 }
 .site .snav-lockup { display: flex; align-items: center; gap: 10px; text-decoration: none; min-width: 0; }
 .site .snav-word { display: block; height: 22px; width: auto; }
-.site .snav-links { margin-left: auto; display: flex; align-items: center; gap: var(--sp-6); font-size: 14px; }
-.site .snav-links a { text-decoration: none; color: var(--moss); }
-.site .snav-links a:hover { color: var(--moon); }
+/* Two doors, drawn as pills. Sniper is lime because it is the action; Range
+   is a ghost with the small target in front of the word. */
+.site .snav-links { margin-left: auto; display: flex; align-items: center; gap: var(--sp-3); }
+.site .snav-links a { text-decoration: none; }
+.site .snav-pill { height: 40px; padding: 0 18px; font-size: 15px; font-weight: 600; border-radius: var(--r-pill); gap: 10px; }
+.site .snav-links a.btn-primary, .site .snav-links a.btn-primary:hover { color: var(--lime-ink); }
+.site .snav-links a.snav-range { color: var(--moon); background: rgba(255, 255, 255, 0.02); border-color: rgba(233, 239, 230, 0.18); }
+.site .snav-links a.snav-range:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(233, 239, 230, 0.3); }
+.site .snav-range .butt { width: 18px; height: 18px; box-shadow: none; }
 @media (max-width: 720px) {
-  .site .snav-links { gap: var(--sp-4); }
+  .site .snav-links { gap: var(--sp-2); }
+  .site .snav-pill { height: 34px; padding: 0 14px; font-size: 14px; }
 }
 
 /* ── footer ──────────────────────────────────────────────────────────────── */

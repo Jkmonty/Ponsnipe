@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Logo from "@/app/Logo";
+import Butt from "./Butt";
 
 /**
  * Mark, wordmark, two links.
@@ -23,8 +24,13 @@ export default function SiteNav() {
         />
       </Link>
       <nav className="snav-links" aria-label="Site">
-        <Link href="/#feed">Sniper</Link>
-        <Link href="/range">Range</Link>
+        <Link href="/#feed" className="btn btn-primary snav-pill">
+          Sniper
+        </Link>
+        <Link href="/range" className="btn snav-pill snav-range">
+          <Butt size={18} />
+          Range
+        </Link>
       </nav>
     </header>
   );
