@@ -85,6 +85,58 @@ export function streakAfter(hit: boolean, combo: number, best: number): number {
   return Math.max(best, hit ? combo + 1 : combo);
 }
 
+export interface ButtHitInput {
+  hostile: boolean;
+  /** Which ring the arrow struck, from `ringOf`. */
+  ring: number;
+  /** The pre-multiplier, pre-combo points a hit on this stock is worth. */
+  basePoints: number;
+  /** The live combo and best-streak-so-far, both from before this hit. */
+  comboBefore: number;
+  streakBefore: number;
+  /** The best (lowest-numbered) ring struck so far this round; 0 = none yet. */
+  bestRingBefore: number;
+}
+
+export interface ButtHitResult {
+  gained: number;
+  combo: number;
+  streak: number;
+  bestRing: number;
+  /**
+   * Whether the butt just struck should be destroyed.
+   *
+   * Every credited hit destroys its target, green or red alike — a butt
+   * left standing after being credited is exactly the exploit this field
+   * exists to prevent: `world.ts` re-arms `arrowTarget` from the butt's own
+   * `dead`/`out` state every frame, so a live butt that survives a scored
+   * hit can be scored again, and again, off a single standing target for
+   * as long as it stays up — an uncapped combo multiplying every one of
+   * those hits. `onArrowHit` reads this field rather than deciding
+   * destruction itself, and this file's own tests exercise it directly, so
+   * the two cannot silently drift apart again.
+   */
+  destroyButt: boolean;
+}
+
+/**
+ * The scoring and lifecycle decision for one credited hit on a butt —
+ * pulled out of `world.ts`'s `onArrowHit` so it is a plain function a test
+ * can call directly, rather than logic only reachable by driving a live
+ * `World` (which needs a real WebGL canvas this test suite has no way to
+ * fake). `onArrowHit` calls this same function for the same decision.
+ */
+export function resolveButtHit(input: ButtHitInput): ButtHitResult {
+  const multiplier = ringMultiplier(input.ring);
+  const combo = comboAfter(true, input.comboBefore);
+  const streak = streakAfter(true, input.comboBefore, input.streakBefore);
+  const gained = Math.round(
+    (input.hostile ? input.basePoints * 1.6 : input.basePoints) * (1 + combo * 0.08) * multiplier,
+  );
+  const bestRing = input.bestRingBefore === 0 || input.ring < input.bestRingBefore ? input.ring : input.bestRingBefore;
+  return { gained, combo, streak, bestRing, destroyButt: true };
+}
+
 /**
  * The ticker, drawn to a texture.
  *

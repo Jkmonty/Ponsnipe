@@ -10,7 +10,7 @@ import {
   DRAW_MAX_SPEED,
   type Arrow,
 } from "../src/app/(site)/range/arrows";
-import { ringOf, ringMultiplier, comboAfter, streakAfter } from "../src/app/(site)/range/butts";
+import { ringOf, ringMultiplier, comboAfter, streakAfter, resolveButtHit } from "../src/app/(site)/range/butts";
 
 /** A bare arrow mesh — nothing from arrows.ts is needed to build one for a test. */
 function makeTestArrow(overrides: Partial<Arrow> & { vel: T.Vector3 }): Arrow {
@@ -223,4 +223,40 @@ test("the best streak survives the miss that ended it", () => {
   assert.equal(streakAfter(true, 4, 3), 5);
   assert.equal(streakAfter(false, 9, 9), 9);
   assert.equal(streakAfter(true, 1, 6), 6);
+});
+
+/*
+ * `resolveButtHit` is the exact decision `onArrowHit` reads to decide
+ * whether the butt it just scored gets destroyed — not a parallel copy of
+ * it. A round-1 regression let a non-hostile hit leave the butt standing
+ * (only `b.hostile` was destroyed); because `world.ts` re-arms a butt's
+ * `arrowTarget` from its own `dead`/`out` state every frame, a standing
+ * butt could be scored again by every arrow for the rest of its time up —
+ * an uncapped combo farmed off one target. These two tests exercise the
+ * real hit-resolution path (not just the pure ring/combo maths above) and
+ * would fail the instant that destroy decision stops applying uniformly.
+ */
+test("a credited hit destroys its target, green or red alike — a standing butt cannot be farmed for an uncapped combo", () => {
+  const green = resolveButtHit({ hostile: false, ring: 3, basePoints: 100, comboBefore: 0, streakBefore: 0, bestRingBefore: 0 });
+  const red = resolveButtHit({ hostile: true, ring: 3, basePoints: 100, comboBefore: 0, streakBefore: 0, bestRingBefore: 0 });
+  assert.equal(green.destroyButt, true, "a green butt left standing after being credited can be scored again for free");
+  assert.equal(red.destroyButt, true);
+});
+
+test("a destroyed butt fails world.ts's own re-arm check, so it cannot be scored twice", () => {
+  // world.ts's per-frame guard, reproduced exactly:
+  //   b.face.userData.arrowTarget = b.dead <= 0 && b.out > 0.15;
+  const isTargetable = (dead: number, out: number) => dead <= 0 && out > 0.15;
+
+  const out = 1; // fully risen
+  assert.equal(isTargetable(0, out), true, "an unstruck, fully-risen butt should be a valid target");
+
+  const result = resolveButtHit({ hostile: false, ring: 5, basePoints: 100, comboBefore: 3, streakBefore: 3, bestRingBefore: 2 });
+  const dead = result.destroyButt ? 0.6 : 0;
+
+  assert.equal(
+    isTargetable(dead, out),
+    false,
+    "a credited hit must take the target out of play, or every later arrow this round scores off the same standing butt",
+  );
 });

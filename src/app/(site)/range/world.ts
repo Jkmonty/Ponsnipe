@@ -22,7 +22,7 @@ import {
   tickerLabel,
   ringColourFor,
   ringOf,
-  ringMultiplier,
+  resolveButtHit,
   comboAfter,
   streakAfter,
   FACE_RADIUS,
@@ -94,14 +94,25 @@ const NOCK_TIME = 0.42;
 /** What a tap on a touchscreen looses at — a solid, deliberate pull with no wait. */
 const TOUCH_DRAW = 0.8;
 
-/** How long a struck (but not destroyed) butt takes to settle back upright. */
+/** How long the recoil on impact takes to settle back upright — the butt
+    still rocks even on a hit that goes on to destroy it. */
 const ROCK_TIME = 0.4;
-/** How far back it recoils at the moment of impact, in radians. */
-const ROCK_ANGLE = (16 * Math.PI) / 180;
+/**
+ * How far back it recoils at the moment of impact, in radians.
+ *
+ * 16 degrees was the first guess and read as barely there once a butt is
+ * its normal distance away and small on screen — by the time a screenshot
+ * or even a glance lands mid-animation it had already settled most of the
+ * way back. 28 degrees is what actually reads as a flinch at range without
+ * looking like the post snapped.
+ */
+const ROCK_ANGLE = (28 * Math.PI) / 180;
 /** How long the points popup takes to fade out entirely. */
 const POPUP_LIFE = 0.9;
 /** How fast the points popup drifts upward off the face, in world units/second. */
 const POPUP_RISE = 2.2;
+/** The popup sprite's width and height, in world units. */
+const POPUP_SCALE = 2.2;
 
 export class World {
   private renderer: T.WebGLRenderer;
@@ -130,8 +141,13 @@ export class World {
   streak = 0;
   bestRing = 0;
   bestSymbol = "";
-  /** The points a single hit earned `bestSymbol` — kept only to decide
-      whether a new hit's symbol displaces the old one, never shown itself. */
+  /**
+   * Running total earned per ticker this round — not shown itself, kept
+   * only to decide whether a symbol's cumulative total now beats
+   * `bestSymbol`'s. "The ticker that earned the most" means over the whole
+   * round, not whichever one happened to hand back a single big hit.
+   */
+  private symbolPoints = new Map<string, number>();
   private bestSymbolPoints = 0;
   msLeft = ROUND_MS;
   over = false;
@@ -532,6 +548,10 @@ export class World {
         b.dead -= dt;
         b.group.position.y -= dt * 9;
         b.group.rotation.z += dt * 5;
+        // The recoil from the hit that killed it plays on top of the fall
+        // rather than being skipped for it — a destroyed butt still
+        // flinches before it goes over.
+        this.stepRock(b, dt);
         continue;
       }
       b.x += b.vx * dt;
@@ -548,14 +568,7 @@ export class World {
       }
       // Rises from behind the hedge rather than fading in.
       b.group.position.set(b.x, -9 + b.out * 9, LANES[b.lane]);
-      // The recoil from being struck: a kick back on impact (rock reset to
-      // 0 in onArrowHit), easing out to upright again over ROCK_TIME. A
-      // butt that has not been hit this cycle just sits at rock === 1,
-      // where the eased angle is already zero, so this is safe to run
-      // unconditionally rather than branching on whether it was ever hit.
-      if (b.rock < 1) b.rock = Math.min(1, b.rock + dt / ROCK_TIME);
-      const settle = 1 - b.rock;
-      b.group.rotation.x = -ROCK_ANGLE * settle * settle;
+      this.stepRock(b, dt);
       // Only a butt that is actually up and not already falling is
       // something a flying arrow should be steered toward or able to hit —
       // the same condition fire() used to filter its raycast targets by.
@@ -601,6 +614,18 @@ export class World {
   }
 
   /**
+   * Ease a butt's recoil back to upright: 0 right on impact (set in
+   * `onArrowHit`), 1 once it has fully settled. Shared by a live butt and a
+   * falling (destroyed) one — every credited hit rocks the butt it struck,
+   * whether or not that hit goes on to take it down a moment later.
+   */
+  private stepRock(b: Butt, dt: number) {
+    if (b.rock < 1) b.rock = Math.min(1, b.rock + dt / ROCK_TIME);
+    const settle = 1 - b.rock;
+    b.group.rotation.x = -ROCK_ANGLE * settle * settle;
+  }
+
+  /**
    * Drift and fade the points popups, disposing each one the instant it
    * finishes rather than leaving a growing pile of dead sprites behind —
    * the same cap-and-clean discipline `stepArrows` already applies to
@@ -637,7 +662,7 @@ export class World {
     const tex = tickerLabel(`+${gained}`, colour);
     const mat = new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
     const sprite = new T.Sprite(mat);
-    sprite.scale.set(2.2, 2.2, 1);
+    sprite.scale.set(POPUP_SCALE, POPUP_SCALE, 1);
     sprite.position.copy(b.face.getWorldPosition(new T.Vector3()));
     this.scene.add(sprite);
     this.popups.push({ sprite, age: 0 });
@@ -681,37 +706,50 @@ export class World {
       const centre = b.face.getWorldPosition(new T.Vector3());
       const distanceFromCentre = point ? point.distanceTo(centre) : 0;
       const ring = ringOf(distanceFromCentre, FACE_RADIUS);
-      const multiplier = ringMultiplier(ring);
+
+      const move = Math.abs(b.stock.changePct);
+      const basePoints = Math.round(40 + move * 60);
+      const result = resolveButtHit({
+        hostile: b.hostile,
+        ring,
+        basePoints,
+        comboBefore: this.combo,
+        streakBefore: this.streak,
+        bestRingBefore: this.bestRing,
+      });
 
       this.hits += 1;
-      this.streak = streakAfter(true, this.combo, this.streak);
-      this.combo = comboAfter(true, this.combo);
+      this.combo = result.combo;
+      this.streak = result.streak;
+      this.bestRing = result.bestRing;
       this.mark += 1;
       this.markKill = b.hostile;
       // The gold ring gets the same brighter marker a kill does — both mean
       // "that was a good one".
       this.sfx?.marker(b.hostile || ring === 1);
+      this.points += result.gained;
 
-      const move = Math.abs(b.stock.changePct);
-      const base = Math.round(40 + move * 60);
-      const gained = Math.round((b.hostile ? base * 1.6 : base) * (1 + this.combo * 0.08) * multiplier);
-      this.points += gained;
-
-      if (this.bestRing === 0 || ring < this.bestRing) this.bestRing = ring;
-      if (gained > this.bestSymbolPoints) {
-        this.bestSymbolPoints = gained;
+      // "The ticker that earned the most" this round — the running total per
+      // symbol, not whichever one happened to hand back the single biggest
+      // hit. A share card naming a lucky one-off gold instead of the ticker
+      // that actually paid the most over the round would be a wrong answer,
+      // not just a different one.
+      const total = (this.symbolPoints.get(b.stock.symbol) ?? 0) + result.gained;
+      this.symbolPoints.set(b.stock.symbol, total);
+      if (total > this.bestSymbolPoints) {
+        this.bestSymbolPoints = total;
         this.bestSymbol = b.stock.symbol;
       }
 
-      this.spawnPopup(b, gained, ringColourFor(b.hostile));
+      this.spawnPopup(b, result.gained, ringColourFor(b.hostile));
 
-      if (b.hostile) {
-        // Destroyed and stops shooting, as before — the fall-and-remove
-        // animation already driven by `dead` in `step()`.
+      // Every credited hit destroys its target, green or red alike — a
+      // standing butt left alive after being scored is exactly the exploit
+      // `resolveButtHit`'s `destroyButt` field exists to prevent (see
+      // butts.ts). It still rocks on the way down: `stepRock` runs for a
+      // falling butt too.
+      if (result.destroyButt) {
         b.dead = 0.6;
-      } else {
-        // A green hit scores and reacts, but the target itself survives to
-        // be shot again before its own dwell timer sends it back down.
         b.rock = 0;
       }
       this.onChange(this.snapshot());
