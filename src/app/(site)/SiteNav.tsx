@@ -25,6 +25,13 @@ export default function SiteNav() {
       </Link>
       <nav className="snav-links" aria-label="Site">
         <Link href="/#feed" className="btn btn-primary snav-pill">
+          {/* A bow, drawn: the stave as one arc, the string, and an arrow on it. */}
+          <svg className="snav-bow" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M5 2 C 14 6, 14 14, 5 18" />
+            <path d="M5 2 L 5 18" />
+            <path d="M5 10 L 17 10" />
+            <path d="M14 7 L 17 10 L 14 13" />
+          </svg>
           Sniper
         </Link>
         <Link href="/range" className="btn snav-pill snav-range">

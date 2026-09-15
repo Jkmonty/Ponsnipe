@@ -78,6 +78,8 @@
 .site .snav-links a.snav-range { color: var(--moon); background: rgba(255, 255, 255, 0.02); border-color: rgba(233, 239, 230, 0.18); }
 .site .snav-links a.snav-range:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(233, 239, 230, 0.3); }
 .site .snav-range .butt { width: 18px; height: 18px; box-shadow: none; }
+.site .snav-bow { width: 18px; height: 18px; flex: none; }
+.site .snav-bow path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 @media (max-width: 720px) {
   .site .snav-links { gap: var(--sp-2); }
   .site .snav-pill { height: 34px; padding: 0 14px; font-size: 14px; }
