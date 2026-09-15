@@ -44,8 +44,8 @@ export default function Hero({
             <Link href="/range" className="btn btn-primary hbtn">
               Draw the bow
             </Link>
-            <a href="#paper" className="btn hbtn ghost">
-              Paper sniper · 8 real launches
+            <a href="#snipe" className="btn hbtn ghost">
+              Snipe a launch
             </a>
           </div>
           {pool && (

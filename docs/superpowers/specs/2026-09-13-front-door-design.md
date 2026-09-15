@@ -5,6 +5,12 @@ three page-structure wireframes; the chosen ones are described here rather
 than attached, since the mockups live in `.superpowers/brainstorm/` and are
 not committed.*
 
+*Amended 15 September 2026: the paper sniper was removed from the site. The
+section it occupied now carries the terminal's trade panel, the live site's
+right column, so a visitor can arm a snipe from the front door. `/play` is
+gone; `/api/paper` remains. References to the paper sniper below describe the
+original design.*
+
 ## What this is
 
 A landing page at the root of ponsnipe.com for a stranger who has never seen

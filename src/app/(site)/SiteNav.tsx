@@ -23,10 +23,7 @@ export default function SiteNav() {
       </Link>
       <nav className="snav-links" aria-label="Site">
         <Link href="/range">Range</Link>
-        <Link href="/play">
-          <span className="snav-long">Paper sniper</span>
-          <span className="snav-short">Play</span>
-        </Link>
+        <Link href="/#snipe">Snipe</Link>
         <Link href="/range#board" className="snav-board">
           Board
         </Link>
