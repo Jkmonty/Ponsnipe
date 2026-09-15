@@ -66,13 +66,17 @@ export function drawSpeed(draw: number): number {
  * is what stopped the game reading as broken. A flying arrow cannot snap, so
  * it steers instead — the same forgiveness, spent over the flight rather than
  * spent in one instant. A thumb is not a mouse, so touch gets half as much
- * again — but the whole point is that it stays small, so a bad shot still
- * misses, which is why touch is capped just under 3 degrees rather than the
- * 3.3 you'd get by scaling a 2.2-degree mouse angle by 1.5.
+ * again.
+ *
+ * 2.6 degrees is not a generous starting point, it is the floor: steering an
+ * arrow home over its flight is strictly weaker help than teleporting it onto
+ * the target the instant it was loosed, which is what the old hitscan did at
+ * this same angle. Anything less than 2.6 here would make hitting a butt
+ * harder than the game already shipped with.
  */
 export function assistAngle(touch: boolean): number {
-  const base = (2 * Math.PI) / 180; // 2 degrees
-  return touch ? base * 1.5 : base; // 3 degrees for touch
+  const base = (2.6 * Math.PI) / 180; // 2.6 degrees — see above
+  return touch ? base * 1.5 : base; // 3.9 degrees for touch
 }
 
 /**
