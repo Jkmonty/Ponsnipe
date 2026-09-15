@@ -15,6 +15,9 @@
  * Three.js only lives on this route, so the terminal's bundle never sees it.
  */
 import * as T from "three";
+import { buildWood, rand } from "./scene";
+import { LANES, HIT_RADIUS, makeButt, type Butt } from "./butts";
+import { makeArrowMesh, looseEnemyArrow, type Arrow } from "./arrows";
 
 export interface Stock {
   symbol: string;
@@ -44,35 +47,6 @@ const START_LIVES = 3;
 const FOV_WIDE = 72;
 const FOV_SCOPE = 26;
 
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
-
-interface Butt {
-  group: T.Group;
-  stock: Stock;
-  hostile: boolean;
-  /** The disc that gets shot. Raycasting against the whole group would let a
-      post or a leg count as a hit. */
-  face: T.Mesh;
-  lane: number;
-  x: number;
-  vx: number;
-  out: number;
-  rising: boolean;
-  dwell: number;
-  cooldown: number;
-  dead: number;
-}
-
-interface Arrow {
-  mesh: T.Mesh;
-  vel: T.Vector3;
-  life: number;
-}
-
-/** Where the three rows of cover sit, in world units away from the camera. */
-const LANES = [-12, -25, -38];
-/** How near an arrow has to pass to count. Generous: this is an arcade. */
-const HIT_RADIUS = 2.6;
 /** How long the flinch lasts, and the window in which nothing else can land. */
 const HURT_TIME = 0.7;
 
@@ -143,7 +117,8 @@ export class World {
     // Back from the first hedge, so there is ground between you and the
     // nearest butt and the range reads as a range rather than a wall.
     this.camera.position.set(0, 3.6, 20);
-    this.buildWorld();
+    buildWood(this.scene);
+    this.buildBow();
     this.resize();
   }
 
@@ -161,119 +136,6 @@ export class World {
       markKill: this.markKill,
       hurt: Math.max(0, Math.min(1, this.hurt / HURT_TIME)),
     };
-  }
-
-  /**
-   * The wood, built once.
-   *
-   * Fog does the heavy lifting: it hides the far edge of the ground plane, so
-   * the world reads as continuing rather than as a disc floating in a colour.
-   */
-  private buildWorld() {
-    const dusk = new T.Color("#132a1f");
-    this.scene.background = new T.Color("#1d3a2a");
-    this.scene.fog = new T.Fog(dusk.getHex(), 40, 150);
-
-    this.scene.add(new T.AmbientLight(0x8fb39a, 1.5));
-    const sun = new T.DirectionalLight(0xffe9b0, 2.1);
-    sun.position.set(-30, 40, 20);
-    this.scene.add(sun);
-
-    // Ground: one big plane, gently displaced so it is not a mirror.
-    const g = new T.PlaneGeometry(400, 400, 40, 40);
-    const pos = g.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      pos.setZ(i, Math.sin(pos.getX(i) * 0.08) * 0.7 + Math.cos(pos.getY(i) * 0.06) * 0.6);
-    }
-    g.computeVertexNormals();
-    const ground = new T.Mesh(
-      g,
-      new T.MeshLambertMaterial({ color: 0x2f5a3c, flatShading: true }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    this.scene.add(ground);
-
-    for (const z of LANES) this.hedge(z);
-    for (let i = 0; i < 90; i++) {
-      this.tree(rand(-90, 90), rand(-150, -8));
-    }
-    for (let i = 0; i < 40; i++) {
-      this.rock(rand(-70, 70), rand(-95, -6));
-    }
-
-    /*
-     * The things that make it a range in Sherwood rather than a wood.
-     *
-     * A shooting range is a made place: someone put the butts there, stacked
-     * the straw, hung the pennants and lit a fire. Without them it is just
-     * trees with targets in, which is what the first pass looked like.
-     */
-    this.palisade(-58);
-    for (let i = 0; i < 14; i++) this.bale(rand(-40, 40), rand(-46, -10));
-    for (const x of [-24, -8, 8, 24]) this.pennant(x, -52);
-    this.campfire(-16, 8);
-    this.campfire(19, 4);
-
-    this.oak(-36, -22);
-    this.oak(34, -30);
-    this.tower(-62, -132);
-    this.buildBow();
-  }
-
-  /**
-   * A great oak, the size the Major Oak actually is.
-   *
-   * The ordinary trees are cones on sticks and read as woodland. One tree that
-   * dwarfs them, with a trunk you could hide behind and boughs that spread
-   * rather than point, is the difference between a forest and *that* forest.
-   */
-  private oak(x: number, z: number) {
-    const bark = new T.MeshLambertMaterial({ color: 0x4a3826, flatShading: true });
-    const leaf = new T.MeshLambertMaterial({ color: 0x2c5233, flatShading: true });
-    const trunk = new T.Mesh(new T.CylinderGeometry(1.6, 2.8, 11, 7), bark);
-    trunk.position.set(x, 5.5, z);
-    this.scene.add(trunk);
-    // Boughs out and up, each carrying its own mass of leaves.
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2 + rand(-0.3, 0.3);
-      const len = rand(5, 8);
-      const bough = new T.Mesh(new T.CylinderGeometry(0.35, 0.8, len, 5), bark);
-      bough.position.set(x + Math.cos(a) * len * 0.35, 10 + rand(0, 2), z + Math.sin(a) * len * 0.35);
-      bough.rotation.set(Math.sin(a) * 0.8, 0, -Math.cos(a) * 0.8);
-      this.scene.add(bough);
-      const crown = new T.Mesh(new T.IcosahedronGeometry(rand(4, 5.6), 0), leaf);
-      crown.position.set(x + Math.cos(a) * len * 0.8, 12.5 + rand(0, 2.5), z + Math.sin(a) * len * 0.8);
-      this.scene.add(crown);
-    }
-    const top = new T.Mesh(new T.IcosahedronGeometry(6, 0), leaf);
-    top.position.set(x, 16, z);
-    this.scene.add(top);
-  }
-
-  /**
-   * Nottingham, far enough off to be a shape in the fog.
-   *
-   * It never gets close enough to need detail, and it gives the eye somewhere
-   * to land past the palisade — a horizon with something on it, rather than a
-   * colour that stops.
-   */
-  private tower(x: number, z: number) {
-    const stone = new T.MeshLambertMaterial({ color: 0x2a3b34, flatShading: true });
-    for (const [dx, h, r] of [
-      [0, 34, 5],
-      [-11, 24, 4],
-      [12, 27, 4.5],
-    ] as const) {
-      const keep = new T.Mesh(new T.CylinderGeometry(r, r * 1.15, h, 8), stone);
-      keep.position.set(x + dx, h / 2, z);
-      this.scene.add(keep);
-      const cap = new T.Mesh(new T.ConeGeometry(r * 1.2, r * 1.4, 8), stone);
-      cap.position.set(x + dx, h + r * 0.7, z);
-      this.scene.add(cap);
-    }
-    const wall = new T.Mesh(new T.BoxGeometry(46, 14, 4), stone);
-    wall.position.set(x, 7, z + 3);
-    this.scene.add(wall);
   }
 
   /**
@@ -317,7 +179,7 @@ export class World {
      * view diagonally, which is what the first attempt looked like. Keeping
      * it on the camera means its direction is simply forward.
      */
-    this.nock = this.makeArrow();
+    this.nock = makeArrowMesh();
     /*
      * Near the line of sight, because that is where a nocked arrow is.
      *
@@ -388,174 +250,6 @@ export class World {
     return g;
   }
 
-  /** A shaft lying along the view, tip away from you. */
-  private makeArrow(): T.Mesh {
-    const shaft = new T.Mesh(
-      new T.CylinderGeometry(0.012, 0.012, 1.1, 5),
-      new T.MeshLambertMaterial({ color: 0xe8d9a8, flatShading: true }),
-    );
-    shaft.geometry.rotateX(Math.PI / 2);
-    return shaft;
-  }
-
-  /** A run of sharpened stakes along the far edge, closing the range in. */
-  private palisade(z: number) {
-    const mat = new T.MeshLambertMaterial({ color: 0x4a3a28, flatShading: true });
-    for (let x = -70; x < 70; x += 1.9) {
-      const h = rand(5.5, 7);
-      const post = new T.Mesh(new T.CylinderGeometry(0.45, 0.55, h, 5), mat);
-      post.position.set(x, h / 2, z + rand(-0.3, 0.3));
-      this.scene.add(post);
-      const tip = new T.Mesh(new T.ConeGeometry(0.5, 1.1, 5), mat);
-      tip.position.set(post.position.x, h + 0.5, post.position.z);
-      this.scene.add(tip);
-    }
-  }
-
-  /** Straw bales, the thing a real butt is actually made of. */
-  private bale(x: number, z: number) {
-    const m = new T.Mesh(
-      new T.BoxGeometry(rand(2.4, 3.4), rand(1.4, 2), rand(1.6, 2.2)),
-      new T.MeshLambertMaterial({ color: 0xb8a06a, flatShading: true }),
-    );
-    m.position.set(x, 0.9, z);
-    m.rotation.y = rand(-0.4, 0.4);
-    this.scene.add(m);
-  }
-
-  /** A pennant on a pole. Lincoln green, because of course. */
-  private pennant(x: number, z: number) {
-    const pole = new T.Mesh(
-      new T.CylinderGeometry(0.14, 0.16, 11, 5),
-      new T.MeshLambertMaterial({ color: 0x5a4630, flatShading: true }),
-    );
-    pole.position.set(x, 5.5, z);
-    this.scene.add(pole);
-    const flag = new T.Mesh(
-      new T.PlaneGeometry(3.2, 1.5),
-      new T.MeshLambertMaterial({ color: 0x2e7d4f, side: T.DoubleSide, flatShading: true }),
-    );
-    flag.position.set(x + 1.7, 9.6, z);
-    this.scene.add(flag);
-  }
-
-  /** A camp fire, for the warm light a green wood otherwise lacks. */
-  private campfire(x: number, z: number) {
-    const ring = new T.Mesh(
-      new T.TorusGeometry(1.5, 0.32, 5, 9),
-      new T.MeshLambertMaterial({ color: 0x4a4f46, flatShading: true }),
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(x, 0.25, z);
-    this.scene.add(ring);
-    const flame = new T.Mesh(
-      new T.ConeGeometry(0.9, 2.2, 5),
-      new T.MeshBasicMaterial({ color: 0xffa338 }),
-    );
-    flame.position.set(x, 1.2, z);
-    this.scene.add(flame);
-    // A point light rather than a decal, so it actually reaches the ground.
-    const l = new T.PointLight(0xff9a3c, 60, 26, 2);
-    l.position.set(x, 2.2, z);
-    this.scene.add(l);
-  }
-
-  /** A run of low bushes the butts rise from behind. */
-  private hedge(z: number) {
-    const mat = new T.MeshLambertMaterial({ color: 0x1e4a30, flatShading: true });
-    for (let x = -80; x < 80; x += rand(3.2, 5.2)) {
-      const r = rand(1.4, 2.2);
-      const m = new T.Mesh(new T.IcosahedronGeometry(r, 0), mat);
-      m.position.set(x, r * 0.55, z + rand(-0.8, 0.8));
-      m.scale.y = 0.75;
-      m.rotation.y = rand(0, Math.PI);
-      this.scene.add(m);
-    }
-  }
-
-  private tree(x: number, z: number) {
-    const h = rand(9, 17);
-    const trunk = new T.Mesh(
-      new T.CylinderGeometry(rand(0.3, 0.55), rand(0.5, 0.8), h, 6),
-      new T.MeshLambertMaterial({ color: 0x3b2b1d, flatShading: true }),
-    );
-    trunk.position.set(x, h / 2, z);
-    this.scene.add(trunk);
-    // Two or three cones stacked, which is the whole vocabulary of a low-poly
-    // conifer and reads correctly from any angle.
-    const tiers = Math.random() < 0.5 ? 2 : 3;
-    const leaf = new T.MeshLambertMaterial({
-      color: new T.Color().setHSL(0.33, rand(0.35, 0.5), rand(0.16, 0.26)),
-      flatShading: true,
-    });
-    for (let i = 0; i < tiers; i++) {
-      const r = rand(3.2, 4.6) * (1 - i * 0.22);
-      const ch = rand(4.5, 6.5);
-      const cone = new T.Mesh(new T.ConeGeometry(r, ch, 7), leaf);
-      cone.position.set(x, h * 0.62 + i * ch * 0.52, z);
-      this.scene.add(cone);
-    }
-  }
-
-  private rock(x: number, z: number) {
-    const r = rand(0.8, 2.4);
-    const m = new T.Mesh(
-      new T.IcosahedronGeometry(r, 0),
-      new T.MeshLambertMaterial({ color: 0x4a4f46, flatShading: true }),
-    );
-    m.position.set(x, r * 0.5, z);
-    m.rotation.set(rand(0, 3), rand(0, 3), rand(0, 3));
-    this.scene.add(m);
-  }
-
-  /**
-   * The ticker, drawn to a texture.
-   *
-   * A canvas texture rather than a font loader: it needs one short string per
-   * target, and shipping a typeface to render six characters would cost more
-   * than the rest of the wood put together.
-   */
-  /**
-   * The face of a butt: an archery roundel with the ticker across it.
-   *
-   * It was a rectangle stretched onto a disc, which cropped the rings off and
-   * left a pale smudge that vanished against the trees. Concentric rings in
-   * the stock's own colour read as a target at any distance, and say which
-   * way the share is going before the letters are legible — which matters,
-   * because the red ones shoot back.
-   */
-  private label(text: string, colour: string): T.Texture {
-    const S = 256;
-    const cv = document.createElement("canvas");
-    cv.width = S;
-    cv.height = S;
-    const c = cv.getContext("2d")!;
-    const rings: [number, string][] = [
-      [126, colour],
-      [104, "#f4edda"],
-      [82, colour],
-      [60, "#f4edda"],
-      [34, "#e8b54a"],
-    ];
-    for (const [r, fill] of rings) {
-      c.beginPath();
-      c.arc(S / 2, S / 2, r, 0, Math.PI * 2);
-      c.fillStyle = fill;
-      c.fill();
-    }
-    // A band behind the letters, so the ticker survives the rings under it.
-    c.fillStyle = "rgba(12, 18, 24, 0.82)";
-    c.fillRect(0, 104, S, 48);
-    c.fillStyle = "#f8f4e6";
-    c.font = "bold 42px ui-monospace, SFMono-Regular, monospace";
-    c.textAlign = "center";
-    c.textBaseline = "middle";
-    c.fillText(text.slice(0, 6), S / 2, 129);
-    const tex = new T.CanvasTexture(cv);
-    tex.colorSpace = T.SRGBColorSpace;
-    return tex;
-  }
-
   private spawn() {
     if (!this.stocks.length) return;
     /*
@@ -571,74 +265,11 @@ export class World {
     const wantHostile = down.length > 0 && (up.length === 0 || Math.random() < 0.45);
     const pool = wantHostile ? down : up.length ? up : this.stocks;
     const stock = pool[Math.floor(Math.random() * pool.length)];
-    const hostile = stock.changePct < 0;
     const lane = Math.floor(Math.random() * LANES.length);
-    const z = LANES[lane];
-    const group = new T.Group();
-
-    const ringColour = hostile ? "#ff5d5d" : "#7ae089";
-    // The butt: a straw roundel on a post, facing the shooter.
-    const face = new T.Mesh(
-      new T.CircleGeometry(3.4, 22),
-      // Unlit: a target you cannot read is not a target, and the range is
-      // lit for dusk. Both sides, so one that spawns turned slightly away is
-      // still something to shoot rather than an invisible edge.
-      new T.MeshBasicMaterial({
-        map: this.label(stock.symbol, ringColour),
-        side: T.DoubleSide,
-      }),
-    );
-    /*
-     * High enough to clear the hedge it hides behind.
-     *
-     * At the old height the bottom half of every face sat inside the cover
-     * permanently, so a target was a crescent you could not read the ticker
-     * on. Cover should hide a butt while it is down and let it stand clear
-     * when it is up — not crop it forever.
-     */
-    face.position.y = 5.2;
-    group.add(face);
-
-    const rim = new T.Mesh(
-      new T.TorusGeometry(3.45, 0.24, 6, 24),
-      new T.MeshLambertMaterial({ color: new T.Color(ringColour), flatShading: true }),
-    );
-    rim.position.y = 5.2;
-    group.add(rim);
-
-    const post = new T.Mesh(
-      new T.CylinderGeometry(0.18, 0.24, 5.4, 5),
-      new T.MeshLambertMaterial({ color: 0x4a3a28, flatShading: true }),
-    );
-    post.position.y = 2.7;
-    group.add(post);
-
     const x = rand(-30, 30);
-    group.position.set(x, -9, z);
-    this.scene.add(group);
-
-    this.butts.push({
-      group,
-      stock,
-      hostile,
-      face,
-      lane,
-      x,
-      vx: (Math.random() < 0.5 ? 1 : -1) * rand(1.6, 4.2),
-      out: 0,
-      rising: true,
-      /*
-       * A red that never fires is scenery.
-       *
-       * The first shot was on a 0.6-1.3s timer while a butt stood up for only
-       * 0.4-1.1s, so most of them sank back into cover without ever loosing —
-       * which is why the reds seemed harmless. They now stand long enough to
-       * shoot, and shoot soon enough to matter.
-       */
-      dwell: hostile ? rand(1.3, 2.4) : rand(0.5, 1.2),
-      cooldown: hostile ? rand(0.25, 0.6) : rand(0.6, 1.3),
-      dead: 0,
-    });
+    const butt = makeButt(stock, lane, x);
+    this.scene.add(butt.group);
+    this.butts.push(butt);
   }
 
   /**
@@ -790,7 +421,7 @@ export class World {
         b.cooldown -= dt;
         if (b.cooldown <= 0) {
           b.cooldown = rand(0.7, 1.3);
-          this.loose(b);
+          this.arrows.push(looseEnemyArrow(this.scene, b, this.camera.position));
         }
       }
     }
@@ -864,22 +495,6 @@ export class World {
       this.scene.remove(a.mesh);
       return false;
     });
-  }
-
-  private loose(b: Butt) {
-    const from = b.group.position.clone().add(new T.Vector3(0, 5.2, 0));
-    const to = this.camera.position.clone();
-    const vel = to.sub(from).normalize().multiplyScalar(rand(34, 42));
-    // Unlit and pale, because an arrow you cannot see coming is not a
-    // challenge, it is just damage arriving.
-    const mesh = new T.Mesh(
-      new T.CylinderGeometry(0.09, 0.05, 2.2, 4),
-      new T.MeshBasicMaterial({ color: 0xffd9a0 }),
-    );
-    mesh.geometry.rotateX(Math.PI / 2);
-    mesh.position.copy(from);
-    this.scene.add(mesh);
-    this.arrows.push({ mesh, vel, life: 4 });
   }
 
   /** Fire down the centre of the view. */
