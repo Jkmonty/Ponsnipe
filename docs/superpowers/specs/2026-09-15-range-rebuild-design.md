@@ -1,0 +1,280 @@
+# The range, rebuilt
+
+*Design spec, 15 September 2026. Brainstormed against the running game with
+three painted mood boards; the chosen one is described here rather than
+attached, since the mockups live in `.superpowers/brainstorm/` and are not
+committed.*
+
+## What this is
+
+The Sherwood Shooting Range works and is not enjoyable. A click is an instant
+raycast, the menu is a black box with a button, the stage is smaller than the
+page it sits in, targets are small and far, and a hit gives almost nothing
+back. This turns it into a game worth a second go, and worth posting a score
+from.
+
+## Decisions already made
+
+These came out of the brainstorm and are not open.
+
+| Question | Answer |
+|---|---|
+| Platforms | Desktop and phone both |
+| Scope this round | Feel, danger, ending and look, all four |
+| Round shape | Unchanged: 60 seconds, three arrows taken ends it |
+| Light | Golden hour: low sun, long shadows, warm haze |
+| Desktop shot | Hold to draw, release to loose; draw sets power |
+| Phone shot | Tap to fire at a fixed draw; drag to aim |
+
+## Non-goals
+
+- No Unity, no WebGL export, no engine change. Three.js in the page stays.
+- No change to the board, `/api/arcade`, the scoring table, or the weekly
+  reset. A score posted by the new game is the same row as before.
+- No change to the site outside `src/app/(site)/range/`. The share card is
+  drawn in the browser, so it needs no route and no upload.
+- No account, no login, no server-side replay. The board stays as honest as it
+  is, and no more.
+- No multiplayer.
+
+## Architecture
+
+`world.ts` is 1,012 lines and builds scenery, runs targets, simulates arrows
+and keeps score. The new work lands in all four of those, so it splits first,
+by responsibility.
+
+```
+src/app/(site)/range/
+  world.ts      the camera, the loop, the score, the snapshot   (slimmed)
+  scene.ts      the wood: sky, sun, shadows, fog, trees, castle  (new)
+  butts.ts      targets: spawn, rise, drift, retire, scoring     (new)
+  arrows.ts     everything in flight, yours and theirs           (new)
+  share.ts      the results image, drawn on a canvas             (new)
+  sfx.ts        unchanged, plus creak() and whistle()
+  kit.ts        unchanged
+  page.tsx      the menu, the HUD, the results card
+```
+
+Each new module exports plain functions over data it is handed. `World` owns
+the state and calls them; they do not reach back into `World`. That keeps the
+loop readable and lets the scoring and pacing maths be tested without a canvas.
+
+**The snapshot grows** by what the new HUD and results card need, and nothing
+more:
+
+```ts
+export interface Snapshot {
+  points: number; health: number; lives: number;
+  hits: number; shots: number; combo: number;
+  msLeft: number; over: boolean;
+  mark: number; markKill: boolean; hurt: number;
+  /** 0..1, how far the bow is drawn right now. Desktop only. */
+  draw: number;
+  /** Longest run of hits without a miss this round. */
+  streak: number;
+  /** Best ring struck this round: 1 gold, 2 red, 3 blue, 4 black, 5 white. */
+  bestRing: number;
+  /** The ticker that earned the most this round, for the share card. */
+  bestSymbol: string;
+  /** Which wave is running, 0..2, so the HUD can tighten in the storm. */
+  wave: number;
+}
+```
+
+## The shot
+
+The single biggest change: **your arrow becomes a projectile**. It leaves the
+bow, arcs under gravity, and takes time to arrive.
+
+- Speed from the draw: 55 m/s at a full draw, 28 m/s at the minimum the game
+  will loose. Gravity 9.8 m/s², so a full-draw shot at the far rank drops
+  about a metre over its flight and has to be aimed a little high.
+- Both your arrows and theirs run through one integrator in `arrows.ts`, with
+  a flag for whose they are.
+- An arrow that hits sticks in what it hit and fades over three seconds. One
+  that misses thuds into the palisade or the ground. At most 24 stuck arrows
+  live at once; the oldest is retired first.
+
+### Drawing
+
+Desktop, left button held:
+
+- `draw` runs 0 → 1 over 700 ms. Releasing under 0.15 does nothing; the shot
+  is not loosed and the draw resets, so a stray click does not waste an arrow.
+- The bow bends and the string pulls back with the draw. The camera creeps in
+  by four degrees of field of view, the wind drops slightly, and a creak rises
+  in pitch.
+- Held past 1.4 seconds the arm begins to shake: the aim wanders by up to one
+  degree, growing. This is what stops holding a full draw forever being free.
+- On release: the arrow looses, the bow kicks, the camera kicks by 0.9 degrees
+  and settles over 200 ms, and the nock refills over 420 ms before the next
+  draw can begin.
+
+Phone, one tap:
+
+- A tap looses immediately at a fixed draw of 0.8, with no shake and no meter.
+- The same 420 ms nock applies, so the rate of fire matches.
+
+### Magnetism
+
+Today a miss inside 2.6° is snapped onto the target. With travel time that
+becomes a small steering force on the arrow in flight, toward the nearest
+target within 2.2° of its path, strong enough to forgive a pixel and far too
+weak to rescue a bad shot. The pull is 1.5× stronger on touch, because a
+thumb is not a mouse. A shot with no target near its path flies straight.
+
+### A hit
+
+- The butt rocks back on its post and settles.
+- The ticker chip pops off the face and floats up, showing the points earned,
+  then fades.
+- The combo counter climbs in the corner; every five in a row rings the chime
+  that already exists.
+- Rings score: gold 3×, red 2×, blue 1.5×, black and white 1×, on top of the
+  existing base and distance bonus. The gold tick is brighter and louder.
+- A red butt struck is destroyed rather than scored, and stops shooting.
+
+## Targets and danger
+
+**Two ranks.** A near rank about 22 units out with large faces, and a far rank
+about 40 units out with faces half the size, worth double. Both already exist
+as lanes; this widens the gap and the size difference so the choice between a
+safe shot and a good one is real.
+
+**Behaviours**, chosen per target when it rises:
+
+| Behaviour | What it does |
+|---|---|
+| Stand | Rises and stays, as now |
+| Drift | Tracks sideways along its rank |
+| Peek | Rises for 1.8 seconds and drops whether hit or not |
+| Swing | Hangs from a branch and swings through a shallow arc |
+
+**Incoming arrows.** A red butt winds up over 900 ms with a visible tell, the
+face turning to you and a red glow rising, then looses an arrow at 30 m/s with
+a whistle that rises as it nears. You have the flight time to move. Today the
+hit simply happens; this is the change that makes being shot at a thing you
+play against rather than a thing that occurs.
+
+Getting hit costs 18 health as now, flashes the vignette, and resets the
+combo.
+
+**Pacing**, three waves inside the same 60 seconds:
+
+| Wave | Seconds | What it is |
+|---|---|---|
+| 0 | 0–20 | Sparse. Two or three butts up, at most one red. |
+| 1 | 20–45 | Filling. Four to six up, reds a third of them, drift and peek appear. |
+| 2 | 45–60 | Storm. Up to nine up, half red, all behaviours, spawn interval halved. |
+
+The light drops a little through the round and the music tightens in wave 2.
+
+## The menu
+
+The black overlay goes. `World` gains an **attract mode**: the scene runs from
+page load with the camera drifting slowly along the range, butts rising and
+settling, no score, no danger, nothing to shoot.
+
+- The stage becomes full width at 16:9, with the board below rather than
+  beside it.
+- The card over it is dark glass: the title in Fraunces, one line of rules,
+  today's targets as coloured chips, the top three of the board with the
+  week's end, a lime **Draw the bow** button, and the controls line beneath.
+- The same card returns between rounds carrying the result instead of the
+  rules.
+
+## The ending
+
+- The round's last arrow flies at **0.25× speed** with the camera following it
+  in. If the round ends on the timer with no arrow in the air, the last two
+  seconds slow instead.
+- Then the **results card**, over the still scene: score, hits out of shots,
+  accuracy, longest streak, best ring, the ticker that earned most, and where
+  the score lands on this week's board.
+- **Share** draws a 1200×675 image on a canvas in `share.ts`: the score large,
+  the run's numbers under it, the best ticker, the range behind it as a flat
+  painted backdrop, and the mark. It offers the image through the clipboard
+  where the browser allows it and as a download where it does not, with a
+  prefilled line of text to paste. No upload, no new route, nothing leaves the
+  browser.
+- Posting to the board works exactly as it does now.
+
+## The look and the sound
+
+Golden hour. Sun low on the right at about 8° above the horizon, warm white
+light at 2.4 intensity, sky an orange band into deep blue, fog warm and
+starting at 45 units. Real shadow maps from the sun, 2048px, cast by posts,
+trees and butts. Pollen motes drifting through the light. Nottingham a darker
+shape in the fog.
+
+**Red butts keep a hard red rim** and a slight emissive glow, because orange
+light on a red face at 40 units is the one way this palette could break the
+game's only rule that matters: a bad day must read as red.
+
+Sound gains a wind bed under everything, a slow music loop that tightens for
+wave 2, the draw creak, and the incoming whistle. Everything falls back to
+silence rather than blocking the game, as the current sounds already do.
+
+### Assets
+
+The bar in `public/arcade/CREDITS.md` stands: **CC0 or CC-BY only, never
+non-commercial**, because the site charges a trading fee. Every new file is
+recorded in that table with its author, licence and source. Preference in
+order: Quaternius and poly.pizza, Kenney, Poly Haven, Sketchfab filtered to
+CC0. glTF only, each under 2 MB, and the whole range's assets under 6 MB.
+Anything not found under those terms is generated in code, as most of the wood
+already is.
+
+## Controls
+
+| | Desktop | Phone |
+|---|---|---|
+| Aim | Mouse, pointer-locked; cursor if refused | Drag |
+| Shoot | Hold left to draw, release to loose | Tap |
+| Scope | Hold right | Two-finger hold |
+| Move | A and D, or arrow keys, to sidestep | Swing the view |
+
+Sidestepping moves the camera up to 3 units either side of centre and eases
+back when released. It is the answer to an incoming arrow on desktop; on a
+phone, turning away is.
+
+## Failure
+
+Every piece degrades rather than blocking.
+
+| If | Then |
+|---|---|
+| WebGL is unavailable | The stage shows the painted poster and a line saying the range needs WebGL. The board still renders. |
+| The bow model fails to load | Hands and arrow only, as now. |
+| A sound file fails | That sound is silent; the round plays. |
+| Targets are unavailable | The existing "no stock targets" state, unchanged. |
+| The clipboard is refused | The share image downloads instead. |
+| Reduced motion is set | Attract drift, slow motion and screen shake are off; the game plays. |
+
+## Testing
+
+The repo's pattern: `node --test` over pure functions, browser verification for
+the rest.
+
+- `tests/range.test.ts`: the draw-to-speed curve at both ends and in the
+  middle; ring multipliers; combo and streak counting, including that a miss
+  resets the combo but keeps the best streak; the wave schedule at second 0,
+  19, 21, 44, 46 and 59; the aim-assist angle test accepting inside and
+  rejecting outside.
+- `tests/share.test.ts`: the results text layout, meaning the lines the card
+  prints for a given run, including an accuracy of zero shots.
+- The existing 165 tests and `npm run typecheck` stay green.
+- In the browser: a full round on desktop and at phone size, the menu's
+  attract mode, an incoming arrow dodged, the results card, the share image,
+  and reduced motion.
+
+## Phases
+
+Each ships on its own and is worth shipping.
+
+1. **The shot.** The file split, projectile arrows, draw and release, tap to
+   fire, magnetism, hit reactions.
+2. **The menu and the look.** Attract mode, the card, the full-width stage,
+   golden hour, shadows, fog, motes, wind.
+3. **Danger and the ending.** Two ranks, behaviours, telegraphed incoming
+   arrows, sidestep, waves, slow motion, results card, share.
