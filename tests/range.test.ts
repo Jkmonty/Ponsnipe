@@ -10,6 +10,7 @@ import {
   DRAW_MAX_SPEED,
   type Arrow,
 } from "../src/app/(site)/range/arrows";
+import { ringOf, ringMultiplier, comboAfter, streakAfter } from "../src/app/(site)/range/butts";
 
 /** A bare arrow mesh — nothing from arrows.ts is needed to build one for a test. */
 function makeTestArrow(overrides: Partial<Arrow> & { vel: T.Vector3 }): Arrow {
@@ -195,4 +196,31 @@ test("a touch-fired arrow is steered by the wider cone; a mouse-fired one at the
   // is the only other thing touching velocity, and it only ever touches y.
   assert.equal(mouseArrow.vel.x, 0, "outside its narrower cone, the mouse shot must fly dead straight");
   assert.ok(touchArrow.vel.x > 0, "inside its wider cone, the touch shot should be pulled toward the target");
+});
+
+test("the rings run gold, red, blue, black, white from the centre out", () => {
+  const r = 10;
+  assert.equal(ringOf(0, r), 1);
+  assert.equal(ringOf(1.5, r), 2);
+  assert.equal(ringOf(4, r), 3);
+  assert.equal(ringOf(6.5, r), 4);
+  assert.equal(ringOf(9, r), 5);
+});
+
+test("the gold is worth three of the outside", () => {
+  assert.equal(ringMultiplier(1), 3);
+  assert.equal(ringMultiplier(5), 1);
+  assert.ok(ringMultiplier(1) > ringMultiplier(2));
+});
+
+test("a miss resets the combo and a hit grows it", () => {
+  assert.equal(comboAfter(true, 0), 1);
+  assert.equal(comboAfter(true, 4), 5);
+  assert.equal(comboAfter(false, 9), 0);
+});
+
+test("the best streak survives the miss that ended it", () => {
+  assert.equal(streakAfter(true, 4, 3), 5);
+  assert.equal(streakAfter(false, 9, 9), 9);
+  assert.equal(streakAfter(true, 1, 6), 6);
 });

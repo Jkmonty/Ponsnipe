@@ -170,13 +170,16 @@ function disposeArrow(scene: T.Scene, mesh: T.Mesh): void {
  * `onHit` fires once per arrow that resolves: a real collision with `hit`
  * being the butt face, the ground, or the player (the scene's camera) it
  * struck, or — for a shot that flew clean past without hitting anything —
- * with `hit` being the scene itself, standing in for "no target".
+ * with `hit` being the scene itself, standing in for "no target". `point`,
+ * when given, is where in world space the arrow actually struck — a real
+ * object hit always carries one; the ground-swallowed miss cases do not,
+ * because there is nothing there worth scoring against a position on.
  */
 export function stepArrows(
   arrows: Arrow[],
   dt: number,
   scene: T.Scene,
-  onHit: (a: Arrow, hit: T.Object3D) => void,
+  onHit: (a: Arrow, hit: T.Object3D, point?: T.Vector3) => void,
 ): void {
   // Oldest first, so a heavy volley cannot pile the array past the cap. Real
   // flight time keeps far more arrows alive at once than the old instant hit
@@ -250,10 +253,11 @@ export function stepArrows(
       const toP = p.clone().sub(before);
       const len2 = seg.lengthSq() || 1;
       const t = Math.max(0, Math.min(1, toP.dot(seg) / len2));
-      const near = before.clone().addScaledVector(seg, t).distanceTo(p);
+      const nearPoint = before.clone().addScaledVector(seg, t);
+      const near = nearPoint.distanceTo(p);
       if (near < HIT_RADIUS) {
         a.stuck = dt;
-        onHit(a, player);
+        onHit(a, player, nearPoint);
         continue;
       }
     }
@@ -278,7 +282,7 @@ export function stepArrows(
         if (obj.userData.arrowTarget) obj.userData.arrowTarget = false;
         a.mesh.position.copy(hit.point);
         a.stuck = dt;
-        if (!alreadyClaimed) onHit(a, obj);
+        if (!alreadyClaimed) onHit(a, obj, hit.point.clone());
         continue;
       }
     }

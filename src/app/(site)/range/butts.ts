@@ -17,12 +17,73 @@ export interface Butt {
   dwell: number;
   cooldown: number;
   dead: number;
+  /**
+   * Progress through the recoil that plays when the face is struck: 0 right
+   * on impact, easing to 1 (fully settled) over the animation's own
+   * duration. Starts settled — nothing has hit it yet.
+   */
+  rock: number;
 }
 
 /** Where the three rows of cover sit, in world units away from the camera. */
 export const LANES = [-12, -25, -38];
 /** How near an arrow has to pass to count. Generous: this is an arcade. */
 export const HIT_RADIUS = 2.6;
+/**
+ * The face's own radius, in local (and world, since a butt is never scaled)
+ * units. This is the yardstick `ringOf` measures an impact against, so it is
+ * exported rather than left as a literal buried in the geometry below.
+ */
+export const FACE_RADIUS = 3.4;
+
+/** The rim/ring colour for a stock's own direction — shared by the face
+    texture and anything else (a popup, say) that wants to match it. */
+export function ringColourFor(hostile: boolean): string {
+  return hostile ? "#ff5d5d" : "#7ae089";
+}
+
+/**
+ * Which ring an impact lands in, by how far it struck from the face's own
+ * centre relative to the face's own radius — proportions matching the rings
+ * `tickerLabel` actually draws: gold inside 0.1, red to 0.3, blue to 0.5,
+ * black to 0.7, white beyond.
+ */
+export function ringOf(distanceFromCentre: number, faceRadius: number): number {
+  const p = faceRadius > 0 ? distanceFromCentre / faceRadius : 1;
+  if (p < 0.1) return 1; // gold
+  if (p < 0.3) return 2; // red
+  if (p < 0.5) return 3; // blue
+  if (p < 0.7) return 4; // black
+  return 5; // white
+}
+
+/**
+ * The gold is worth three of the outside. This multiplies on top of the
+ * existing scoring (base points, distance bonus, combo) — it does not
+ * replace any of it.
+ */
+export function ringMultiplier(ring: number): number {
+  switch (ring) {
+    case 1:
+      return 3;
+    case 2:
+      return 2;
+    case 3:
+      return 1.5;
+    default:
+      return 1;
+  }
+}
+
+/** A hit grows the run by one; a miss ends it outright. */
+export function comboAfter(hit: boolean, combo: number): number {
+  return hit ? combo + 1 : 0;
+}
+
+/** The best run reached survives whatever miss just ended the current one. */
+export function streakAfter(hit: boolean, combo: number, best: number): number {
+  return Math.max(best, hit ? combo + 1 : combo);
+}
 
 /**
  * The ticker, drawn to a texture.
@@ -83,10 +144,10 @@ export function makeButt(stock: Stock, lane: number, x: number): Butt {
   const z = LANES[lane];
   const group = new T.Group();
 
-  const ringColour = hostile ? "#ff5d5d" : "#7ae089";
+  const ringColour = ringColourFor(hostile);
   // The butt: a straw roundel on a post, facing the shooter.
   const face = new T.Mesh(
-    new T.CircleGeometry(3.4, 22),
+    new T.CircleGeometry(FACE_RADIUS, 22),
     // Unlit: a target you cannot read is not a target, and the range is
     // lit for dusk. Both sides, so one that spawns turned slightly away is
     // still something to shoot rather than an invisible edge.
@@ -143,5 +204,6 @@ export function makeButt(stock: Stock, lane: number, x: number): Butt {
     dwell: hostile ? rand(1.3, 2.4) : rand(0.5, 1.2),
     cooldown: hostile ? rand(0.25, 0.6) : rand(0.6, 1.3),
     dead: 0,
+    rock: 1,
   };
 }

@@ -391,6 +391,20 @@
   transition: none;
 }
 
+/* The combo counter: a hit grows it, and each new number should say so
+   rather than just quietly changing. page.tsx keys the span on the combo's
+   own value, so this animation restarts on every increment rather than
+   playing once and sitting still through a run of them. */
+.site .arc-combo {
+  display: inline-block;
+  animation: arc-combo-pop 320ms ease-out;
+}
+@keyframes arc-combo-pop {
+  0% { opacity: 0; transform: scale(0.6); }
+  40% { opacity: 1; transform: scale(1.3); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
 /* ── responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 940px) {
   .site .claims, .site .honest { grid-template-columns: 1fr; gap: var(--sp-5); }

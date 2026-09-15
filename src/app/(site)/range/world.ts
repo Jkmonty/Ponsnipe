@@ -16,7 +16,18 @@
  */
 import * as T from "three";
 import { buildWood, rand } from "./scene";
-import { LANES, makeButt, type Butt } from "./butts";
+import {
+  LANES,
+  makeButt,
+  tickerLabel,
+  ringColourFor,
+  ringOf,
+  ringMultiplier,
+  comboAfter,
+  streakAfter,
+  FACE_RADIUS,
+  type Butt,
+} from "./butts";
 import {
   makeArrowMesh,
   looseEnemyArrow,
@@ -40,6 +51,15 @@ export interface Snapshot {
   hits: number;
   shots: number;
   combo: number;
+  /** The best combo reached this round, surviving whatever miss ended it.
+      Not shown this phase — carried for Phase 3's results card. */
+  streak: number;
+  /** The best (lowest-numbered, so 1 is gold) ring struck this round.
+      0 means nothing has been struck yet. Phase 3 only. */
+  bestRing: number;
+  /** The ticker whose single hit earned the most points this round.
+      Empty until the first hit lands. Phase 3 only. */
+  bestSymbol: string;
   msLeft: number;
   over: boolean;
   /** Bumped on every hit, so the marker can flash without a callback. */
@@ -74,6 +94,15 @@ const NOCK_TIME = 0.42;
 /** What a tap on a touchscreen looses at — a solid, deliberate pull with no wait. */
 const TOUCH_DRAW = 0.8;
 
+/** How long a struck (but not destroyed) butt takes to settle back upright. */
+const ROCK_TIME = 0.4;
+/** How far back it recoils at the moment of impact, in radians. */
+const ROCK_ANGLE = (16 * Math.PI) / 180;
+/** How long the points popup takes to fade out entirely. */
+const POPUP_LIFE = 0.9;
+/** How fast the points popup drifts upward off the face, in world units/second. */
+const POPUP_RISE = 2.2;
+
 export class World {
   private renderer: T.WebGLRenderer;
   private scene = new T.Scene();
@@ -81,6 +110,9 @@ export class World {
   private raycaster = new T.Raycaster();
   private butts: Butt[] = [];
   private arrows: Arrow[] = [];
+  /** Points popups floating up off a struck face — a sprite each, aged out
+      and disposed once they finish fading rather than left to accumulate. */
+  private popups: { sprite: T.Sprite; age: number }[] = [];
   private raf = 0;
   private running = false;
   private last = 0;
@@ -95,6 +127,12 @@ export class World {
   hits = 0;
   shots = 0;
   combo = 0;
+  streak = 0;
+  bestRing = 0;
+  bestSymbol = "";
+  /** The points a single hit earned `bestSymbol` — kept only to decide
+      whether a new hit's symbol displaces the old one, never shown itself. */
+  private bestSymbolPoints = 0;
   msLeft = ROUND_MS;
   over = false;
   /** Read it, but set it through setScoped so the view can follow. */
@@ -193,6 +231,9 @@ export class World {
       hits: this.hits,
       shots: this.shots,
       combo: this.combo,
+      streak: this.streak,
+      bestRing: this.bestRing,
+      bestSymbol: this.bestSymbol,
       msLeft: this.msLeft,
       over: this.over,
       mark: this.mark,
@@ -507,6 +548,14 @@ export class World {
       }
       // Rises from behind the hedge rather than fading in.
       b.group.position.set(b.x, -9 + b.out * 9, LANES[b.lane]);
+      // The recoil from being struck: a kick back on impact (rock reset to
+      // 0 in onArrowHit), easing out to upright again over ROCK_TIME. A
+      // butt that has not been hit this cycle just sits at rock === 1,
+      // where the eased angle is already zero, so this is safe to run
+      // unconditionally rather than branching on whether it was ever hit.
+      if (b.rock < 1) b.rock = Math.min(1, b.rock + dt / ROCK_TIME);
+      const settle = 1 - b.rock;
+      b.group.rotation.x = -ROCK_ANGLE * settle * settle;
       // Only a butt that is actually up and not already falling is
       // something a flying arrow should be steered toward or able to hit —
       // the same condition fire() used to filter its raycast targets by.
@@ -547,7 +596,51 @@ export class World {
      * have to be kept in sync by hand — which is exactly how the segment
      * test below would have ended up covering only one of them.
      */
-    stepArrows(this.arrows, dt, this.scene, (a, hit) => this.onArrowHit(a, hit));
+    stepArrows(this.arrows, dt, this.scene, (a, hit, point) => this.onArrowHit(a, hit, point));
+    this.stepPopups(dt);
+  }
+
+  /**
+   * Drift and fade the points popups, disposing each one the instant it
+   * finishes rather than leaving a growing pile of dead sprites behind —
+   * the same cap-and-clean discipline `stepArrows` already applies to
+   * arrows, applied here to the other thing a hit spawns.
+   */
+  private stepPopups(dt: number) {
+    for (let i = this.popups.length - 1; i >= 0; i--) {
+      const p = this.popups[i];
+      p.age += dt;
+      p.sprite.position.y += dt * POPUP_RISE;
+      const mat = p.sprite.material as T.SpriteMaterial;
+      mat.opacity = Math.max(0, 1 - p.age / POPUP_LIFE);
+      if (p.age >= POPUP_LIFE) {
+        this.disposePopup(p);
+        this.popups.splice(i, 1);
+      }
+    }
+  }
+
+  private disposePopup(p: { sprite: T.Sprite; age: number }) {
+    this.scene.remove(p.sprite);
+    const mat = p.sprite.material as T.SpriteMaterial;
+    mat.map?.dispose();
+    mat.dispose();
+  }
+
+  /**
+   * The ticker chip that pops off a struck face: a sprite showing the
+   * points just earned, on a short upward path that fades. Reuses
+   * `tickerLabel`'s canvas-texture rendering rather than a second way of
+   * drawing text to a texture — fed the points string instead of a symbol.
+   */
+  private spawnPopup(b: Butt, gained: number, colour: string) {
+    const tex = tickerLabel(`+${gained}`, colour);
+    const mat = new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const sprite = new T.Sprite(mat);
+    sprite.scale.set(2.2, 2.2, 1);
+    sprite.position.copy(b.face.getWorldPosition(new T.Vector3()));
+    this.scene.add(sprite);
+    this.popups.push({ sprite, age: 0 });
   }
 
   /**
@@ -558,13 +651,15 @@ export class World {
    * unchanged because a shot's outcome is no longer known the instant it is
    * loosed — only once the arrow actually arrives somewhere.
    */
-  private onArrowHit(a: Arrow, hit: T.Object3D) {
+  private onArrowHit(a: Arrow, hit: T.Object3D, point?: T.Vector3) {
     if (a.mine) {
       const b = this.butts.find((x) => x.face === hit);
       if (!b) {
         // Landed in the dirt, or flew clean past everything: a miss, same
-        // as the old instant hitscan's miss.
-        this.combo = 0;
+        // as the old instant hitscan's miss. The streak already reached is
+        // kept — only the live combo dies here.
+        this.streak = streakAfter(false, this.combo, this.streak);
+        this.combo = comboAfter(false, this.combo);
         this.sfx?.miss();
         this.onChange(this.snapshot());
         return;
@@ -578,15 +673,47 @@ export class World {
        * noise. Every fifth makes it mean something when it does arrive.
        */
       if (this.combo >= 5 && this.combo % 5 === 0) this.sfx?.chime(this.combo);
-      b.dead = 0.6;
+
+      // Where on the face it struck, not just which face — a raycast always
+      // hands stepArrows a real intersection point for an object hit, but
+      // the fallback keeps a missing one from ever crashing this out to
+      // something other than the most generous ring.
+      const centre = b.face.getWorldPosition(new T.Vector3());
+      const distanceFromCentre = point ? point.distanceTo(centre) : 0;
+      const ring = ringOf(distanceFromCentre, FACE_RADIUS);
+      const multiplier = ringMultiplier(ring);
+
       this.hits += 1;
-      this.combo += 1;
+      this.streak = streakAfter(true, this.combo, this.streak);
+      this.combo = comboAfter(true, this.combo);
       this.mark += 1;
       this.markKill = b.hostile;
-      this.sfx?.marker(b.hostile);
+      // The gold ring gets the same brighter marker a kill does — both mean
+      // "that was a good one".
+      this.sfx?.marker(b.hostile || ring === 1);
+
       const move = Math.abs(b.stock.changePct);
       const base = Math.round(40 + move * 60);
-      this.points += Math.round((b.hostile ? base * 1.6 : base) * (1 + this.combo * 0.08));
+      const gained = Math.round((b.hostile ? base * 1.6 : base) * (1 + this.combo * 0.08) * multiplier);
+      this.points += gained;
+
+      if (this.bestRing === 0 || ring < this.bestRing) this.bestRing = ring;
+      if (gained > this.bestSymbolPoints) {
+        this.bestSymbolPoints = gained;
+        this.bestSymbol = b.stock.symbol;
+      }
+
+      this.spawnPopup(b, gained, ringColourFor(b.hostile));
+
+      if (b.hostile) {
+        // Destroyed and stops shooting, as before — the fall-and-remove
+        // animation already driven by `dead` in `step()`.
+        b.dead = 0.6;
+      } else {
+        // A green hit scores and reacts, but the target itself survives to
+        // be shot again before its own dwell timer sends it back down.
+        b.rock = 0;
+      }
       this.onChange(this.snapshot());
       return;
     }
@@ -799,6 +926,10 @@ export class World {
   stop() {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    // Whatever popups had not finished fading do not get another frame to
+    // do so — free their textures now rather than leaking them.
+    for (const p of this.popups) this.disposePopup(p);
+    this.popups = [];
     this.renderer.dispose();
   }
 }

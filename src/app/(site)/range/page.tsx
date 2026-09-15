@@ -376,7 +376,16 @@ export default function ArcadePage() {
             <>
               <div className="arc-hud">
                 <span className="arc-score">{s.points.toLocaleString()}</span>
-                {s.combo > 1 && <span className="arc-combo">×{s.combo}</span>}
+                {/*
+                  Keyed by the combo's own value, so each increment remounts
+                  the span and restarts the CSS pop rather than the number
+                  just quietly changing underneath a static element.
+                */}
+                {s.combo > 1 && (
+                  <span key={s.combo} className="arc-combo">
+                    ×{s.combo}
+                  </span>
+                )}
                 <span className="arc-time">{Math.ceil(s.msLeft / 1000)}s</span>
               </div>
               <div className="arc-health" aria-label={`Health ${s.health}%`}>
