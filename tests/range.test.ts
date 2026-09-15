@@ -163,3 +163,36 @@ test("the shake is capped, so a long hold is worse but never hopeless", () => {
   assert.equal(drawShake(3), drawShake(30));
   assert.ok(drawShake(30) <= 0.0175, "one degree is the most it may wander");
 });
+
+test("a touch-fired arrow is steered by the wider cone; a mouse-fired one at the same angle is not", () => {
+  const scene = new T.Scene();
+  const mouseCone = assistAngle(false);
+  const touchCone = assistAngle(true);
+  // Strictly between the two: outside the mouse assist cone, inside the touch one.
+  const theta = (mouseCone + touchCone) / 2;
+
+  // A target off to one side, positioned so the angle from a straight shot
+  // to it is exactly `theta` — the one angle that tells the two cones apart.
+  const distance = 50;
+  const face = new T.Mesh(new T.CircleGeometry(2, 16), new T.MeshBasicMaterial());
+  face.position.set(distance * Math.tan(theta), 0, -distance);
+  face.userData.arrowTarget = true;
+  scene.add(face);
+
+  const speed = 40;
+  const mouseArrow = makeTestArrow({ vel: new T.Vector3(0, 0, -speed), mine: true, touch: false });
+  const touchArrow = makeTestArrow({ vel: new T.Vector3(0, 0, -speed), mine: true, touch: true });
+  scene.add(mouseArrow.mesh);
+  scene.add(touchArrow.mesh);
+
+  const dt = 1 / 60;
+  for (let i = 0; i < 5; i++) {
+    stepArrows([mouseArrow], dt, scene, () => {});
+    stepArrows([touchArrow], dt, scene, () => {});
+  }
+
+  // Steering only ever nudges sideways (toward the target's +x offset) — gravity
+  // is the only other thing touching velocity, and it only ever touches y.
+  assert.equal(mouseArrow.vel.x, 0, "outside its narrower cone, the mouse shot must fly dead straight");
+  assert.ok(touchArrow.vel.x > 0, "inside its wider cone, the touch shot should be pulled toward the target");
+});

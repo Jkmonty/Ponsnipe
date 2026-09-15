@@ -104,8 +104,18 @@ export class World {
   /** The bow in your hands, and how far through nocking the next arrow it is. */
   private bow: T.Group | null = null;
   private nock: T.Mesh | null = null;
+  /**
+   * `drawn` and `draw` are one letter apart and mean different things — easy
+   * to conflate, so spelled out here:
+   *   `drawn`  — the nock's own refill, 0..1, climbing back to 1 on its own
+   *              after every shot. This is the rate-of-fire gate; it has
+   *              nothing to do with how hard the string was pulled.
+   *   `draw`   — how far the string is pulled back right now, 0..1, driven
+   *              entirely by `beginDraw`/`releaseDraw` holding a button down.
+   * A shot needs `drawn` to be (nearly) full before it can begin, and its
+   * speed is set by `draw` — two independent numbers doing two different jobs.
+   */
   private drawn = 1;
-  /** How far the string is pulled back, 0..1. Separate from `drawn`, the nock's own refill. */
   private draw = 0;
   /** True while the draw is being held; false the instant it looses or is abandoned. */
   private drawing = false;
@@ -616,6 +626,24 @@ export class World {
   beginDraw(): void {
     if (this.over || this.drawing || this.drawn < 1) return;
     this.drawing = true;
+    this.draw = 0;
+    this.heldSeconds = 0;
+  }
+
+  /**
+   * Throw away a held draw without ever loosing it — no `fire` call, whatever
+   * `draw` had reached.
+   *
+   * This is not a second way to end a draw with a shot; it is the one way to
+   * end a draw with nothing. It exists because the cursor leaving the canvas
+   * is an ordinary thing that happens mid-hold — tracking a target near the
+   * edge, or just not being under pointer lock — and `releaseDraw` looses
+   * whenever the pull passed `MIN_LOOSE_DRAW`, which is nearly any real hold.
+   * Routing a canvas exit through `releaseDraw` would spend an arrow on
+   * exactly the stray input `MIN_LOOSE_DRAW` exists to filter out of clicks.
+   */
+  cancelDraw(): void {
+    this.drawing = false;
     this.draw = 0;
     this.heldSeconds = 0;
   }

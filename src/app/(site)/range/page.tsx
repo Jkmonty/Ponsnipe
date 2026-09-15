@@ -286,11 +286,12 @@ export default function ArcadePage() {
             }}
             onPointerLeave={() => {
               scope(false);
-              // The mouse leaving mid-draw ends it the same way letting go
-              // does: loosed if it had reached something worth loosing,
-              // abandoned otherwise. Either way it should not be left
-              // drawing forever with the pointer gone.
-              gameRef.current?.releaseDraw();
+              // The cursor leaving mid-draw must never loose a shot — that is
+              // exactly the stray input the draw threshold exists to filter
+              // out of clicks, just reached by drifting off the canvas
+              // instead. cancelDraw throws the hold away unconditionally,
+              // rather than releaseDraw's loose-if-far-enough.
+              gameRef.current?.cancelDraw();
             }}
             onContextMenu={(e) => e.preventDefault()}
           />
