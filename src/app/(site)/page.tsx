@@ -4,11 +4,10 @@ import { env } from "@/lib/env";
 import { top, weekEnds, weekOf, type Score } from "@/lib/arcade";
 import { poolBalance, type PoolInfo } from "@/lib/pool";
 import { loadTargets, pickPins, type Pin } from "@/lib/targets";
-import { readFeed, type FeedRow } from "@/lib/feed/query";
 import Hero from "./Hero";
-import SnipeSection from "./SnipeSection";
+import LiveSection from "./LiveSection";
 import RangeWindow from "./RangeWindow";
-import TerminalStrip from "./TerminalStrip";
+import TerminalClaims from "./TerminalClaims";
 import HonestNumbers from "./HonestNumbers";
 
 export const dynamic = "force-dynamic";
@@ -45,42 +44,31 @@ async function safely<T>(work: () => Promise<T> | T, fallback: T): Promise<T> {
   }
 }
 
-const STRIP_TTL_MS = 30_000;
-const g = globalThis as typeof globalThis & { __ponsStrip?: { at: number; data: FeedRow[] } };
-
-/** The five newest launches, cached half a minute: the strip's age column tolerates that, and the feed query is the heaviest read in the app. */
-async function newestLaunches(): Promise<FeedRow[]> {
-  const hit = g.__ponsStrip;
-  if (hit && Date.now() - hit.at < STRIP_TTL_MS) return hit.data;
-  const { rows } = await readFeed({ maxAgeMin: 180, limit: 5 });
-  g.__ponsStrip = { at: Date.now(), data: rows };
-  return rows;
-}
-
 /**
  * The front door.
  *
  * Only a hosted instance has strangers. On a local install the root goes
  * straight to the tool, so `npm run dev` still opens the terminal.
+ *
+ * The live feed is a client component that streams for itself, so the server
+ * reads here are only what the hero needs.
  */
 export default async function Landing() {
   if (!env.publicMode) redirect("/terminal");
 
   const week = weekOf();
-  const [board, pins, pool, feed] = await Promise.all([
+  const [board, pins, pool] = await Promise.all([
     safely<Score[]>(() => top(3, week), []),
     safely<Pin[]>(async () => pickPins(await loadTargets()), []),
     safely<PoolInfo | null>(() => poolBalance(), null),
-    safely<FeedRow[]>(() => newestLaunches(), []),
   ]);
 
   return (
     <main className="site-main">
       <Hero pins={pins} board={board} endsAt={weekEnds(week)} pool={pool} />
-
-      <SnipeSection />
+      <LiveSection />
       <RangeWindow hasPool={pool !== null} />
-      <TerminalStrip rows={feed} />
+      <TerminalClaims />
       <HonestNumbers />
     </main>
   );

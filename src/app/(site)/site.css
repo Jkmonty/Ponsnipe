@@ -271,12 +271,15 @@
     linear-gradient(to top, #040604 30px, transparent 100%);
 }
 
-/* ── snipe a launch, on the page ─────────────────────────────────────────────
-   The terminal's own trade panel, in the terminal's own column, so it renders
-   here exactly as it does on the hosted terminal. Only its width is ours. */
-.site .snipe-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-5); flex-wrap: wrap; }
-.site .snipe-head > div { display: grid; gap: var(--sp-3); }
-.site .site-snipe { width: min(560px, 100%); flex: none; }
+/* ── the live feed and the panel, on the page ────────────────────────────────
+   The terminal's own feed and trade panel in the terminal's own grid, so they
+   render here exactly as they do on the hosted terminal. The feed is sticky;
+   the terminal offsets it under its own sticky header, but the site nav
+   scrolls away, so here it sits near the top of the viewport instead. */
+.site .live-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-5); flex-wrap: wrap; }
+.site .live-head > div { display: grid; gap: var(--sp-3); }
+.site .site-cols { width: 100%; }
+.site .site-cols .feed { top: var(--sp-4); }
 
 /* ── the range window ────────────────────────────────────────────────────── */
 .site .rwin {

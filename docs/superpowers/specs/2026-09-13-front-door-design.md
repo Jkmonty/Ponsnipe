@@ -6,10 +6,12 @@ than attached, since the mockups live in `.superpowers/brainstorm/` and are
 not committed.*
 
 *Amended 15 September 2026: the paper sniper was removed from the site. The
-section it occupied now carries the terminal's trade panel, the live site's
-right column, so a visitor can arm a snipe from the front door. `/play` is
-gone; `/api/paper` remains. References to the paper sniper below describe the
-original design.*
+section it occupied now carries the terminal's public view, the live feed
+beside the trade panel, wired together as the terminal wires them, so a
+visitor can watch launches and arm a snipe from the front door. The launch
+strip lower down went with it, since the full feed sits above; the three
+measured claims stay. `/play` is gone; `/api/paper` remains. References to
+the paper sniper and the strip below describe the original design.*
 
 ## What this is
 

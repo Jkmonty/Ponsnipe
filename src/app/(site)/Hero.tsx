@@ -44,7 +44,7 @@ export default function Hero({
             <Link href="/range" className="btn btn-primary hbtn">
               Draw the bow
             </Link>
-            <a href="#snipe" className="btn hbtn ghost">
+            <a href="#feed" className="btn hbtn ghost">
               Snipe a launch
             </a>
           </div>
