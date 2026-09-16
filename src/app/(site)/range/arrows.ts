@@ -220,12 +220,23 @@ function disposeArrow(scene: T.Scene, mesh: T.Mesh): void {
  * when given, is where in world space the arrow actually struck — a real
  * object hit always carries one; the ground-swallowed miss cases do not,
  * because there is nothing there worth scoring against a position on.
+ *
+ * `frozen`, when given, names arrows this frame simply does not happen to:
+ * they do not move, fall, fade, expire or collide with anything, and
+ * `onHit` cannot fire for them. They are not removed either — a frozen
+ * arrow is still in the list, at exactly the position, velocity, `life` and
+ * `stuck` it had when the freeze began, and resumes untouched the first
+ * frame it is no longer named. `world.ts` uses it for one thing (hostile
+ * arrows, for the duration of the ending — see `step`); this module does
+ * not know or care why, which is why it takes a predicate rather than a
+ * flag about whose arrow it is.
  */
 export function stepArrows(
   arrows: Arrow[],
   dt: number,
   scene: T.Scene,
   onHit: (a: Arrow, hit: T.Object3D, point?: T.Vector3) => void,
+  frozen?: (a: Arrow) => boolean,
 ): void {
   // Oldest first, so a heavy volley cannot pile the array past the cap. Real
   // flight time keeps far more arrows alive at once than the old instant hit
@@ -245,6 +256,11 @@ export function stepArrows(
   const claimedThisTick = new Set<T.Object3D>();
 
   for (const a of arrows) {
+    // Before anything else this frame would touch it, the stuck fade below
+    // included. The removal pass at the bottom needs no guard of its own:
+    // it retires an arrow on `stuck` or `life`, and a frozen one advances
+    // neither, so it cannot come due while it is held.
+    if (frozen?.(a)) continue;
     if (a.stuck > 0) {
       a.stuck += dt;
       const mat = a.mesh.material as T.Material & { opacity: number; transparent: boolean };

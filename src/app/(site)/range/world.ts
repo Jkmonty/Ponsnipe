@@ -139,6 +139,12 @@ export const ENDING_MAX_S = 5;
     never an instant snap onto it. */
 const ENDING_FOLLOW_EASE = 3;
 
+/** The arrows the ending freezes: everything that is not the player's own.
+    Module-level so `step` hands `stepArrows` the same function every frame
+    rather than building one sixty times a second. See the call site, which
+    says why the ending freezes them at all. */
+const hostile = (a: Arrow) => !a.mine;
+
 /**
  * What this exact frame's ending state is, and the one scale everything
  * else in `step` reads off it — a pure function of the clock and whether a
@@ -1216,8 +1222,31 @@ export class World {
      * have to be kept in sync by hand — which is exactly how the segment
      * test below would have ended up covering only one of them.
      */
-    stepArrows(this._arrows, dtScaled, this.scene, (a, hit, point) =>
-      this.onArrowHit(a, hit, point, gate.consequencesActive),
+    stepArrows(
+      this._arrows,
+      dtScaled,
+      this.scene,
+      (a, hit, point) => this.onArrowHit(a, hit, point, gate.consequencesActive),
+      // The ending freezes everything hostile that is already in the air.
+      //
+      // The rule one block up — no new hostile shot may begin once `ending`
+      // — stopped the next arrow and did nothing about the one already
+      // loosed, which kept flying at `dtScaled` and kept costing 18 health,
+      // the combo and 250 points on arrival. The player cannot answer it:
+      // `setStrafe` refuses for the whole ending, so the dodge is attempted
+      // and refused every frame, and the camera is downrange on their own
+      // last arrow, so they cannot see the incoming one either. Asking for
+      // a dodge that is disabled, against a shot that is off screen, on a
+      // board that pays a prize, is not difficulty.
+      //
+      // Freezing rather than re-enabling the sidestep is the deliberate
+      // half: the sidestep would move the view under a camera that is not
+      // the player's to aim, and the rule this extends is the one already
+      // in force beside it. It also takes out the sub-case where that
+      // arrow killed — `lives <= 0` cut the ending short with the player's
+      // own last arrow still flying, and whatever it was about to score
+      // was never credited.
+      this.ending ? hostile : undefined,
     );
     this.stepPopups(dtScaled);
 

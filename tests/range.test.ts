@@ -41,6 +41,7 @@ import {
   SLOW_MOTION_SCALE,
   FINAL_STRETCH_MS,
   ENDING_MAX_S,
+  type Snapshot,
 } from "../src/app/(site)/range/world";
 import { shareLines, shareText, type Run } from "../src/app/(site)/range/share";
 import { makeNullSurface } from "../src/app/(site)/range/render";
@@ -1413,6 +1414,167 @@ test("with nothing in the air, the round still ends the instant the clock runs o
   w.msLeft = 1;
   w.step(1 / 60);
   assert.equal(w.over, true, "with nothing to follow out, the round should end on this same frame");
+});
+
+/**
+ * Drive a real round until a hostile arrow is well down the range, and hand
+ * it back. Every other ending test in this file builds its world from a
+ * single up stock — which keeps the range hostile-free, which is right for
+ * what those tests are about and is exactly why nothing above ever had an
+ * incoming arrow in the air at the buzzer.
+ *
+ * `travelled` is measured off the arrow's own z at the moment it is first
+ * seen rather than against the player's position, which `World` keeps
+ * private — the point is only that the shot is properly on its way, not
+ * where it has got to.
+ */
+function aRoundWithAnArrowIncoming(travelled = 28): { w: World; incoming: Arrow } {
+  const dt = 1 / 60;
+  const w = new World(makeNullSurface(), [{ symbol: "DOWN", changePct: -1 }], () => {});
+  w.start();
+  let incoming: Arrow | undefined;
+  let from = 0;
+  for (let i = 0; i < 60 * 45; i++) {
+    // Kept alive through the search so that an ordinary mid-round hit is
+    // never what one of these tests ends up measuring. Nothing else about
+    // the round is touched: the butts, the wind-ups and the shots are all
+    // the real ones.
+    w.health = 100;
+    w.lives = 3;
+    w.hurt = 0;
+    w.step(dt);
+    if (w.over) break;
+    if (!incoming) {
+      incoming = w.arrows.find((a) => !a.mine && a.stuck === 0);
+      if (incoming) from = incoming.mesh.position.z;
+      continue;
+    }
+    if (incoming.stuck > 0 || !w.arrows.includes(incoming)) {
+      incoming = undefined; // it landed before it got far enough; wait for the next
+      continue;
+    }
+    if (incoming.mesh.position.z - from >= travelled) return { w, incoming };
+  }
+  throw new Error("setup: no hostile arrow got well down the range inside 45 simulated seconds");
+}
+
+/*
+ * The seam the whole suite had switched off: danger meeting the ending.
+ *
+ * A red butt looses at you and the sixty seconds run out while that arrow
+ * is half way down the range. The player can do nothing about it —
+ * `setStrafe` refuses for the whole ending, so the dodge is attempted and
+ * refused every frame, and the camera is downrange on their own last arrow,
+ * so they cannot even see what is coming. So the arrow is frozen where it
+ * is: it does not move, and nothing it could have done to the posted score
+ * happens. On a board that pays a prize that is correctness, not balance.
+ *
+ * The assertion is the relationship — the hostile arrow is exactly where it
+ * was, the player's own is not — rather than a transcribed distance.
+ */
+test("a hostile arrow already in the air when the ending begins is frozen and costs the player nothing", () => {
+  const dt = 1 / 60;
+  const { w, incoming } = aRoundWithAnArrowIncoming();
+
+  assert.ok(w.fire(), "the player's own last arrow should have loosed");
+  const mine = w.arrows.find((a) => a.mine && a.stuck === 0);
+  assert.ok(mine, "that shot should be in the air");
+
+  w.health = 100;
+  w.lives = 3;
+  w.hurt = 0;
+  w.points = 5000; // above the 250 a hit costs, so a deduction cannot floor away unseen
+  const health = w.health;
+  const points = w.points;
+  const frozenAt = incoming.mesh.position.clone();
+  const minesAt = mine.mesh.position.clone();
+
+  w.msLeft = 1; // the clock runs out on the next frame, with both arrows up
+  let seconds = 0;
+  while (!w.over && seconds < ENDING_MAX_S * 4) {
+    // The dodge, attempted on every frame of the ending and no sooner —
+    // the ending is the first moment the player could see this coming, and
+    // pressing before the buzzer would be testing something else.
+    if (w.msLeft === 0) w.setStrafe(1);
+    w.step(dt);
+    seconds += dt;
+  }
+  assert.ok(w.over, "the round should still have ended");
+
+  assert.equal(
+    incoming.mesh.position.distanceTo(frozenAt),
+    0,
+    "the hostile arrow should not have moved a millimetre once the ending began",
+  );
+  assert.equal(incoming.stuck, 0, "and it should not have landed in anything either");
+  assert.ok(
+    mine.mesh.position.distanceTo(minesAt) > 0,
+    "the player's own arrow must still fly — the ending freezes theirs, not yours",
+  );
+  assert.equal(w.health, health, "no health may be taken during the ending");
+  // One-directional on purpose: the player's own last arrow is still
+  // resolving and may legitimately score, so the score may rise. Nothing in
+  // the ending may take from it, and taking 250 is the only thing a hostile
+  // hit does to it. (The combo is left out of this for the same reason in
+  // reverse — the player's own arrow missing resets it, so it cannot tell
+  // the two causes apart.)
+  assert.ok(
+    w.points >= points,
+    `the ending may only add to the score, never take from it (went from ${points} to ${w.points})`,
+  );
+  assert.equal(w.sidestep, 0, "the dodge is refused throughout, which is why the freeze has to do the work");
+});
+
+/*
+ * The death path, end to end. Of the two ways a round can end, the clock
+ * running out had eight tests above and this one had none.
+ *
+ * A player who never moves and never shoots, on an all-red range, is shot
+ * until the bar is empty. What `over` leaves behind is the whole assertion:
+ * the round is finished, the bar is empty, the clock still has time on it
+ * (this ended on health, not on time), the final snapshot went out, and
+ * stepping further changes nothing.
+ *
+ * The count of arrows it takes is the number the menu card states in words,
+ * measured here rather than asserted from the outside: 100 health at 18 a
+ * hit is six, and the card says six because this says six.
+ */
+test("the death path ends the round on its own, and what it leaves behind is a finished round", () => {
+  const dt = 1 / 60;
+  let last: Snapshot | undefined;
+  let pushes = 0;
+  const w = new World(makeNullSurface(), [{ symbol: "DOWN", changePct: -1 }], (s) => {
+    last = s;
+    pushes++;
+  });
+  w.start();
+
+  let health = w.health;
+  let taken = 0;
+  let seconds = 0;
+  while (!w.over && seconds < 60) {
+    w.step(dt);
+    seconds += dt;
+    if (w.health < health) taken++;
+    health = w.health;
+  }
+
+  assert.ok(w.over, `a passive player should be shot dead inside the round (lasted ${seconds.toFixed(1)}s)`);
+  assert.equal(w.health, 0, "the bar is empty, not merely low");
+  assert.equal(w.lives, 0, "and the round is out of lives");
+  assert.ok(w.msLeft > 0, "this round ended on the health bar — there should be time left on the clock");
+  assert.equal(taken, 6, "six hostile arrows empty a full bar at 18 a hit — the number the menu card states");
+
+  assert.ok(pushes > 0 && last, "the final state must have been pushed to the page, not just set on the world");
+  assert.equal(last!.over, true, "and that snapshot must say the round is over");
+  assert.equal(last!.health, 0);
+
+  const after = pushes;
+  const points = w.points;
+  w.step(dt);
+  w.step(dt);
+  assert.equal(pushes, after, "a finished round pushes nothing further");
+  assert.equal(w.points, points, "and nothing can still move the posted number");
 });
 
 /*
