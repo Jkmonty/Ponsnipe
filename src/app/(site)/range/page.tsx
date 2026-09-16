@@ -75,18 +75,21 @@ export default function ArcadePage() {
     return () => window.removeEventListener("resize", fit);
   }, [fit]);
 
-  const play = () => {
+  /*
+   * Build the world once the targets are in, and run it in attract mode
+   * straight away — the range is lit and moving under the menu from the
+   * moment the page is ready, rather than a dead canvas waiting for Start.
+   *
+   * The same `World` carries on from here through however many rounds get
+   * played: `play()` below calls `start()` on this instance rather than
+   * building a fresh one, so the wood is never torn down and rebuilt
+   * between attract and a real round, or between "Again" and the next one.
+   */
+  useEffect(() => {
     const cv = canvasRef.current;
-    if (!cv || !stocks?.length) return;
+    if (!cv || !stocks || gameRef.current) return;
     fit();
-    gameRef.current?.stop();
-    setPosted(null);
-    setLocked(true);
-    // Audio can only start from a gesture, and this is one.
-    sfxRef.current ??= new Sfx();
-    sfxRef.current.resume();
     const g = new World(cv, stocks, setS);
-    g.sfx = sfxRef.current;
     gameRef.current = g;
     /*
      * A handle on the running game.
@@ -98,8 +101,21 @@ export default function ArcadePage() {
      * test the thing that actually goes wrong: whether a shot registers.
      */
     (window as unknown as { __arcade?: World }).__arcade = g;
+    g.attract();
+  }, [stocks, fit]);
+
+  const play = () => {
+    const cv = canvasRef.current;
+    const g = gameRef.current;
+    if (!cv || !g || !stocks?.length) return;
+    fit();
+    setPosted(null);
+    setLocked(true);
+    // Audio can only start from a gesture, and this is one.
+    sfxRef.current ??= new Sfx();
+    sfxRef.current.resume();
+    g.sfx = sfxRef.current;
     setScoped(false);
-    setS(null);
     g.start();
     /*
      * Pointer lock if the browser will give it, and a fallback if not.
@@ -222,7 +238,9 @@ export default function ArcadePage() {
     g.aimAt((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
   };
 
-  const live = s && !s.over;
+  // Not live while attracting either: no round has started, so the HUD
+  // (score, health, hit marker) has nothing real to show.
+  const live = s && !s.over && !s.attract;
 
   return (
     <main className="arc range">
@@ -296,7 +314,7 @@ export default function ArcadePage() {
             onContextMenu={(e) => e.preventDefault()}
           />
 
-          {(!s || s.over) && (
+          {(!s || s.over || s.attract) && (
             <div className="arc-overlay">
               {!stocks ? (
                 <p>loading targets…</p>

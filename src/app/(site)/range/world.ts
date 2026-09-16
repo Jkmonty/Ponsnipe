@@ -76,6 +76,11 @@ export interface Snapshot {
   hurt: number;
   /** How far the string is drawn back right now, 0..1. 0 whenever not drawing. */
   draw: number;
+  /** True while the world is only running to be looked at: no round has
+      started, the clock is frozen, nothing hostile can spawn or fire, and no
+      hit can change points or health. The overlay reads this to know it
+      should still be showing the start screen rather than the HUD. */
+  attract: boolean;
 }
 
 export const ROUND_MS = 60_000;
@@ -120,6 +125,40 @@ export function nockReady(drawn: number): boolean {
   return drawn >= 1;
 }
 
+/**
+ * What one frame of `step` is allowed to change while the world is only
+ * there to look at.
+ *
+ * Pulled out as a pure function for exactly the reason `resolveButtHit` and
+ * `isTargetable` were: there is no way to drive a render loop in this test
+ * runner (it needs a real WebGL canvas), but the *decision* a render loop
+ * would make needs no canvas at all. `step` calls this once per frame and
+ * consults every field of the result rather than checking `attracting`
+ * itself in more than one place, so "what attract mode turns off" has
+ * exactly one definition instead of one per call site that could drift.
+ */
+export interface AttractGates {
+  /** Seconds the round clock may advance by this frame — `dt` outside
+      attract, and always exactly 0 while attracting. "The clock does not
+      run" is precisely this being 0, however large or small `dt` is. */
+  clockDt: number;
+  /** Whether a butt may come up hostile this frame, or an already-hostile
+      one may loose a shot. False for the whole of attract mode, so nothing
+      red ever fires — and, since `spawn` reads this too, nothing red even
+      appears. */
+  hostileActive: boolean;
+  /** Whether a credited hit, on either side, may change points or health
+      this frame. False for the whole of attract mode: whatever else might
+      reach `onArrowHit`, this is what keeps the score and the health bar
+      from moving. */
+  consequencesActive: boolean;
+}
+
+export function attractStep(state: { attracting: boolean }, dt: number): AttractGates {
+  const live = !state.attracting;
+  return { clockDt: live ? dt : 0, hostileActive: live, consequencesActive: live };
+}
+
 /** How long the recoil on impact takes to settle back upright — the butt
     still rocks even on a hit that goes on to destroy it. */
 const ROCK_TIME = 0.4;
@@ -161,6 +200,12 @@ export class World {
   /** Head turn, in radians. Clamped so you cannot spin round to the trees behind. */
   private yaw = 0;
   private pitch = 0;
+  /** True from `attract()` until `start()` leaves it. See `AttractGates`. */
+  private attracting = false;
+  /** Elapsed seconds since `attract()` began, driving the camera's own drift
+      — kept apart from anything else so it does not reset on a resize or a
+      snapshot, only on a fresh `attract()`. */
+  private attractT = 0;
   /**
    * Read once at construction. The release kick and the butt's hit-recoil
    * are the two pieces of camera/model shake this round adds that live
@@ -307,6 +352,7 @@ export class World {
       markKill: this.markKill,
       hurt: Math.max(0, Math.min(1, this.hurt / HURT_TIME)),
       draw: this.draw,
+      attract: this.attracting,
     };
   }
 
@@ -422,7 +468,14 @@ export class World {
     return g;
   }
 
-  private spawn() {
+  /**
+   * Raise one butt. `hostileActive` is `attractStep`'s own gate: while it is
+   * false (the whole of attract mode) a hostile pick is refused outright,
+   * not merely biased against — even on an all-red day, when `up` is empty,
+   * attract simply raises nothing rather than a red butt that (per the same
+   * gate, read again in `step`) could never be allowed to fire anyway.
+   */
+  private spawn(hostileActive: boolean) {
     if (!this.stocks.length) return;
     /*
      * Half the range should be shooting back.
@@ -434,8 +487,14 @@ export class World {
      */
     const down = this.stocks.filter((x) => x.changePct < 0);
     const up = this.stocks.filter((x) => x.changePct >= 0);
-    const wantHostile = down.length > 0 && (up.length === 0 || Math.random() < 0.45);
-    const pool = wantHostile ? down : up.length ? up : this.stocks;
+    let pool: Stock[];
+    if (!hostileActive) {
+      if (!up.length) return;
+      pool = up;
+    } else {
+      const wantHostile = down.length > 0 && (up.length === 0 || Math.random() < 0.45);
+      pool = wantHostile ? down : up.length ? up : this.stocks;
+    }
     const stock = pool[Math.floor(Math.random() * pool.length)];
     const lane = Math.floor(Math.random() * LANES.length);
     const x = rand(-30, 30);
@@ -487,6 +546,10 @@ export class World {
    * in every other shooter. Lowering it puts the view back.
    */
   setScoped(on: boolean) {
+    // No scope while attracting: raising it would swing the drifting view
+    // to wherever the cursor happens to be, which is exactly the kind of
+    // input attract mode must not answer.
+    if (this.attracting) return;
     if (this.scoped === on) return;
     this.scoped = on;
     if (this.pointerAiming) {
@@ -521,6 +584,9 @@ export class World {
 
   /** Look, from a locked pointer's relative movement in pixels. */
   look(dx: number, dy: number) {
+    // The drifting attract camera owns yaw/pitch on its own; a visitor
+    // moving the mouse over the menu must not be able to steer it.
+    if (this.attracting) return;
     this.aim.set(0, 0);
     const k = this.scoped ? 0.0009 : 0.0022;
     this.turn(-dx * k, -dy * k);
@@ -528,6 +594,7 @@ export class World {
 
   private step(dt: number) {
     if (this.over) return;
+    const gate = attractStep({ attracting: this.attracting }, dt);
     stepWood(this.wood, dt);
     if (this.hurt > 0) this.hurt = Math.max(0, this.hurt - dt);
 
@@ -569,7 +636,7 @@ export class World {
         this.nock.position.set(0.12, -0.2, -1.05 + this.draw * 0.16);
       }
     }
-    this.msLeft -= dt * 1000;
+    this.msLeft -= gate.clockDt * 1000;
     if (this.msLeft <= 0 || this.lives <= 0) {
       this.msLeft = Math.max(0, this.msLeft);
       this.over = true;
@@ -591,7 +658,7 @@ export class World {
        */
       const progress = 1 - this.msLeft / ROUND_MS;
       const volley = 1 + (Math.random() < 0.35 + progress * 0.4 ? 1 : 0) + (Math.random() < progress * 0.45 ? 1 : 0);
-      for (let i = 0; i < volley; i++) this.spawn();
+      for (let i = 0; i < volley; i++) this.spawn(gate.hostileActive);
       this.spawnIn = rand(0.5, 1.2) * (1 - progress * 0.45);
     }
 
@@ -627,7 +694,7 @@ export class World {
       // two cannot silently disagree about what is a live target.
       b.face.userData.arrowTarget = isTargetable(b);
 
-      if (b.hostile && b.out > 0.6) {
+      if (b.hostile && b.out > 0.6 && gate.hostileActive) {
         b.cooldown -= dt;
         if (b.cooldown <= 0) {
           b.cooldown = rand(0.7, 1.3);
@@ -663,7 +730,7 @@ export class World {
      * have to be kept in sync by hand — which is exactly how the segment
      * test below would have ended up covering only one of them.
      */
-    stepArrows(this.arrows, dt, this.scene, (a, hit, point) => this.onArrowHit(a, hit, point));
+    stepArrows(this.arrows, dt, this.scene, (a, hit, point) => this.onArrowHit(a, hit, point, gate.consequencesActive));
     this.stepPopups(dt);
   }
 
@@ -782,7 +849,14 @@ export class World {
    * unchanged because a shot's outcome is no longer known the instant it is
    * loosed — only once the arrow actually arrives somewhere.
    */
-  private onArrowHit(a: Arrow, hit: T.Object3D, point?: T.Vector3) {
+  private onArrowHit(a: Arrow, hit: T.Object3D, point: T.Vector3 | undefined, consequencesActive: boolean) {
+    // `attractStep`'s own gate, consulted here rather than re-derived: no
+    // credited hit may change points or health while attracting. In
+    // practice no arrow should exist to reach this at all — input refuses
+    // to fire and a hostile butt cannot spawn or loose one — but this is
+    // the one place score and health actually move, so it holds the line
+    // even if an arrow got here some other way.
+    if (!consequencesActive) return;
     if (a.mine) {
       const b = this.butts.find((x) => x.face === hit);
       if (!b) {
@@ -897,7 +971,7 @@ export class World {
    * last arrow is still on its way back onto the string.
    */
   beginDraw(): void {
-    if (this.over || this.drawing || !nockReady(this.drawn)) return;
+    if (this.over || this.attracting || this.drawing || !nockReady(this.drawn)) return;
     this.drawing = true;
     this.draw = 0;
     this.heldSeconds = 0;
@@ -955,7 +1029,7 @@ export class World {
    * through `fire`'s old, looser one.
    */
   touchFire(): boolean {
-    if (!nockReady(this.drawn)) return false;
+    if (this.attracting || !nockReady(this.drawn)) return false;
     return this.fire(TOUCH_DRAW, true);
   }
 
@@ -966,7 +1040,7 @@ export class World {
    * `touchFire` both end up here rather than each flying their own arrow.
    */
   fire(draw = 1, touch = false, heldSeconds = 0): boolean {
-    if (this.over) return false;
+    if (this.over || this.attracting) return false;
     /*
      * One arrow at a time.
      *
@@ -1045,17 +1119,44 @@ export class World {
     this.camera.updateProjectionMatrix();
   }
 
-  start() {
+  /**
+   * The camera's own motion while attracting: a slow, looping pan into the
+   * middle distance rather than the fixed forward stare a stopped camera
+   * would give the menu. Written directly into `yaw`/`pitch` rather than
+   * through `turn()`'s deltas, and kept well inside the same clamp `turn()`
+   * enforces during play (±0.85 yaw, -0.32..0.28 pitch) — so it can never
+   * fight that clamp, it just never needs to ask it for anything.
+   */
+  private driftCamera(dt: number) {
+    if (!this.attracting) return;
+    this.attractT += dt;
+    const YAW_PERIOD = 26; // seconds for a full left-right-left sweep
+    const PITCH_PERIOD = YAW_PERIOD * 1.7; // out of phase with the yaw, so the two never simply mirror each other
+    this.yaw = Math.sin((this.attractT / YAW_PERIOD) * Math.PI * 2) * 0.6;
+    // Levelled toward the middle distance — a shade below dead level, not
+    // up at the sky or down at the ground — with a gentle rise and fall on
+    // top of it.
+    this.pitch = -0.04 + Math.sin((this.attractT / PITCH_PERIOD) * Math.PI * 2) * 0.05;
+  }
+
+  /**
+   * Start the render loop, if it is not already running. Shared by
+   * `attract()` and `start()` — both just decide the mode first — so a
+   * `start()` that finds the loop already going (leaving attract, or
+   * replaying after a round ended) does not spin up a second one racing it
+   * for the same canvas.
+   */
+  private runLoop() {
     if (this.running) return;
     this.running = true;
     this.last = performance.now();
-    this.onChange(this.snapshot());
     let since = 0;
     const loop = (now: number) => {
       if (!this.running) return;
       const dt = Math.min(0.05, (now - this.last) / 1000);
       this.last = now;
       this.step(dt);
+      this.driftCamera(dt);
 
       // Ease the field of view rather than snapping it: a scope that changes
       // magnification instantly reads as a glitch. Drawing narrows it too, a
@@ -1084,19 +1185,68 @@ export class World {
   }
 
   /**
-   * Free everything this round built.
-   *
-   * Used to dispose only the popups and the renderer — every arrow still in
-   * flight, every butt still standing when the round ended, and the whole
-   * wood (roughly 700 scenery geometries and materials, built fresh by
-   * `buildWood` every round) were simply discarded, leaking their GPU-side
-   * resources for as long as the tab stayed open. `renderer.dispose()` frees
-   * the WebGL context; it does not touch a single geometry or texture drawn
-   * through it.
+   * Run the world with nothing at stake: the wood lit and moving, butts
+   * rising and settling, the camera drifting on its own — and, via
+   * `attracting`, every input that could shoot or score refusing outright
+   * (see `look`, `fire`, `beginDraw`, `touchFire`, `setScoped`) and `step`
+   * itself skipping the clock, hostile spawns and fire, and any hit's
+   * consequences (see `attractStep`). This is what runs from the moment the
+   * page mounts, so the range is alive under the menu rather than a black
+   * box waiting for Start.
    */
-  stop() {
-    this.running = false;
-    cancelAnimationFrame(this.raf);
+  attract() {
+    this.attracting = true;
+    this.attractT = 0;
+    this.onChange(this.snapshot());
+    this.runLoop();
+  }
+
+  /**
+   * Leave attract mode — a no-op if it was not running — and begin a real
+   * round: every bit of state a round accumulates is reset, but the wood,
+   * the bow and the renderer are the one built at construction and carry on
+   * unchanged, so pressing Start does not so much as flicker the view.
+   */
+  start() {
+    this.attracting = false;
+    this.scoped = false;
+    this.clearRound();
+    this.points = 0;
+    this.health = 100;
+    this.lives = START_LIVES;
+    this.hits = 0;
+    this.shots = 0;
+    this.combo = 0;
+    this.streak = 0;
+    this.bestRing = 0;
+    this.bestSymbol = "";
+    this.symbolPoints.clear();
+    this.bestSymbolPoints = 0;
+    this.msLeft = ROUND_MS;
+    this.over = false;
+    this.hurt = 0;
+    this.mark = 0;
+    this.markKill = false;
+    this.drawn = 1;
+    this.draw = 0;
+    this.drawing = false;
+    this.heldSeconds = 0;
+    this.kick = 0;
+    this.spawnIn = 0.5;
+    this.yaw = 0;
+    this.pitch = 0;
+    this.onChange(this.snapshot());
+    this.runLoop();
+  }
+
+  /**
+   * Free every arrow, butt and popup a round (or attract mode) built up —
+   * shared by `start()`, which clears whatever attract mode or the last
+   * round left standing before a new one begins, and `stop()`'s final
+   * teardown, so the two disposal passes cannot quietly drift apart the way
+   * `disposeButt`'s own history warns against.
+   */
+  private clearRound() {
     // Whatever popups had not finished fading do not get another frame to
     // do so — free their textures now rather than leaking them.
     for (const p of this.popups) this.disposePopup(p);
@@ -1107,8 +1257,24 @@ export class World {
       (Array.isArray(a.mesh.material) ? a.mesh.material : [a.mesh.material]).forEach((m) => m.dispose());
     }
     this.arrows = [];
-    for (const b of this.butts) disposeButt(b);
+    for (const b of this.butts) {
+      this.scene.remove(b.group);
+      disposeButt(b);
+    }
     this.butts = [];
+  }
+
+  /**
+   * Free everything this world built, wood included. Only called on
+   * unmount now that one `World` carries on from attract through however
+   * many rounds are played, rather than a fresh one being built per round —
+   * `renderer.dispose()` frees the WebGL context; it does not touch a
+   * single geometry or texture drawn through it.
+   */
+  stop() {
+    this.running = false;
+    cancelAnimationFrame(this.raf);
+    this.clearRound();
     disposeWood(this.wood);
     this.renderer.dispose();
   }

@@ -24,7 +24,7 @@ import {
   RING_FRACTIONS,
   FACE_RADIUS,
 } from "../src/app/(site)/range/butts";
-import { nockReady } from "../src/app/(site)/range/world";
+import { nockReady, attractStep } from "../src/app/(site)/range/world";
 
 /** A bare arrow mesh — nothing from arrows.ts is needed to build one for a test. */
 function makeTestArrow(overrides: Partial<Arrow> & { vel: T.Vector3 }): Arrow {
@@ -468,6 +468,81 @@ test("the nock gate is one full pull for a tap and a click alike, not the old ha
  * requires the larger error to land further off-centre — "forgiven", not
  * "decided for you."
  */
+/*
+ * Attract mode's own rules — the wood runs from the moment the page loads,
+ * but the clock, hostiles and their consequences must all stay off until a
+ * real round begins. `step` cannot be driven here (it needs a real WebGL
+ * canvas), but the decision it consults, `attractStep`, is a plain function
+ * of `{ attracting }` and `dt`, so the decision itself can be proven without
+ * one. Each check below is a relationship — frozen vs moving, off vs on,
+ * output equal to a named input — rather than a number copied out of a run.
+ */
+test("attracting turns off exactly the clock, hostiles and hit consequences, and turns them back on once a real round begins", () => {
+  const dt = 1 / 60;
+  const attracting = attractStep({ attracting: true }, dt);
+  const playing = attractStep({ attracting: false }, dt);
+
+  assert.equal(attracting.clockDt, 0, "the round clock must not advance at all while attracting");
+  assert.equal(playing.clockDt, dt, "outside attract the clock's own dt should pass straight through");
+
+  assert.equal(attracting.hostileActive, false, "no butt may come up hostile or fire while attracting");
+  assert.equal(playing.hostileActive, true, "and both are allowed once a real round begins");
+
+  assert.equal(attracting.consequencesActive, false, "a hit must not be able to change score or health while attracting");
+  assert.equal(playing.consequencesActive, true, "and hits are allowed to matter once a real round begins");
+});
+
+test("the frozen clock holds for whatever dt a frame hands it, not just a typical one", () => {
+  for (const dt of [0, 1 / 240, 1 / 30, 1, 50]) {
+    assert.equal(attractStep({ attracting: true }, dt).clockDt, 0, `dt=${dt} should still freeze the clock`);
+    assert.equal(attractStep({ attracting: false }, dt).clockDt, dt, `dt=${dt} should pass through unattended`);
+  }
+});
+
+/*
+ * The same decision, driven the way `step` actually drives it: once per
+ * simulated frame, folded into a tiny stand-in for the round state it
+ * gates. Attracting for ten seconds' worth of frames must leave the clock,
+ * the score, the health and a hostile's own cooldown exactly where they
+ * started; leaving attract must let all four move. This is the shape of
+ * the regression a gate wired up wrong (or forgotten at one call site)
+ * would actually produce — a value that quietly kept moving, or one that
+ * quietly never could.
+ */
+test("driving a simulated round through attractStep leaves the clock, score, health and a hostile's cooldown untouched while attracting, and lets a real round move all four", () => {
+  function simulate(attracting: boolean, frames: number) {
+    let msLeft = 60_000;
+    let points = 500;
+    let health = 40;
+    let cooldown = 0.05; // a hostile mid-volley, about to loose
+    const dt = 1 / 60;
+    for (let i = 0; i < frames; i++) {
+      const gate = attractStep({ attracting }, dt);
+      msLeft -= gate.clockDt * 1000;
+      if (gate.hostileActive) {
+        cooldown -= dt;
+        if (cooldown <= 0 && gate.consequencesActive) {
+          health -= 18; // a hostile arrow landing on the player
+          cooldown = 1;
+        }
+      }
+      if (gate.consequencesActive) points += 10; // stand-in for a credited hit
+    }
+    return { msLeft, points, health, cooldown };
+  }
+
+  const frozen = simulate(true, 600); // ten seconds at 60fps
+  assert.equal(frozen.msLeft, 60_000, "the clock must not have moved a millisecond while attracting");
+  assert.equal(frozen.points, 500, "score must not have moved while attracting");
+  assert.equal(frozen.health, 40, "health must not have dropped while attracting");
+  assert.equal(frozen.cooldown, 0.05, "a hostile's cooldown must never tick while attracting, so it never gets the chance to fire");
+
+  const live = simulate(false, 600);
+  assert.ok(live.msLeft < 60_000, "outside attract the clock should have run down");
+  assert.ok(live.points > 500, "outside attract score should have been free to grow");
+  assert.ok(live.health < 40, "outside attract health should have been free to drop");
+});
+
 test("aim assist forgives a near miss in proportion to the error, rather than deciding the ring at spawn", () => {
   const scene = new T.Scene();
   const target = new T.Object3D(); // no geometry: influences steering, never registers a raycast hit
