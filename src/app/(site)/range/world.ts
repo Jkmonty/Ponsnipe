@@ -21,7 +21,6 @@ import { buildWood, disposeWood, stepWood, type Wood } from "./scene";
 import { rand } from "./rand";
 import type { Surface } from "./render";
 import {
-  LANES,
   makeButt,
   ringColourFor,
   ringOf,
@@ -32,8 +31,11 @@ import {
   disposeButt,
   bestSymbolAfter,
   stepButt,
+  pickBehaviour,
   FACE_RADIUS,
+  RANKS,
   type Butt,
+  type Rank,
 } from "./butts";
 import {
   makeArrowMesh,
@@ -513,9 +515,16 @@ export class World {
       pool = wantHostile ? down : up.length ? up : this.stocks;
     }
     const stock = pool[Math.floor(Math.random() * pool.length)];
-    const lane = Math.floor(Math.random() * LANES.length);
+    // Near or far, an even draw between the two — nothing in the spec
+    // weights one rank over the other, only the widened gap and size
+    // difference between them (see `RANKS` in butts.ts).
+    const rank: Rank = Math.random() < 0.5 ? "near" : "far";
     const x = rand(-30, 30);
-    const butt = makeButt(stock, lane, x);
+    // Waves are not a system yet (that is Task 4's job): this always passes
+    // 0, which keeps every spawn `stand` for now via `pickBehaviour`'s own
+    // wave-0 pool. Task 4 wires the round's real wave into this parameter.
+    const behaviour = pickBehaviour(0);
+    const butt = makeButt(stock, rank, x, behaviour);
     // stepArrows steers the player's own shots toward whatever carries this
     // flag, and raycasts every arrow's flight against it.
     butt.face.userData.arrowTarget = true;
@@ -908,7 +917,12 @@ export class World {
       // something other than the most generous ring.
       const centre = b.face.getWorldPosition(new T.Vector3());
       const distanceFromCentre = point ? point.distanceTo(centre) : 0;
-      const ring = ringOf(distanceFromCentre, FACE_RADIUS);
+      // The far rank's face is drawn at half size (`makeButt`) — scoring it
+      // against the unscaled `FACE_RADIUS` would judge a hit against a
+      // roundel bigger than the one actually on screen, so the same
+      // `faceScale` that shrank the geometry shrinks the ring boundaries
+      // here too.
+      const ring = ringOf(distanceFromCentre, FACE_RADIUS * RANKS[b.rank].faceScale);
 
       const move = Math.abs(b.stock.changePct);
       const basePoints = Math.round(40 + move * 60);
@@ -919,6 +933,10 @@ export class World {
         comboBefore: this.combo,
         streakBefore: this.streak,
         bestRingBefore: this.bestRing,
+        // On top of the existing ring multiplier, not instead of it — a far
+        // hit already had to be smaller to land; this is what makes it also
+        // worth double.
+        rankBonus: RANKS[b.rank].bonus,
       });
 
       this.hits += 1;

@@ -23,6 +23,13 @@ import {
   LANES,
   RING_FRACTIONS,
   FACE_RADIUS,
+  makeButt,
+  stepButt,
+  pickBehaviour,
+  RANKS,
+  PEEK_WINDOW,
+  SWING_AMPLITUDE,
+  type Behaviour,
 } from "../src/app/(site)/range/butts";
 import { nockReady, World } from "../src/app/(site)/range/world";
 import { makeNullSurface } from "../src/app/(site)/range/render";
@@ -539,6 +546,132 @@ test("attract mode cannot advance the clock, score, or spawn anything hostile", 
   assert.equal(w.health, before.health);
   assert.equal(w.msLeft, before.msLeft);
   assert.equal(w.butts.filter((b) => b.hostile).length, 0);
+});
+
+/*
+ * The far rank is worth double the near one — Phase 1's ring multiplier
+ * (gold 3x, red 2x, ...) still decides the base, `resolveButtHit`'s
+ * `rankBonus` only multiplies on top of it. Same ring, same everything else,
+ * only the rank differs, so the ratio between the two totals has to be
+ * exactly the ratio between `RANKS.far.bonus` and `RANKS.near.bonus` — not a
+ * number read off one run of the game.
+ */
+test("a far-rank hit scores double a near-rank hit of the same ring", () => {
+  const near = resolveButtHit({
+    hostile: false,
+    ring: 1,
+    basePoints: 100,
+    comboBefore: 0,
+    streakBefore: 0,
+    bestRingBefore: 0,
+    rankBonus: RANKS.near.bonus,
+  });
+  const far = resolveButtHit({
+    hostile: false,
+    ring: 1,
+    basePoints: 100,
+    comboBefore: 0,
+    streakBefore: 0,
+    bestRingBefore: 0,
+    rankBonus: RANKS.far.bonus,
+  });
+  assert.equal(
+    far.gained,
+    near.gained * (RANKS.far.bonus / RANKS.near.bonus),
+    "the far rank's own bonus should scale an otherwise identical hit by exactly its own ratio",
+  );
+});
+
+/*
+ * Wave itself is not a system yet (that is Task 4) — `pickBehaviour` only
+ * has to be conservative given whatever plain number it is handed: `stand`
+ * alone at wave 0, so the first stretch of a round teaches the game before
+ * anything moves or shoots back; every behaviour reachable by wave 2, so the
+ * late-round storm actually has all four in it. The rng is injected and
+ * swept across its whole range so this is a property of the selection logic,
+ * not a single lucky (or unlucky) draw.
+ */
+test("pickBehaviour returns only stand at wave 0, and all four by wave 2", () => {
+  const seenAtWave0 = new Set<Behaviour>();
+  for (let i = 0; i < 50; i++) seenAtWave0.add(pickBehaviour(0, () => i / 50));
+  assert.deepEqual([...seenAtWave0], ["stand"], "wave 0 must offer stand and nothing else, however the rng lands");
+
+  const seenAtWave2 = new Set<Behaviour>();
+  for (let i = 0; i < 50; i++) seenAtWave2.add(pickBehaviour(2, () => i / 50));
+  assert.deepEqual(
+    [...seenAtWave2].sort(),
+    ["drift", "peek", "stand", "swing"],
+    "by wave 2 every behaviour should be reachable",
+  );
+});
+
+/*
+ * `stepButt` used to drift every butt unconditionally; now lateral motion is
+ * gated on `b.behaviour`. This drives the real `stepButt` against a real
+ * `makeButt`-built pair, one of each behaviour, and would fail the instant a
+ * `stand` target picked up the old unconditional drift again.
+ */
+test("stepButt moves a drift sideways and not a stand", () => {
+  const drift = makeButt({ symbol: "AAA", changePct: 1 }, "near", 0, "drift");
+  const stand = makeButt({ symbol: "BBB", changePct: 1 }, "near", 0, "stand");
+  const dt = 1 / 60;
+  for (let i = 0; i < 120; i++) {
+    stepButt(drift, dt);
+    stepButt(stand, dt);
+  }
+  assert.notEqual(drift.x, 0, "a drift target should have moved along its rank");
+  assert.equal(stand.x, 0, "a stand target should hold its spawn position, not wander");
+});
+
+/*
+ * "Rises for 1.8 seconds and drops whether hit or not" — a peek that only
+ * ever left the scene when shot would be a drift with extra steps. This
+ * drives an unstruck peek past its own window and checks it has started
+ * ducking on its own, then drives a struck one through the real
+ * `resolveButtHit`/`applyButtHit` hit path and checks the hit takes it out
+ * immediately rather than waiting for the window either way.
+ */
+test("a peek retires within its window whether or not it is hit", () => {
+  const dt = 1 / 60;
+  const riseTime = 1 / 2.4; // `out` climbs from 0 to 1 at 2.4/s, same rate `stepButt` uses
+
+  const unhit = makeButt({ symbol: "CCC", changePct: 1 }, "near", 0, "peek");
+  for (let t = 0; t < riseTime + PEEK_WINDOW + 0.5; t += dt) stepButt(unhit, dt);
+  assert.equal(unhit.rising, false, "an unstruck peek must have started ducking within its own window");
+  assert.equal(unhit.dead, 0, "it should have left on its own timer, not because anything destroyed it");
+
+  const hit = makeButt({ symbol: "DDD", changePct: 1 }, "near", 0, "peek");
+  for (let t = 0; t < riseTime / 2; t += dt) stepButt(hit, dt); // partway up, well inside the window
+  const result = resolveButtHit({
+    hostile: hit.hostile,
+    ring: 1,
+    basePoints: 10,
+    comboBefore: 0,
+    streakBefore: 0,
+    bestRingBefore: 0,
+  });
+  applyButtHit(hit, result);
+  stepButt(hit, dt);
+  assert.ok(hit.dead > 0, "a peek that is hit should fall away like any other struck target, not linger for its window");
+});
+
+/*
+ * "Hangs from a branch and swings through a shallow arc" — a swing that
+ * wanders past its own branch is a drift with extra steps. Runs several full
+ * periods and checks the offset from its own spawn point never exceeds the
+ * real exported amplitude, and that it actually moves rather than sitting
+ * dead centre.
+ */
+test("a swing stays inside its arc", () => {
+  const swing = makeButt({ symbol: "EEE", changePct: 1 }, "far", 12, "swing");
+  const dt = 1 / 60;
+  let maxOffset = 0;
+  for (let i = 0; i < 600; i++) {
+    stepButt(swing, dt);
+    maxOffset = Math.max(maxOffset, Math.abs(swing.x - swing.originX));
+  }
+  assert.ok(maxOffset <= SWING_AMPLITUDE + 1e-9, `a swing must stay within its own arc, got offset ${maxOffset}`);
+  assert.ok(maxOffset > SWING_AMPLITUDE * 0.5, "the swing should actually move through a meaningful arc, not sit still");
 });
 
 test("aim assist forgives a near miss in proportion to the error, rather than deciding the ring at spawn", () => {
