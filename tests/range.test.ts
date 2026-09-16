@@ -788,16 +788,23 @@ test("sidestep clamps to ±3 units and eases back to centre on release", () => {
  * flight, not just where it was aimed at the moment it launched — so a
  * player who is still moving when the arrow arrives is judged against where
  * they actually are, not where they stood when it left the string. This
- * fires the real `looseEnemyArrow` from the near rank (the tighter of the
- * two flight times, and so the harder case) at a stationary aim point, then
- * drives the real `stepArrows` twice: once with the player never moving —
- * which must still connect, guarding the exact defect Phase 1 shipped, a
- * hostile arrow that could not hit the player at all — and once with the
- * player moving at `World`'s own sidestep rate from the instant it launches,
- * which must not.
+ * fires the real `looseEnemyArrow` at both ranks with `Math.random` pinned
+ * to 1, which sends `rand(34, 42)` to its *maximum* — the fastest roll, the
+ * shortest flight, and so the least time the player has to clear it. (A
+ * slower arrow only gives a dodge more room; the tight case is the fast
+ * one, which the escape-arithmetic table in the task report identifies as
+ * the near rank at 42 m/s — 1.007s of flight, against the 0.333s a full
+ * sidestep takes.) Each rank drives the real `stepArrows` twice: once with
+ * the player never moving — which must still connect, guarding the exact
+ * defect Phase 1 shipped, a hostile arrow that could not hit the player at
+ * all — and once with the player moving at `World`'s own sidestep rate from
+ * the instant it launches, which must not. Looping both ranks (rather than
+ * only the tighter one) also covers the far rank's longer range and larger
+ * elevation, and so a different point on the `asin` clamp, which a single
+ * pinned configuration would otherwise leave unexercised.
  */
-test("a player sidestepping during a hostile arrow's flight clears it; one who stands still is hit", () => {
-  const fireAndFly = (move: (elapsed: number, player: T.Object3D) => void): boolean => {
+test("a player sidestepping during a hostile arrow's flight clears it; one who stands still is hit — at both ranks", () => {
+  const fireAndFly = (rankZ: number, move: (elapsed: number, player: T.Object3D) => void): boolean => {
     const scene = new T.Scene();
     const player = new T.Object3D();
     const at = new T.Vector3(0, 3.6, 20);
@@ -806,7 +813,7 @@ test("a player sidestepping during a hostile arrow's flight clears it; one who s
     scene.add(player);
 
     const group = new T.Group();
-    group.position.set(0, 0, RANKS.near.z);
+    group.position.set(0, 0, rankZ);
     const fakeButt = { group } as unknown as import("../src/app/(site)/range/butts").Butt;
     const arrow = looseEnemyArrow(scene, fakeButt, at);
     const arrows: Arrow[] = [arrow];
@@ -826,16 +833,21 @@ test("a player sidestepping during a hostile arrow's flight clears it; one who s
 
   const originalRandom = Math.random;
   try {
-    Math.random = () => 0; // the slow end of the speed range (34 m/s) — the longer flight, the tighter case for the dodge to clear
-    const stayed = fireAndFly(() => {});
-    // World's own SIDESTEP_SPEED (9 units/s) and SIDESTEP_MAX (3), reproduced
-    // here rather than imported — an internal tuning constant of `World`,
-    // not part of the `arrows` module this test drives directly.
-    const dodged = fireAndFly((elapsed, player) => {
-      player.position.x = Math.min(3, elapsed * 9);
-    });
-    assert.ok(stayed, "a stationary player should still be hit — the exact regression Phase 1's zero-hit bug guards against");
-    assert.ok(!dodged, "a player sidestepping at the game's own rate should be clear of the arrow by the time it arrives");
+    Math.random = () => 1; // the fast end of the speed range (42 m/s) — the shortest flight, the tightest case for the dodge to clear
+    for (const [label, rankZ] of [
+      ["near", RANKS.near.z],
+      ["far", RANKS.far.z],
+    ] as const) {
+      const stayed = fireAndFly(rankZ, () => {});
+      // World's own SIDESTEP_SPEED (9 units/s) and SIDESTEP_MAX (3), reproduced
+      // here rather than imported — an internal tuning constant of `World`,
+      // not part of the `arrows` module this test drives directly.
+      const dodged = fireAndFly(rankZ, (elapsed, player) => {
+        player.position.x = Math.min(3, elapsed * 9);
+      });
+      assert.ok(stayed, `${label} rank: a stationary player should still be hit — the exact regression Phase 1's zero-hit bug guards against`);
+      assert.ok(!dodged, `${label} rank: a player sidestepping at the game's own rate should be clear of the fastest arrow by the time it arrives`);
+    }
   } finally {
     Math.random = originalRandom;
   }
