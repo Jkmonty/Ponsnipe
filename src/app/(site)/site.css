@@ -608,10 +608,14 @@
 
   /* The card at phone width: less padding and smaller type, nothing wider
      than the viewport so the page never gains a sideways scrollbar — and
-     tight enough top to bottom that it sits inside the stage's own height
-     without needing the overlay's scroll as anything but a safety net.
-     align-content: start now lives on the unconditional base rule above, so
-     it does not need repeating here. */
+     as tight top to bottom as it can be made, because at 375 the stage is
+     only about 340px tall and the card does not quite fit inside it. The
+     overflow is small (single figures with nothing printed, tens of pixels
+     once a share result is) and what hangs below is the controls line, not
+     a control; the overlay's own scroll covers it. Alignment is not set
+     here: `safe center` on the unconditional base rule above is what keeps
+     the card's top edge reachable in that band, and repeating or
+     overriding it here is what this comment exists to stop. */
   .site .arc-overlay { padding: var(--sp-3); }
   .site .arc-card { padding: var(--sp-4) var(--sp-3); gap: 6px; }
   .site .arc-card-title { font-size: 21px; }
