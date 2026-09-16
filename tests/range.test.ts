@@ -31,7 +31,7 @@ import {
   SWING_AMPLITUDE,
   type Behaviour,
 } from "../src/app/(site)/range/butts";
-import { nockReady, World } from "../src/app/(site)/range/world";
+import { nockReady, World, TELL_MS } from "../src/app/(site)/range/world";
 import { makeNullSurface } from "../src/app/(site)/range/render";
 
 /*
@@ -705,4 +705,203 @@ test("aim assist forgives a near miss in proportion to the error, rather than de
     bigOffset > smallOffset + 0.05,
     `a 2-degree miss (offset ${bigOffset}) should land measurably further off-centre than a 0.2-degree miss (offset ${smallOffset}), not identically`,
   );
+});
+
+/*
+ * Task 3: a hostile butt must spend the full TELL_MS winding up — the face
+ * turning to the player, the rim's glow rising — before it looses, and must
+ * not loose a single arrow before that window elapses. This drives the
+ * real `World` end to end with `Math.random` pinned to 0 (the same
+ * technique the attract-mode test above uses), so it is the real
+ * spawn → rise → wind-up → loose path, not a reimplementation of it. A
+ * single stock down on the day makes every spawn hostile, so `w.butts[0]`
+ * stays the one butt this test tracks — nothing here can remove it from the
+ * list before it fires. `winding` (cleared in the same step that actually
+ * looses the arrow — see `world.ts`'s firing block) is read directly rather
+ * than inferred from `w.arrows.length`, because with `Math.random` pinned
+ * this flat every volley comes up at its maximum size, so several other
+ * hostile butts are up and firing on their own schedules throughout this
+ * window — real, intended behaviour, but noise for a test asking only
+ * whether *this* butt fired early.
+ */
+test("a hostile butt winds up for the full TELL_MS before it looses, and never during it", () => {
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0; // deterministic: near rank, x = -30, the shortest dwell and cooldown
+    const w = new World(makeNullSurface(), [{ symbol: "DOWN", changePct: -1 }], () => {});
+    w.start();
+    const dt = 1 / 60;
+
+    let windStart = -1;
+    for (let i = 0; i < 300 && windStart < 0; i++) {
+      w.step(dt);
+      if (w.butts[0]?.winding) windStart = i;
+    }
+    assert.ok(windStart >= 0, "a hostile butt should have started winding up within the first five seconds");
+
+    // Short of the full TELL_MS: still must be winding, not fired.
+    const windFrames = Math.round(TELL_MS / 1000 / dt);
+    for (let i = 0; i < windFrames - 3; i++) w.step(dt);
+    assert.equal(w.butts[0].winding, true, "the tracked butt must still be winding up just short of the full TELL_MS");
+    assert.ok(w.butts[0].windUp < TELL_MS / 1000, "its own elapsed wind-up must not yet have reached TELL_MS");
+
+    // Past it: winding should have cleared, meaning the shot was loosed.
+    for (let i = 0; i < 10; i++) w.step(dt);
+    assert.equal(w.butts[0].winding, false, "winding should clear the instant the shot is loosed, at TELL_MS and not before");
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+/*
+ * "Clamped to ±3 units, easing back to centre on release" — driven through
+ * the real `World.setStrafe`/`step`, not the private field it moves,
+ * because `sidestep` is the one thing this test is allowed to read (see its
+ * own doc comment in world.ts). A green-only stock keeps the round free of
+ * hostiles, so nothing else touches health or the camera while this runs.
+ */
+test("sidestep clamps to ±3 units and eases back to centre on release", () => {
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  w.start();
+  const dt = 1 / 60;
+
+  w.setStrafe(1);
+  for (let i = 0; i < 60; i++) w.step(dt); // a full second held — well past the 1/3s a full dodge takes
+  assert.equal(w.sidestep, 3, "a held direction should reach the clamp and go no further");
+  for (let i = 0; i < 30; i++) w.step(dt); // half a second more, still held
+  assert.equal(w.sidestep, 3, "holding past the clamp must not push it any further");
+
+  w.setStrafe(0);
+  w.step(dt);
+  assert.ok(w.sidestep > 0 && w.sidestep < 3, "releasing should ease back over time, not snap straight to centre");
+  for (let i = 0; i < 300; i++) w.step(dt); // five more seconds to settle
+  assert.ok(Math.abs(w.sidestep) < 0.01, "given long enough, the ease should return it to centre");
+
+  w.setStrafe(-1);
+  for (let i = 0; i < 60; i++) w.step(dt);
+  assert.equal(w.sidestep, -3, "the clamp holds on the other side too");
+});
+
+/*
+ * The escape arithmetic, proven rather than only argued: `stepArrows`
+ * checks the player's *current* position every frame a hostile arrow is in
+ * flight, not just where it was aimed at the moment it launched — so a
+ * player who is still moving when the arrow arrives is judged against where
+ * they actually are, not where they stood when it left the string. This
+ * fires the real `looseEnemyArrow` from the near rank (the tighter of the
+ * two flight times, and so the harder case) at a stationary aim point, then
+ * drives the real `stepArrows` twice: once with the player never moving —
+ * which must still connect, guarding the exact defect Phase 1 shipped, a
+ * hostile arrow that could not hit the player at all — and once with the
+ * player moving at `World`'s own sidestep rate from the instant it launches,
+ * which must not.
+ */
+test("a player sidestepping during a hostile arrow's flight clears it; one who stands still is hit", () => {
+  const fireAndFly = (move: (elapsed: number, player: T.Object3D) => void): boolean => {
+    const scene = new T.Scene();
+    const player = new T.Object3D();
+    const at = new T.Vector3(0, 3.6, 20);
+    player.position.copy(at);
+    player.userData.isPlayer = true;
+    scene.add(player);
+
+    const group = new T.Group();
+    group.position.set(0, 0, RANKS.near.z);
+    const fakeButt = { group } as unknown as import("../src/app/(site)/range/butts").Butt;
+    const arrow = looseEnemyArrow(scene, fakeButt, at);
+    const arrows: Arrow[] = [arrow];
+
+    let hitPlayer = false;
+    const dt = 1 / 60;
+    let elapsed = 0;
+    for (let i = 0; i < 300 && arrows.length && !hitPlayer; i++) {
+      elapsed += dt;
+      move(elapsed, player);
+      stepArrows(arrows, dt, scene, (_a, hit) => {
+        if (hit === player) hitPlayer = true;
+      });
+    }
+    return hitPlayer;
+  };
+
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0; // the slow end of the speed range (34 m/s) — the longer flight, the tighter case for the dodge to clear
+    const stayed = fireAndFly(() => {});
+    // World's own SIDESTEP_SPEED (9 units/s) and SIDESTEP_MAX (3), reproduced
+    // here rather than imported — an internal tuning constant of `World`,
+    // not part of the `arrows` module this test drives directly.
+    const dodged = fireAndFly((elapsed, player) => {
+      player.position.x = Math.min(3, elapsed * 9);
+    });
+    assert.ok(stayed, "a stationary player should still be hit — the exact regression Phase 1's zero-hit bug guards against");
+    assert.ok(!dodged, "a player sidestepping at the game's own rate should be clear of the arrow by the time it arrives");
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+/*
+ * The full path, end to end through the real `World`: spawn, wind-up, loose,
+ * flight, and a credited hit that actually moves `health` — the same guard
+ * the test above proves at the ballistics level, but here nothing about the
+ * new wind-up gate is allowed to have quietly broken the connection between
+ * a hostile butt existing and a hit eventually landing.
+ */
+test("a telegraphed hostile arrow still reaches the player, driven end to end through the real World", () => {
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0;
+    const w = new World(makeNullSurface(), [{ symbol: "DOWN", changePct: -1 }], () => {});
+    w.start();
+    const dt = 1 / 60;
+    const startHealth = w.health;
+    let hit = false;
+    for (let i = 0; i < 600 && !hit; i++) {
+      w.step(dt);
+      if (w.health < startHealth) hit = true;
+    }
+    assert.ok(hit, "a telegraphed hostile arrow should eventually connect with the player within ten seconds");
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+/*
+ * `whistle` gets its first caller here: `World.step` calls it every frame a
+ * hostile arrow is in flight with that arrow's real, current distance to
+ * the player, not a fixed sweep timed from when it launched. A fake `sfx`
+ * records what it was called with, which is the only way to see that from
+ * outside `World` — nothing about the distance itself is otherwise
+ * observable.
+ */
+test("the incoming whistle is driven by the arrow's real distance, falling as it closes", () => {
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0;
+    const w = new World(makeNullSurface(), [{ symbol: "DOWN", changePct: -1 }], () => {});
+    w.start();
+    const distances: number[] = [];
+    w.sfx = {
+      loose() {},
+      thunk() {},
+      miss() {},
+      hurt() {},
+      chime() {},
+      horn() {},
+      marker() {},
+      whistle(d: number) {
+        distances.push(d);
+      },
+    };
+    const dt = 1 / 60;
+    for (let i = 0; i < 250 && !(w.arrows.length && w.arrows[0].stuck > 0); i++) w.step(dt);
+
+    assert.ok(distances.length > 5, "the whistle should be called repeatedly over the arrow's flight, not once");
+    const first = distances[0];
+    const last = distances[distances.length - 1];
+    assert.ok(last < first, `distance should fall as the arrow closes: first ${first}, last ${last}`);
+  } finally {
+    Math.random = originalRandom;
+  }
 });

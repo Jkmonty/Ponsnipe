@@ -203,6 +203,55 @@ export default function ArcadePage() {
     return () => document.removeEventListener("pointerlockchange", sync);
   }, []);
 
+  /*
+   * Sidestep: A and D, or the left/right arrow keys — the answer to an
+   * incoming arrow on desktop. Both keys are tracked in one `Set` rather
+   * than each handler setting the game's direction on its own, so letting
+   * go of one while the other is still held keeps moving the right way
+   * instead of stopping dead. `World.setStrafe` itself is what actually
+   * gates this to a live round (see its own doc comment), so this effect
+   * does not have to.
+   */
+  useEffect(() => {
+    const left = new Set(["a", "arrowleft"]);
+    const right = new Set(["d", "arrowright"]);
+    const held = new Set<string>();
+    const apply = () => {
+      let l = false;
+      let r = false;
+      for (const k of held) {
+        if (left.has(k)) l = true;
+        if (right.has(k)) r = true;
+      }
+      gameRef.current?.setStrafe(l === r ? 0 : l ? -1 : 1);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (!left.has(k) && !right.has(k)) return;
+      held.add(k);
+      apply();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      held.delete(e.key.toLowerCase());
+      apply();
+    };
+    // A window that loses focus mid-hold (alt-tab, a devtools click) never
+    // delivers the matching keyup — without this, the sidestep can be left
+    // pinned to one side for the rest of the round.
+    const onBlur = () => {
+      held.clear();
+      apply();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   useEffect(
     () => () => {
       gameRef.current?.stop();
@@ -479,7 +528,9 @@ export default function ArcadePage() {
                     {s?.over ? "Again" : "Draw the bow"}
                   </button>
                   <p className="arc-controls mono">
-                    <span className="ctl-mouse">HOLD TO DRAW · RELEASE TO LOOSE · RIGHT-CLICK FOR THE SCOPE</span>
+                    <span className="ctl-mouse">
+                      HOLD TO DRAW · RELEASE TO LOOSE · RIGHT-CLICK FOR THE SCOPE · A/D TO SIDESTEP
+                    </span>
                     <span className="ctl-touch">TAP TO FIRE · DRAG TO AIM</span>
                   </p>
                 </div>

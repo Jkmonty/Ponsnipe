@@ -45,6 +45,10 @@ export interface Butt {
   /** The disc that gets shot. Raycasting against the whole group would let a
       post or a leg count as a hit. */
   face: T.Mesh;
+  /** The rim ring, exposed so `world.ts` can brighten its own emissive glow
+      during a hostile wind-up (see `winding`/`windUp` below) without
+      reaching into `group.children` by position. */
+  rim: T.Mesh;
   /** Which rank (near or far) the butt rose in — decides its depth, face
       size and the score bonus `resolveButtHit` applies. Replaces `lane` as
       what `stepButt` reads to place a butt's own z. */
@@ -65,6 +69,18 @@ export interface Butt {
   rising: boolean;
   dwell: number;
   cooldown: number;
+  /**
+   * Whether a hostile butt is currently in the visible wind-up before it
+   * looses a shot — the face turning to the player and the rim's glow
+   * rising over `TELL_MS` (see `world.ts`, which owns firing and so owns
+   * advancing this and `windUp` too; this file only carries the fields,
+   * the same split `stepButt`'s own doc comment below describes for
+   * firing itself). Always false for a non-hostile butt.
+   */
+  winding: boolean;
+  /** Seconds elapsed in the current wind-up, 0 up to `TELL_MS / 1000`. Reset
+      to 0 both when a wind-up starts and once it fires. */
+  windUp: number;
   dead: number;
   /**
    * Progress through the recoil that plays when the face is struck: 0 right
@@ -269,8 +285,9 @@ export function pickBehaviour(wave: number, rng: () => number = Math.random): Be
 const DEATH_FALL_TIME = 0.6;
 
 /**
- * One frame of a butt's own motion: drift along its lane, rise out of cover,
- * dwell once fully up, and — once struck — fall away and out (`retire`).
+ * One frame of a butt's own motion: move sideways if its behaviour calls for
+ * it, rise out of cover, dwell once fully up, and — once struck — fall away
+ * and out (`retire`).
  * Pulled out of `world.ts`'s per-frame loop unchanged in behaviour, the same
  * move `resolveButtHit` and `isTargetable` already made: this is deferred
  * twice before now because nothing forced the issue, and this phase adds
@@ -521,6 +538,7 @@ export function makeButt(stock: Stock, rank: Rank, x: number, behaviour: Behavio
     stock,
     hostile,
     face,
+    rim,
     rank,
     behaviour,
     x,
@@ -543,6 +561,8 @@ export function makeButt(stock: Stock, rank: Rank, x: number, behaviour: Behavio
      */
     dwell: behaviour === "peek" ? PEEK_WINDOW : hostile ? rand(1.3, 2.4) : rand(0.5, 1.2),
     cooldown: hostile ? rand(0.25, 0.6) : rand(0.6, 1.3),
+    winding: false,
+    windUp: 0,
     dead: 0,
     rock: 1,
   };

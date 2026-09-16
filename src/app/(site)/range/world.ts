@@ -109,6 +109,28 @@ const NOCK_TIME = 0.42;
 /** What a tap on a touchscreen looses at — a solid, deliberate pull with no wait. */
 const TOUCH_DRAW = 0.8;
 
+/**
+ * How long a hostile butt winds up — face turning to the player, rim glow
+ * rising — before it actually looses. Exported so the wind-up-then-loose
+ * regression test in `tests/range.test.ts` can reason about it directly
+ * rather than hard-coding a copy of the number that could silently drift
+ * from the real one.
+ */
+export const TELL_MS = 900;
+
+/** How far either side of centre a sidestep may reach — the full answer to
+    an incoming arrow, not a token nudge (see the escape arithmetic in the
+    task-3 report). */
+const SIDESTEP_MAX = 3;
+/** Units per second while a sidestep direction is held — a full ±3 unit
+    dodge takes exactly `SIDESTEP_MAX / SIDESTEP_SPEED` seconds (a third of
+    a second), which is what the escape arithmetic is measured against. */
+const SIDESTEP_SPEED = 9;
+/** How fast the sidestep eases back to centre once released. Slower than
+    `SIDESTEP_SPEED`: getting back to centre is never itself racing a
+    clock the way getting out of the way is. */
+const SIDESTEP_RETURN_EASE = 6;
+
 /** Below this canvas width the 2048² shadow map halves to 1024² — the same
     breakpoint the site's own CSS treats as "small", and a width where the
     map's own resolution was never the thing making a shadow read as sharp.
@@ -195,7 +217,15 @@ export class World {
   private camera: T.PerspectiveCamera;
   private raycaster = new T.Raycaster();
   private _butts: Butt[] = [];
-  private arrows: Arrow[] = [];
+  private _arrows: Arrow[] = [];
+  /** Which way the sidestep key is currently held: -1 left, 0 neither, 1
+      right. Set by `setStrafe`, which page.tsx calls from keydown/keyup;
+      eased toward in `step` rather than applied directly, so letting go
+      drifts back to centre instead of snapping. */
+  private strafeInput: -1 | 0 | 1 = 0;
+  /** The sidestep's own current offset from centre, -`SIDESTEP_MAX` to
+      +`SIDESTEP_MAX`, written onto `camera.position.x` every frame. */
+  private sideOffset = 0;
   /** Points popups floating up off a struck face — a sprite each, aged out
       and disposed once they finish fading rather than left to accumulate. */
   private popups: { sprite: T.Sprite; age: number }[] = [];
@@ -306,6 +336,12 @@ export class World {
     marker(kill?: boolean): void;
     /** As the string comes back, 0..1. Optional: not every sound bench build has it. */
     creak?(draw: number): void;
+    /** The incoming whistle of a hostile arrow, called every frame one is in
+        flight with its real, current distance to the player — not a fixed
+        sweep timed off when it launched, since a far-rank shot has more
+        ground to close than a near-rank one. See `step`'s call, right after
+        `stepArrows`. */
+    whistle(distance: number): void;
   } | null = null;
 
   constructor(
@@ -337,6 +373,35 @@ export class World {
    */
   get butts(): readonly Butt[] {
     return this._butts;
+  }
+
+  /** The arrows currently in flight or stuck, for the same reason and the
+      same test-only use as `butts` above — in particular, the wind-up
+      regression test needs to see that a hostile shot has not appeared in
+      here yet while its butt is still winding up. */
+  get arrows(): readonly Arrow[] {
+    return this._arrows;
+  }
+
+  /** The sidestep's current offset from centre, for the same test-only
+      reason as `butts`/`arrows` — a test driving `setStrafe` needs to see
+      it actually clamp and ease without reaching into `camera.position`
+      itself, which is private. */
+  get sidestep(): number {
+    return this.sideOffset;
+  }
+
+  /**
+   * A and D, or the left/right arrow keys, held or released — `page.tsx`
+   * calls this from its own keydown/keyup handlers (which track both keys
+   * itself, so releasing one while the other is still down keeps moving the
+   * right way). A no-op while attracting, the same gate `look`, `fire` and
+   * `setScoped` already use, so a key held over the menu cannot pre-load a
+   * dodge the instant Start is pressed.
+   */
+  setStrafe(dir: -1 | 0 | 1) {
+    if (this.attracting) return;
+    this.strafeInput = dir;
   }
 
   /**
@@ -647,6 +712,25 @@ export class World {
     if (this.hurt > 0) this.hurt = Math.max(0, this.hurt - dt);
 
     /*
+     * Sidestep: a held direction moves at a constant `SIDESTEP_SPEED`
+     * toward the clamp, so a full ±3 unit dodge takes exactly
+     * `SIDESTEP_MAX / SIDESTEP_SPEED` seconds every time — the number the
+     * escape arithmetic is measured against. Releasing eases back to
+     * centre instead, on `SIDESTEP_RETURN_EASE`, since the way back is
+     * never itself racing a clock the way getting out of the way is.
+     */
+    if (this.strafeInput !== 0) {
+      this.sideOffset = Math.max(
+        -SIDESTEP_MAX,
+        Math.min(SIDESTEP_MAX, this.sideOffset + this.strafeInput * SIDESTEP_SPEED * dt),
+      );
+    } else if (this.sideOffset !== 0) {
+      this.sideOffset += (0 - this.sideOffset) * Math.min(1, dt * SIDESTEP_RETURN_EASE);
+      if (Math.abs(this.sideOffset) < 0.001) this.sideOffset = 0;
+    }
+    this.camera.position.x = this.sideOffset;
+
+    /*
      * Nocking the next arrow.
      *
      * `drawn` runs 0 → 1 after each shot. The bow kicks back and the arrow is
@@ -727,10 +811,21 @@ export class World {
       if (wasFalling) continue;
 
       if (b.hostile && b.out > 0.6 && gate.hostileActive) {
-        b.cooldown -= dt;
-        if (b.cooldown <= 0) {
-          b.cooldown = rand(0.7, 1.3);
-          this.arrows.push(looseEnemyArrow(this.scene, b, this.camera.position));
+        if (b.winding) {
+          this.stepWindup(b, dt);
+          if (b.windUp >= TELL_MS / 1000) {
+            b.winding = false;
+            b.windUp = 0;
+            this.setTellGlow(b, 0);
+            b.cooldown = rand(0.7, 1.3);
+            this._arrows.push(looseEnemyArrow(this.scene, b, this.camera.position));
+          }
+        } else {
+          b.cooldown -= dt;
+          if (b.cooldown <= 0) {
+            b.winding = true;
+            b.windUp = 0;
+          }
         }
       }
     }
@@ -762,8 +857,52 @@ export class World {
      * have to be kept in sync by hand — which is exactly how the segment
      * test below would have ended up covering only one of them.
      */
-    stepArrows(this.arrows, dt, this.scene, (a, hit, point) => this.onArrowHit(a, hit, point, gate.consequencesActive));
+    stepArrows(this._arrows, dt, this.scene, (a, hit, point) => this.onArrowHit(a, hit, point, gate.consequencesActive));
     this.stepPopups(dt);
+
+    /*
+     * The incoming whistle: driven by whichever hostile arrow is nearest
+     * the player right now, not a timer started when it was loosed — a shot
+     * fired from the far rank has more air to close than one from the near
+     * rank, so only the real, changing distance says how urgent it is. Only
+     * arrows still actually flying count (`a.stuck === 0`); one that has
+     * already landed has nothing left to warn about.
+     */
+    let nearestHostile = Infinity;
+    for (const a of this._arrows) {
+      if (a.mine || a.stuck > 0) continue;
+      nearestHostile = Math.min(nearestHostile, a.mesh.position.distanceTo(this.camera.position));
+    }
+    if (nearestHostile < Infinity) this.sfx?.whistle(nearestHostile);
+  }
+
+  /**
+   * One frame of a hostile butt's wind-up: the rim's glow climbing toward
+   * its peak and the whole butt turning to square up on the player, both
+   * over the same `TELL_MS` the actual shot waits on — pulled out of `step`
+   * only because the block there was already deep enough that a third
+   * concern (visuals) inline would have buried the firing decision it sits
+   * beside.
+   */
+  private stepWindup(b: Butt, dt: number) {
+    b.windUp = Math.min(TELL_MS / 1000, b.windUp + dt);
+    const t = b.windUp / (TELL_MS / 1000);
+    this.setTellGlow(b, t);
+    const toPlayer = this.camera.position.clone().sub(b.group.position);
+    const targetYaw = Math.atan2(toPlayer.x, toPlayer.z);
+    b.group.rotation.y += (targetYaw - b.group.rotation.y) * Math.min(1, dt * 6);
+  }
+
+  /**
+   * The rim's own emissive intensity, from its steady resting glow up to a
+   * bright peak at `t = 1` — self-lit, so (per the spec's one rule that
+   * cannot bend) it still reads as red at the far rank's 40 units, the same
+   * reason `HOSTILE_RIM` is emissive at all rather than a reflective colour
+   * riding the warm sun. `t = 0` is also what a shot that just fired resets
+   * to, so the glow does not stay at its peak between shots.
+   */
+  private setTellGlow(b: Butt, t: number) {
+    (b.rim.material as T.MeshLambertMaterial).emissiveIntensity = 0.4 + t * 1.4;
   }
 
   /**
@@ -1148,7 +1287,7 @@ export class World {
     mesh.position.copy(from);
     mesh.lookAt(from.clone().add(vel));
     this.scene.add(mesh);
-    this.arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5), touch });
+    this._arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5), touch });
     return true;
   }
 
@@ -1344,6 +1483,9 @@ export class World {
     this.spawnIn = 0.5;
     this.yaw = 0;
     this.pitch = 0;
+    this.strafeInput = 0;
+    this.sideOffset = 0;
+    this.camera.position.x = 0;
     this.onChange(this.snapshot());
     this.runLoop();
   }
@@ -1360,12 +1502,12 @@ export class World {
     // do so — free their textures now rather than leaking them.
     for (const p of this.popups) this.disposePopup(p);
     this.popups = [];
-    for (const a of this.arrows) {
+    for (const a of this._arrows) {
       this.scene.remove(a.mesh);
       a.mesh.geometry.dispose();
       (Array.isArray(a.mesh.material) ? a.mesh.material : [a.mesh.material]).forEach((m) => m.dispose());
     }
-    this.arrows = [];
+    this._arrows = [];
     for (const b of this._butts) {
       this.scene.remove(b.group);
       disposeButt(b);

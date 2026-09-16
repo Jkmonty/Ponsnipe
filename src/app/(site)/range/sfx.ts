@@ -58,6 +58,17 @@ const KIT: Record<string, number> = {
  * on a high-refresh display. */
 const CREAK_INTERVAL = 0.035;
 
+/** The same throttle as `CREAK_INTERVAL`, for the same reason: `whistle()`
+ * is called once per rendered frame a hostile arrow is in flight, and this
+ * bounds the grain count rather than the audible result, which is one
+ * continuous tone from the overlap. */
+const WHISTLE_INTERVAL = 0.035;
+/** Distance, in world units, at or beyond which the whistle sits at its
+ * lowest, quietest pitch. The far rank fires from about 40 units out, so
+ * this gives a far shot room to actually climb over its whole flight
+ * instead of starting most of the way up the register already. */
+const WHISTLE_MAX_DISTANCE = 45;
+
 /** The wind's steady-state level, and how long it takes to reach or leave it.
  * Deliberately under every effect's quietest layer (the thunk and miss noise
  * bursts sit around 0.1) so it can never read as a sound in its own right. */
@@ -103,6 +114,9 @@ export class Sfx {
    * a fresh context's `currentTime` is 0, the same as this field's default
    * would otherwise be. */
   private lastCreak = -Infinity;
+  /** The last `whistle()` grain's start time, for `WHISTLE_INTERVAL` — same
+   * reasoning and the same -Infinity-not-0 trap as `lastCreak` above. */
+  private lastWhistle = -Infinity;
   private wind: { src: AudioBufferSourceNode; lfo: OscillatorNode; gain: GainNode } | null = null;
   private music: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   /** The rendered drone, built once offline and reused by every round. */
@@ -341,6 +355,28 @@ export class Sfx {
     const centre = 260 + d * 900; // a slack rasp at rest, tightening toward ~1.16kHz at full draw
     const level = 0.012 + d * 0.045; // quiet throughout — well under any effect, even at full draw
     this.noise(t, 0.05, level, centre * 0.85, centre * 1.15, "bandpass", 3.5);
+  }
+
+  /**
+   * The incoming whistle of a hostile arrow, called every frame one is in
+   * flight (see `World.step`, right after `stepArrows`) with its real,
+   * current distance to the player. This is the first sound in this project
+   * tuned by something in the world rather than a fixed envelope — a canned
+   * sweep started at launch cannot know how far a shot actually has to
+   * travel, and a far-rank arrow crosses roughly half again the ground a
+   * near-rank one does, so distance, not elapsed time, is what has to drive
+   * the climb. Throttled the same way `creak` is: grains overlap into one
+   * continuous tone rather than flooding the graph with one per frame.
+   */
+  whistle(distance: number) {
+    if (!this.ctx || this.muted) return;
+    const t = this.t;
+    if (t - this.lastWhistle < WHISTLE_INTERVAL) return;
+    this.lastWhistle = t;
+    const near = 1 - Math.max(0, Math.min(1, distance / WHISTLE_MAX_DISTANCE));
+    const freq = 480 + near * 1500; // a low pass-by out at range, climbing toward a shriek as it closes
+    const level = 0.05 + near * 0.1; // always under the marker, loudest right as it arrives
+    this.tone(t, freq, freq * 1.08, 0.08, level, "sine", 0.004);
   }
 
   /** A miss: the shaft going past into the trees. */
