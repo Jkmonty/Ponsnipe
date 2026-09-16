@@ -9,7 +9,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Butt from "../Butt";
-import { World, ROUND_MS, type Snapshot, type Stock } from "./world";
+import { World, ROUND_MS, accuracyPct, type Snapshot, type Stock } from "./world";
+import { ringName } from "./butts";
 import { makeSurface } from "./render";
 import { Sfx } from "./sfx";
 
@@ -481,7 +482,19 @@ export default function ArcadePage() {
                     <>
                       <h1 className="display arc-card-title">{s.points.toLocaleString()}</h1>
                       <p className="arc-card-rules">
-                        {s.hits} hits from {s.shots} shots
+                        {s.hits} hits from {s.shots} shots · {accuracyPct(s.hits, s.shots)}% accuracy
+                      </p>
+                      {/*
+                        The rest of the round's own story — Phase 1 and 2's
+                        snapshot already carried every one of these; this is
+                        the first place any of them is shown. Best ticker
+                        only appears once one actually exists (a round with
+                        zero hits never sets it — see `bestSymbol`'s own doc
+                        comment on `Snapshot`).
+                      */}
+                      <p className="arc-card-rules arc-card-stats">
+                        Longest streak {s.streak} · best ring {ringName(s.bestRing)}
+                        {s.bestSymbol && <> · best ticker {s.bestSymbol}</>}
                       </p>
                       {posted && <p className="arc-posted">{posted}</p>}
                     </>

@@ -156,6 +156,30 @@ export function ringOf(distanceFromCentre: number, faceRadius: number): number {
 }
 
 /**
+ * The traditional archery name for a ring `ringOf` returned — the same five
+ * names its own inline comments already use, said out loud for the Phase 3
+ * results card ("best ring: Gold"). `bestRing`'s own doc comment on
+ * `Snapshot` is the source for what 0 means: nothing struck yet, so there is
+ * no ring to name.
+ */
+export function ringName(ring: number): string {
+  switch (ring) {
+    case 1:
+      return "Gold";
+    case 2:
+      return "Red";
+    case 3:
+      return "Blue";
+    case 4:
+      return "Black";
+    case 5:
+      return "White";
+    default:
+      return "—";
+  }
+}
+
+/**
  * The gold is worth three of the outside. This multiplies on top of the
  * existing scoring (base points, distance bonus, combo) — it does not
  * replace any of it.

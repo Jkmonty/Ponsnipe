@@ -14,6 +14,7 @@ import {
 import {
   ringOf,
   ringMultiplier,
+  ringName,
   comboAfter,
   streakAfter,
   resolveButtHit,
@@ -31,7 +32,15 @@ import {
   SWING_AMPLITUDE,
   type Behaviour,
 } from "../src/app/(site)/range/butts";
-import { nockReady, World, TELL_MS } from "../src/app/(site)/range/world";
+import {
+  nockReady,
+  World,
+  TELL_MS,
+  endingGate,
+  accuracyPct,
+  SLOW_MOTION_SCALE,
+  FINAL_STRETCH_MS,
+} from "../src/app/(site)/range/world";
 import { makeNullSurface } from "../src/app/(site)/range/render";
 import { waveAt } from "../src/app/(site)/range/waves";
 import { musicRateForWave } from "../src/app/(site)/range/sfx";
@@ -1151,4 +1160,211 @@ test("an all-red day bends the wave 0 hostile cap on purpose, up to maxUp, and n
   } finally {
     Math.random = originalRandom;
   }
+});
+
+/*
+ * Task 5: slow motion at the round's end.
+ *
+ * `endingGate` is the one place the whole feature's timing lives — a pure
+ * function of the clock and whether a player arrow is still flying, the same
+ * seam `attractStep` and `waveAt` already proved out for the rest of the
+ * round's rules. Three branches: normal speed with time on the clock, the
+ * quarter-speed "last two seconds" tail when nothing is in the air, and the
+ * quarter-speed wait for a last arrow that is still in the air once the
+ * clock has already run out. `timeUp` is deliberately not simply "msLeft <=
+ * 0" read back out — it is what `world.ts` uses to decide whether it may
+ * still finalise the round this frame (see the `world.ts` acceptance tests
+ * below), so it has to come from here, not be re-derived at the call site.
+ */
+test("endingGate: normal speed with real time left and something in the air", () => {
+  const g = endingGate({ msLeft: FINAL_STRETCH_MS + 1, arrowInFlight: true });
+  assert.equal(g.timeScale, 1);
+  assert.equal(g.timeUp, false);
+});
+
+test("endingGate: the last two seconds slow down, but only with nothing in the air", () => {
+  const nothingFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: false });
+  assert.equal(nothingFlying.timeScale, SLOW_MOTION_SCALE, "the tail should run at the spec's own 0.25x");
+  assert.equal(nothingFlying.timeUp, false, "the clock has not actually run out yet");
+
+  const stillFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: true });
+  assert.equal(
+    stillFlying.timeScale,
+    1,
+    "a shot already in the air keeps the last two seconds at normal speed — the wait is for the clock hitting zero, not this",
+  );
+});
+
+test("endingGate: time run out with the last arrow still up waits at quarter speed rather than ending", () => {
+  const g = endingGate({ msLeft: 0, arrowInFlight: true });
+  assert.equal(g.timeScale, SLOW_MOTION_SCALE);
+  assert.equal(g.timeUp, true);
+
+  const negative = endingGate({ msLeft: -40, arrowInFlight: true });
+  assert.equal(negative.timeUp, true, "a clock already past zero must still count as time being up");
+});
+
+test("endingGate: time run out with nothing in the air is simply over, at normal speed", () => {
+  const g = endingGate({ msLeft: 0, arrowInFlight: false });
+  assert.equal(g.timeScale, 1, "nothing is being followed out, so there is nothing left to slow down for");
+  assert.equal(g.timeUp, true);
+});
+
+/*
+ * The clock decision this task had to make explicitly: `msLeft` itself runs
+ * on real, unscaled time even while everything else in the frame is reading
+ * a quarter-speed `dt` — scaling the clock too would hand a slowed ending
+ * extra real seconds of play, which is exactly what a round posting to a
+ * paid weekly leaderboard cannot afford. This drives the real `World.step`
+ * one frame into the "last two seconds, nothing in the air" tail and checks
+ * `msLeft` fell by precisely `dt * 1000`, not a quarter of that.
+ */
+test("the clock itself never slows down, even while the last two seconds of the round do", () => {
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  w.start();
+  w.msLeft = FINAL_STRETCH_MS;
+  const dt = 1 / 60;
+  w.step(dt);
+  assert.ok(
+    Math.abs(FINAL_STRETCH_MS - w.msLeft - dt * 1000) < 1e-6,
+    `the clock should have fallen by exactly dt*1000 (${dt * 1000}ms), not a slowed fraction of it (fell by ${FINAL_STRETCH_MS - w.msLeft}ms)`,
+  );
+});
+
+/*
+ * The same slow motion actually reaches gameplay, not just the clock's own
+ * arithmetic — driven through the real `World.step` and read back off
+ * `sidestep`, which moves at an exact, known rate (`SIDESTEP_SPEED`) with no
+ * randomness in it, the same property the sidestep-clamp test above already
+ * leans on. One world stepped inside the "last two seconds, nothing in the
+ * air" tail should move exactly `SLOW_MOTION_SCALE` as far in one real frame
+ * as an identical world stepped well before it.
+ */
+test("with nothing in the air, the last two seconds move the world at exactly the spec's 0.25x", () => {
+  const dt = 1 / 60;
+
+  const slowed = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  slowed.start();
+  slowed.msLeft = FINAL_STRETCH_MS;
+  slowed.setStrafe(1);
+  slowed.step(dt);
+
+  const full = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  full.start();
+  full.setStrafe(1);
+  full.step(dt);
+
+  assert.ok(slowed.sidestep > 0, "the slowed world should still have moved, just less");
+  assert.ok(
+    Math.abs(slowed.sidestep - full.sidestep * SLOW_MOTION_SCALE) < 1e-9,
+    `slowed sidestep (${slowed.sidestep}) should be exactly ${SLOW_MOTION_SCALE} of the full-speed one (${full.sidestep}), not some other fraction`,
+  );
+});
+
+/*
+ * The round's last arrow: the clock running out under a shot still in the
+ * air must not cut the round off mid-flight, must not let a second shot
+ * sneak out while the first is being followed home, and must still finish
+ * the instant that arrow actually resolves — driven through the real
+ * `World.start`/`fire`/`step`, not a reimplementation of the state machine.
+ * A single up stock keeps the range hostile-free, so nothing but this one
+ * shot's own flight decides when the round ends.
+ */
+test("the round's last arrow is followed out in slow motion instead of being cut off, and buys no second shot", () => {
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  w.start();
+  const dt = 1 / 60;
+
+  assert.ok(w.fire(), "the shot should have loosed");
+  assert.equal(w.shots, 1);
+  assert.ok(
+    w.arrows.some((a) => a.mine && a.stuck === 0),
+    "the arrow should still be in flight the instant it is loosed",
+  );
+
+  // The clock runs out on the very next frame, with that arrow still up.
+  w.msLeft = 1;
+  w.step(dt);
+  assert.equal(w.msLeft, 0, "the clock clamps at zero and goes no further");
+  assert.equal(w.over, false, "the round must not end yet — the last arrow is still being followed");
+
+  // Nothing new can be loosed while the last arrow is being followed out.
+  assert.equal(w.fire(), false, "no shot should be loosable during the ending sequence");
+  w.beginDraw();
+  for (let i = 0; i < 60; i++) w.step(dt);
+  assert.equal(w.shots, 1, "the ending sequence must not let a second shot be counted");
+
+  // Drive it forward until the arrow actually resolves.
+  let steps = 0;
+  while (!w.over && steps < 600) {
+    w.step(dt);
+    steps++;
+  }
+  assert.ok(w.over, "the round should finish once the last arrow has actually resolved");
+  assert.equal(w.shots, 1, "still exactly the one shot that was already in the air when time ran out");
+  assert.equal(w.msLeft, 0, "the clock never went negative or ran back up while it waited");
+});
+
+/*
+ * "The camera following it in" — the one piece of the last-arrow ending
+ * that is not otherwise covered by the state-machine test above, which only
+ * ever reads `over`/`shots`/`msLeft`. Fires straight ahead (the default
+ * aim), so gravity is the one thing pulling the arrow off the view's
+ * original line — the view should tilt down to keep tracking it rather
+ * than sitting exactly where the shot was loosed from.
+ */
+test("the camera turns to follow the last arrow while the round waits it out", () => {
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  w.start();
+  const dt = 1 / 60;
+  assert.ok(w.fire(), "the shot should have loosed");
+  const pitchAtLoose = w.facing.pitch;
+
+  w.msLeft = 1; // the clock runs out with that shot still up
+  for (let i = 0; i < 30 && !w.over; i++) w.step(dt);
+
+  assert.ok(
+    w.facing.pitch < pitchAtLoose,
+    `the view should tilt down to track the falling arrow (pitch went from ${pitchAtLoose} to ${w.facing.pitch})`,
+  );
+});
+
+/*
+ * With nothing in the air when the clock runs out, there is nothing to
+ * follow — the round ends exactly as it always has, no different from
+ * before this task.
+ */
+test("with nothing in the air, the round still ends the instant the clock runs out", () => {
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  w.start();
+  w.msLeft = 1;
+  w.step(1 / 60);
+  assert.equal(w.over, true, "with nothing to follow out, the round should end on this same frame");
+});
+
+/*
+ * "The card carries the whole story" — accuracy and the ring's own name are
+ * the two pieces of it that need a formula rather than a straight readout of
+ * a snapshot field. Division by zero shots is the one case worth pinning
+ * down by hand: a round that ended before a single arrow was ever loosed
+ * must read as 0%, not NaN or Infinity on the results card.
+ */
+test("accuracyPct: zero shots is 0%, not NaN or Infinity", () => {
+  assert.equal(accuracyPct(0, 0), 0);
+});
+
+test("accuracyPct: hits over shots, rounded to a whole percent", () => {
+  assert.equal(accuracyPct(10, 10), 100);
+  assert.equal(accuracyPct(1, 3), 33);
+  assert.equal(accuracyPct(2, 3), 67);
+  assert.equal(accuracyPct(0, 5), 0);
+});
+
+test("ringName: the five archery rings by their traditional names, and a fallback for none struck", () => {
+  assert.equal(ringName(1), "Gold");
+  assert.equal(ringName(2), "Red");
+  assert.equal(ringName(3), "Blue");
+  assert.equal(ringName(4), "Black");
+  assert.equal(ringName(5), "White");
+  assert.equal(ringName(0), "—", "0 means nothing has been struck yet, per bestRing's own doc comment");
 });
