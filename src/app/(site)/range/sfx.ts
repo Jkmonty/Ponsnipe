@@ -52,15 +52,9 @@ const KIT: Record<string, number> = {
  * than to source blind.
  */
 
-/** How often a fresh creak grain may fire. A held draw calls `creak()` once
- * per rendered frame, far more often than this, so grains overlap into one
- * continuous scrape rather than a stutter — this only bounds the node count
- * on a high-refresh display. */
-const CREAK_INTERVAL = 0.035;
-
-/** The same throttle as `CREAK_INTERVAL`, for the same reason: `whistle()`
- * is called once per rendered frame a hostile arrow is in flight, and this
- * bounds the grain count rather than the audible result, which is one
+/** `whistle()` is called once per rendered frame a hostile arrow is in
+ * flight, far more often than this, so what this bounds is the grain count
+ * on a high-refresh display and not the audible result, which is one
  * continuous tone from the overlap. */
 const WHISTLE_INTERVAL = 0.035;
 /** Distance, in world units, at or beyond which the whistle sits at its
@@ -150,13 +144,10 @@ export class Sfx {
   /** Set for exactly the span of a round, so a promise that resolves after
    * the round already ended (see `musicStart`) knows not to start anyway. */
   private roundActive = false;
-  /** The last `creak()` grain's start time, for `CREAK_INTERVAL`. Starts
+  /** The last `whistle()` grain's start time, for `WHISTLE_INTERVAL`. Starts
    * below any real context time so the very first call is never throttled —
    * a fresh context's `currentTime` is 0, the same as this field's default
    * would otherwise be. */
-  private lastCreak = -Infinity;
-  /** The last `whistle()` grain's start time, for `WHISTLE_INTERVAL` — same
-   * reasoning and the same -Infinity-not-0 trap as `lastCreak` above. */
   private lastWhistle = -Infinity;
   private wind: { src: AudioBufferSourceNode; lfo: OscillatorNode; gain: GainNode } | null = null;
   private music: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
@@ -376,27 +367,16 @@ export class Sfx {
     this.playSpec(MARKERS[this.picks.marker].build(kill));
   }
 
-  /**
-   * The draw's rasp, called every frame the string is held (see the `creak`
-   * comment on `World.sfx` in world.ts, and the call in its `step`). A short
-   * burst of filtered noise whose centre frequency and level both climb with
-   * `draw`, the way a stave under load reads as tighter and louder rather
-   * than as a different sound. Synthesised for the same reason the marker
-   * is: it tracks a continuously changing value, which a fixed sample
-   * cannot. Throttled to `CREAK_INTERVAL` so a high-refresh display cannot
-   * flood the graph with grains; a real draw calls this far more often than
-   * that, so the grains overlap into one continuous scrape.
+  /*
+   * There was a `creak()` here: the draw's rasp, a grain of filtered noise
+   * per frame whose pitch and level climbed with how far the string was
+   * back. It is gone with the draw itself. It was synthesised rather than
+   * sampled for one reason — it tracked a continuously changing value, which
+   * a fixed sample cannot — and a click has no such value to track: one
+   * grain at the one fixed draw is a constant sound landing in the same
+   * millisecond as `loose()`, which already has the release in it. So it is
+   * retired rather than rewired.
    */
-  creak(draw: number) {
-    if (!this.ctx || this.muted) return;
-    const t = this.t;
-    if (t - this.lastCreak < CREAK_INTERVAL) return;
-    this.lastCreak = t;
-    const d = Math.max(0, Math.min(1, draw));
-    const centre = 260 + d * 900; // a slack rasp at rest, tightening toward ~1.16kHz at full draw
-    const level = 0.012 + d * 0.045; // quiet throughout — well under any effect, even at full draw
-    this.noise(t, 0.05, level, centre * 0.85, centre * 1.15, "bandpass", 3.5);
-  }
 
   /**
    * The incoming whistle of a hostile arrow, called every frame one is in
@@ -406,7 +386,7 @@ export class Sfx {
    * sweep started at launch cannot know how far a shot actually has to
    * travel, and a far-rank arrow crosses roughly half again the ground a
    * near-rank one does, so distance, not elapsed time, is what has to drive
-   * the climb. Throttled the same way `creak` is: grains overlap into one
+   * the climb. Throttled by `WHISTLE_INTERVAL`: grains overlap into one
    * continuous tone rather than flooding the graph with one per frame.
    */
   whistle(distance: number) {
@@ -682,10 +662,10 @@ export class Sfx {
     this.roundActive = false;
     // Not reachable today — nothing closes an Sfx and then resumes the same
     // instance — but a fresh context's clock starts near zero, and a stale
-    // `lastCreak` left over from the old one would throttle the creak off
-    // for good. The same trap the -Infinity default exists to avoid at
+    // `lastWhistle` left over from the old one would throttle the whistle
+    // off for good. The same trap the -Infinity default exists to avoid at
     // construction, reset here so it still doesn't apply after a close.
-    this.lastCreak = -Infinity;
+    this.lastWhistle = -Infinity;
     try {
       void this.ctx?.close();
     } catch {

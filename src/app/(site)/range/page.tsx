@@ -567,7 +567,7 @@ export default function ArcadePage() {
             onPointerMove={move}
             onPointerDown={(e) => {
               /*
-               * Hold right to raise the scope, left to loose.
+               * Hold right to raise the scope, click left to shoot.
                *
                * This used to hang off `contextmenu`, which was the bug: once
                * pointer lock is granted the browser stops dispatching that event
@@ -580,36 +580,34 @@ export default function ArcadePage() {
                 return;
               }
               if (e.button !== 0) return;
+              // `move` first: a click is the whole shot now, so the aim this
+              // very event carries has to be in before the arrow leaves.
               move(e);
               /*
-               * A finger is also the aim, so there is no holding a draw on
-               * touch without losing the thing you were aiming at — one tap
-               * looses immediately, at a solid fixed pull. A mouse can hold
-               * still while the button is down, so it gets the real draw:
-               * begin it here, and loose it on release below.
+               * One press, one arrow — on a mouse exactly as on a thumb.
+               *
+               * Desktop used to hold to draw and loose on release; the user
+               * reversed that, so both paths are this one line. It fires on
+               * pointer *down* and not up, which is what "click to shoot"
+               * means and what the touch path has always done.
+               *
+               * The flag passed through is which input this was, not how
+               * hard the shot was pulled — the two are the same draw. It
+               * only picks the aim-assist cone, which is deliberately wider
+               * for a thumb; see `World.fire`.
                */
-              if (e.pointerType === "touch") {
-                gameRef.current?.touchFire();
-              } else {
-                gameRef.current?.beginDraw();
-              }
+              gameRef.current?.fire(e.pointerType === "touch");
             }}
             onPointerUp={(e) => {
-              if (e.button === 2) {
-                scope(false);
-                return;
-              }
-              if (e.button === 0 && e.pointerType !== "touch") gameRef.current?.releaseDraw();
+              // Nothing to do for the left button: the shot already left on
+              // the way down. Only the scope cares about a release.
+              if (e.button === 2) scope(false);
             }}
-            onPointerLeave={() => {
-              scope(false);
-              // The cursor leaving mid-draw must never loose a shot — that is
-              // exactly the stray input the draw threshold exists to filter
-              // out of clicks, just reached by drifting off the canvas
-              // instead. cancelDraw throws the hold away unconditionally,
-              // rather than releaseDraw's loose-if-far-enough.
-              gameRef.current?.cancelDraw();
-            }}
+            // Only the scope has anything to drop when the cursor leaves. The
+            // draw used to be abandoned here as well, so that drifting off the
+            // canvas mid-hold could not spend an arrow; there is no hold left
+            // to abandon.
+            onPointerLeave={() => scope(false)}
             onContextMenu={(e) => e.preventDefault()}
           />
 
@@ -646,9 +644,10 @@ export default function ArcadePage() {
                     <>
                       <h1 className="display arc-card-title">Sherwood, last light.</h1>
                       <p className="arc-card-rules">
-                        Move to look, click to loose, hold right to raise the scope. Green
-                        butts are shares up today and worth points. Red ones are down on
-                        the day, and they shoot back — six arrows and you are finished.
+                        Move to look, click to shoot — one click, one arrow — and hold right
+                        to raise the scope. Green butts are shares up today and worth points.
+                        Red ones are down on the day, and they shoot back — six arrows and
+                        you are finished.
                       </p>
                     </>
                   )}
@@ -732,9 +731,9 @@ export default function ArcadePage() {
                   )}
                   <p className="arc-controls mono">
                     <span className="ctl-mouse">
-                      HOLD TO DRAW · RELEASE TO LOOSE · RIGHT-CLICK FOR THE SCOPE · A/D TO SIDESTEP
+                      CLICK TO SHOOT · MOVE TO AIM · RIGHT-CLICK FOR THE SCOPE · A/D TO SIDESTEP
                     </span>
-                    <span className="ctl-touch">TAP TO FIRE · DRAG TO AIM</span>
+                    <span className="ctl-touch">TAP TO SHOOT · DRAG TO AIM</span>
                   </p>
                 </div>
               )}
@@ -803,13 +802,24 @@ export default function ArcadePage() {
                 <i style={{ width: `${Math.max(0, Math.min(100, s.health))}%` }} />
               </div>
               {/*
-                The draw meter: only on screen while actually drawing, so an
-                idle view is not cluttered by an empty bar sitting there doing
-                nothing.
+                The nock meter: how far the next arrow is back on the string,
+                which is now the only thing between one shot and the next.
+
+                This was the draw meter, filling as the player held the
+                button. There is no hold left to show, but there is still a
+                wait, and it is the wait that decides the rate of fire — so
+                the bar reads the refill instead of the pull. The bow in the
+                scene shows the same thing, except while the scope is up,
+                which hides the bow entirely; this does not.
+
+                Only on screen while it is actually refilling, exactly as the
+                draw meter only showed while actually drawing — a full bar
+                sitting there permanently is clutter, and "ready" is already
+                said by the bar being gone.
               */}
-              {s.draw > 0 && (
-                <div className="arc-draw" aria-hidden="true">
-                  <i style={{ width: `${Math.round(Math.max(0, Math.min(1, s.draw)) * 100)}%` }} />
+              {s.nock < 1 && (
+                <div className="arc-nock" aria-hidden="true">
+                  <i style={{ width: `${Math.round(Math.max(0, Math.min(1, s.nock)) * 100)}%` }} />
                 </div>
               )}
             </>

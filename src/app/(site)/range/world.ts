@@ -42,7 +42,6 @@ import {
   looseEnemyArrow,
   stepArrows,
   drawSpeed,
-  drawShake,
   ARROW_LIFE,
   type Arrow,
 } from "./arrows";
@@ -80,8 +79,12 @@ export interface Snapshot {
   markKill: boolean;
   /** How much of the flinch is left, 0..1, for the damage vignette. */
   hurt: number;
-  /** How far the string is drawn back right now, 0..1. 0 whenever not drawing. */
-  draw: number;
+  /** How far the next arrow is back on the string, 0..1 — the nock's own
+      refill, which is the rate-of-fire gate. 0 the instant a shot looses and
+      1 again `NOCK_TIME` later, at which point another shot is allowed. The
+      HUD's meter reads this; the bow in the scene shows the same thing, but
+      the bow is hidden while the scope is up. */
+  nock: number;
   /** True while the world is only running to be looked at: no round has
       started, the clock is frozen, nothing can wind up or fire, and no hit
       can change points or health. Red butts do come up — the menu shows the
@@ -122,10 +125,10 @@ const START_LIVES = 3;
  * the last-arrow branch only, so that ending plays out at full speed with
  * the camera left where the shot was aimed. The "last two seconds" tail
  * keeps this scale whatever the setting says: it is time the player is
- * still shooting in, and both the nock and the pull are fed the scaled
- * `dt`, so a tail that ran at full speed for one setting and quarter speed
- * for the other would put a different number of arrows in the air for the
- * same two real seconds. `endingGate` says why at length.
+ * still shooting in, and the nock's refill is fed the scaled `dt`, so a
+ * tail that ran at full speed for one setting and quarter speed for the
+ * other would put a different number of arrows in the air for the same two
+ * real seconds. `endingGate` says why at length.
  */
 export const SLOW_MOTION_SCALE = 0.25;
 /** The spec's own "last two seconds" — how far out from the round's own end
@@ -237,11 +240,11 @@ export function endingGate(state: EndingState): EndingGates {
    * On for everyone is the "last two seconds" tail. It moves no camera at
    * all — it is two real seconds of the world itself slowing down — and it
    * is two seconds the player is still shooting in: `step` feeds the scaled
-   * `dt` to both the nock's refill and the bow's pull, so how far the
-   * string gets inside the window is exactly what this scale decides.
-   * Neutralising it here would hand a full-draw player shots that the same
-   * player without the setting cannot take. A posted score on a board that
-   * pays a prize must not depend on an accessibility setting, in either
+   * `dt` to the nock's refill, which is the whole of the rate of fire, so
+   * how many arrows the window allows is exactly what this scale decides.
+   * Neutralising it here would hand one player shots that the same player
+   * without the setting cannot take. A posted score on a board that pays a
+   * prize must not depend on an accessibility setting, in either
    * direction: extra shots are the same defect as fewer, and the tests hold
    * the two counts equal rather than pinning either number.
    *
@@ -280,19 +283,27 @@ const FOV_SCOPE = 26;
 /** How long the flinch lasts, and the window in which nothing else can land. */
 const HURT_TIME = 0.7;
 
-/** How long a full pull takes, held down. */
-const DRAW_TIME = 0.7;
-/** Short of this, letting go abandons the shot rather than loosing a feeble one. */
-const MIN_LOOSE_DRAW = 0.15;
-/** How much the field of view narrows at a full draw, on top of the scope. */
-const DRAW_FOV_NARROW = 4;
-/** The camera kick on release, and how long it takes to settle back down. */
+/** The camera kick when the string lets the arrow go, and how long it takes
+    to settle back down. "Release" is the bow's, not a button's: nothing is
+    held down long enough to be released since the click replaced the draw. */
 const RELEASE_KICK = (0.9 * Math.PI) / 180;
 const RELEASE_KICK_TIME = 0.2;
-/** How long the nock takes to refill after a shot — the rate-of-fire limit. */
+/** How long the nock takes to refill after a shot — the rate-of-fire limit,
+    and the only thing standing between the player and a machine gun now that
+    a shot takes no time of its own to prepare. */
 const NOCK_TIME = 0.42;
-/** What a tap on a touchscreen looses at — a solid, deliberate pull with no wait. */
-const TOUCH_DRAW = 0.8;
+/**
+ * What every shot looses at.
+ *
+ * One click or one tap, one arrow, at this pull — a solid, deliberate draw
+ * with no wait and nothing to hold. It was `TOUCH_DRAW` while a thumb was
+ * the only input that fired at a fixed strength and a mouse pulled its own
+ * string; a click looses the same way now, so the name no longer says
+ * "touch". The number is unchanged: it was tuned against the ranks' real
+ * distances and the wave pacing, and raising it to a full 1 would quietly
+ * retune the difficulty of a round that posts to a board.
+ */
+const SHOT_DRAW = 0.8;
 
 /**
  * How long a hostile butt winds up — face turning to the player, rim glow
@@ -325,18 +336,21 @@ const SHADOW_DROP_WIDTH = 720;
 
 /**
  * Whether the nock is back far enough to loose another arrow — the single
- * rate-of-fire gate for both the mouse path (`beginDraw`/`releaseDraw`) and
- * the touch path (`touchFire`).
+ * rate-of-fire gate, and now the only one there is.
  *
- * It used to be two different numbers in two different places: `fire` itself
- * only asked for half a nock (`drawn < 0.5`), which was invisible while the
- * only way in was `beginDraw`'s own stricter `drawn < 1` gate — a mouse
- * always cleared 0.5 long before it could finish a real pull anyway. But
- * `touchFire` calls `fire` directly, skipping `beginDraw` entirely, so it
- * walked straight through the loose half of the door: a tapping phone could
- * loose a shot every 210ms, against a mouse's own ~525ms floor of a full
- * nock plus the minimum pull. Nothing legitimate needs the half-nock door,
- * so both paths now ask this one function the same question.
+ * A click and a tap take the same path through `fire`, so this is asked once
+ * for both and there is nothing else for either to clear: the whole of the
+ * rate of fire is `NOCK_TIME`, identically on a mouse and on a thumb. That
+ * is deliberate and it is the point of the test that measures the two paths
+ * against each other — a score posted from a desktop and one posted from a
+ * phone are rows on the same board, and a platform that could loose faster
+ * than the other would be a defect in the board, not a balance question.
+ *
+ * It used to be two different numbers in two different places: `fire` asked
+ * only for half a nock (`drawn < 0.5`) while the mouse's own way in asked
+ * for a full one, and the touch path reached `fire` directly — so a tapping
+ * phone could loose every 210ms against a mouse's ~525ms. Nothing needed the
+ * looser door, and with one path left there is only one question to ask.
  */
 export function nockReady(drawn: number): boolean {
   return drawn >= 1;
@@ -457,11 +471,11 @@ export class World {
    * followed home (see `endingGate`'s `timeUp`) — from the frame that
    * happens until that arrow resolves, or `ENDING_MAX_S` real seconds pass
    * with it still flying, and `over` is finally set either way. Every
-   * input that could begin something new (`look`, `setScoped`, `beginDraw`,
-   * `touchFire`, `fire`, `aimAt`, `setStrafe`) refuses outright while this
-   * is true, the same shape `attracting` already gates them on: nothing new
-   * can begin once time is well and truly up, only the one shot already in
-   * flight gets to finish.
+   * input that could begin something new (`look`, `setScoped`, `fire`,
+   * `aimAt`, `setStrafe`) refuses outright while this is true, the same
+   * shape `attracting` already gates them on: nothing new can begin once
+   * time is well and truly up, only the one shot already in flight gets to
+   * finish.
    */
   private ending = false;
   /**
@@ -543,23 +557,18 @@ export class World {
   private bow: T.Group | null = null;
   private nock: T.Mesh | null = null;
   /**
-   * `drawn` and `draw` are one letter apart and mean different things — easy
-   * to conflate, so spelled out here:
-   *   `drawn`  — the nock's own refill, 0..1, climbing back to 1 on its own
-   *              after every shot. This is the rate-of-fire gate; it has
-   *              nothing to do with how hard the string was pulled.
-   *   `draw`   — how far the string is pulled back right now, 0..1, driven
-   *              entirely by `beginDraw`/`releaseDraw` holding a button down.
-   * A shot needs `drawn` to be (nearly) full before it can begin, and its
-   * speed is set by `draw` — two independent numbers doing two different jobs.
+   * The nock's own refill, 0..1, climbing back to 1 on its own over
+   * `NOCK_TIME` after every shot. This is the rate-of-fire gate and the only
+   * timer a shot waits on: how hard the string is pulled is no longer a
+   * number the player moves, it is the constant `SHOT_DRAW`.
+   *
+   * There used to be a second field, `draw`, one letter away and easy to
+   * conflate with this one — how far the string was pulled back right now,
+   * driven by holding the button down. Holding is gone: one click, one
+   * arrow, so there is one number here again.
    */
   private drawn = 1;
-  private draw = 0;
-  /** True while the draw is being held; false the instant it looses or is abandoned. */
-  private drawing = false;
-  /** Seconds the current (or just-released) draw has been held, for `drawShake`. */
-  private heldSeconds = 0;
-  /** 1 right after a release, decaying to 0 over `RELEASE_KICK_TIME` — the recoil settling. */
+  /** 1 right after a shot, decaying to 0 over `RELEASE_KICK_TIME` — the recoil settling. */
   private kick = 0;
   private mark = 0;
   private markKill = false;
@@ -584,8 +593,6 @@ export class World {
     chime(n: number): void;
     horn(): void;
     marker(kill?: boolean): void;
-    /** As the string comes back, 0..1. Optional: not every sound bench build has it. */
-    creak?(draw: number): void;
     /** The incoming whistle of a hostile arrow, called every frame one is in
         flight with its real, current distance to the player — not a fixed
         sweep timed off when it launched, since a far-rank shot has more
@@ -655,16 +662,6 @@ export class World {
     return { yaw: this.yaw, pitch: this.pitch };
   }
 
-  /** How far the string is pulled back right now, 0..1 — the same number
-      `snapshot` already publishes as `draw`, for the same test-only reason
-      as `butts`/`arrows`/`sidestep`/`facing`. A test measuring how many
-      shots a window of the round allows has to let go at a full pull and
-      not a frame before, and the pull is one of the two timers the
-      ending's scaled `dt` reaches. */
-  get pull(): number {
-    return this.draw;
-  }
-
   /**
    * A and D, or the left/right arrow keys, held or released — `page.tsx`
    * calls this from its own keydown/keyup handlers (which track both keys
@@ -718,7 +715,7 @@ export class World {
       mark: this.mark,
       markKill: this.markKill,
       hurt: Math.max(0, Math.min(1, this.hurt / HURT_TIME)),
-      draw: this.draw,
+      nock: this.drawn,
       attract: this.attracting,
       wave: this.wave.wave,
     };
@@ -1208,9 +1205,9 @@ export class World {
        *   - hostile arrows already in the air are frozen outright (see the
        *     `stepArrows` call, which says why);
        *   - every input that could start something new refuses on this
-       *     same flag (`look`, `setScoped`, `beginDraw`, `touchFire`,
-       *     `fire`, `aimAt`, `setStrafe`), and a sidestep already held is
-       *     let go of above, since `setStrafe` refusing cannot release it.
+       *     same flag (`look`, `setScoped`, `fire`, `aimAt`, `setStrafe`),
+       *     and a sidestep already held is let go of above, since
+       *     `setStrafe` refusing cannot release it.
        * What still runs: the player's own arrow, the butts and the popups
        * unconditionally, plus two more that are the visitor's to switch
        * off — the wood (`stepWood`, a dozen lines below) and the camera
@@ -1247,41 +1244,33 @@ export class World {
     this.camera.position.x = this.sideOffset;
 
     /*
-     * Nocking the next arrow.
+     * Nocking the next arrow — the whole of the wait between shots.
      *
-     * `drawn` runs 0 → 1 after each shot. The bow kicks back and the arrow is
-     * gone at the start of it and back on the string by the end, which is the
-     * only thing telling you the shot registered when it misses everything.
+     * `drawn` runs 0 → 1 over `NOCK_TIME` after each shot. The bow kicks back
+     * and the arrow is gone at the start of it and back on the string by the
+     * end, which is the only thing telling you the shot registered when it
+     * misses everything. There is nothing else to wait on: a click looses
+     * immediately, so this timer alone is the rate of fire.
      */
     if (this.drawn < 1) this.drawn = Math.min(1, this.drawn + dtScaled / NOCK_TIME);
 
-    /*
-     * Holding the draw.
-     *
-     * A separate thing from nocking: the nock is the rate-of-fire gate that
-     * keeps this from being a machine gun, and only once it is full can a new
-     * draw even begin (see `beginDraw`). This is what happens after that —
-     * the deliberate pull that makes a full draw something you wait for.
-     */
-    if (this.drawing) {
-      this.heldSeconds += dtScaled;
-      this.draw = Math.min(1, this.draw + dtScaled / DRAW_TIME);
-      this.sfx?.creak?.(this.draw);
-    }
     if (this.kick > 0) this.kick = Math.max(0, this.kick - dtScaled / RELEASE_KICK_TIME);
 
     if (this.bow) {
       this.bow.visible = !this.scoped;
+      // The bow rocks back on the shot and settles as the nock refills. That
+      // is the whole of its motion now: the string is never held anywhere
+      // between empty and loosed, so the bow has no in-between shape to take.
       const nockKick = (1 - this.drawn) * (1 - this.drawn);
       this.bow.position.set(0.44 + nockKick * 0.06, -0.56 - nockKick * 0.03, -1.1 + nockKick * 0.1);
-      // The bow bends as the string comes back: the whole rig cants a little
-      // further, rather than just the string moving, so the draw reads in the
-      // shape of the bow and not only in the meter.
-      this.bow.rotation.set(0.02, -0.2 - this.draw * 0.06, -0.12);
+      this.bow.rotation.set(0.02, -0.2, -0.12);
       if (this.nock) {
+        // The arrow itself: gone the instant the shot looses, back on the
+        // string once the refill is better than half done. This and the kick
+        // above are what the refill looks like in the scene — though not while
+        // the scope is up, which is why the HUD carries a meter for it too.
         this.nock.visible = !this.scoped && this.drawn > 0.55;
-        // Pulled back toward the eye as the draw builds, forward again as it eases off.
-        this.nock.position.set(0.12, -0.2, -1.05 + this.draw * 0.16);
+        this.nock.position.set(0.12, -0.2, -1.05);
       }
     }
 
@@ -1753,101 +1742,38 @@ export class World {
   }
 
   /**
-   * Start pulling the string back.
+   * Loose an arrow down the centre of the view. One click or one tap, one
+   * arrow, immediately — this is the only way a player shot ever happens.
    *
-   * Gated on the nock being completely full, not just past the rate-of-fire
-   * threshold `fire` itself uses — you cannot begin a new draw while the
-   * last arrow is still on its way back onto the string. Also refused
-   * outright once `ending`: `releaseDraw` and `cancelDraw` need no gate of
-   * their own, since neither can ever fire if a draw was never allowed to
-   * begin.
-   */
-  beginDraw(): void {
-    if (this.over || this.attracting || this.ending || this.drawing || !nockReady(this.drawn)) return;
-    this.drawing = true;
-    this.draw = 0;
-    this.heldSeconds = 0;
-  }
-
-  /**
-   * Throw away a held draw without ever loosing it — no `fire` call, whatever
-   * `draw` had reached.
+   * `touch` says the shot came from a thumb rather than a mouse, and that is
+   * *all* it says. It is not "this used the fixed draw": both inputs use
+   * `SHOT_DRAW` and both come out at the same speed. The one thing it
+   * changes is how much the arrow is helped home in flight — `assistAngle`
+   * gives a thumb half as much again as a cursor, because a thumb is both
+   * the aim and the trigger and a cursor is neither. Pass it honestly: a
+   * desktop click that claimed to be touch would quietly buy itself a wider
+   * assist cone than the mouse it came from is meant to get.
    *
-   * This is not a second way to end a draw with a shot; it is the one way to
-   * end a draw with nothing. It exists because the cursor leaving the canvas
-   * is an ordinary thing that happens mid-hold — tracking a target near the
-   * edge, or just not being under pointer lock — and `releaseDraw` looses
-   * whenever the pull passed `MIN_LOOSE_DRAW`, which is nearly any real hold.
-   * Routing a canvas exit through `releaseDraw` would spend an arrow on
-   * exactly the stray input `MIN_LOOSE_DRAW` exists to filter out of clicks.
-   */
-  cancelDraw(): void {
-    this.drawing = false;
-    this.draw = 0;
-    this.heldSeconds = 0;
-  }
-
-  /**
-   * Let go of a held draw.
+   * There used to be a hold-to-draw path on desktop as well — `beginDraw`,
+   * `releaseDraw`, `cancelDraw` — where the length of the pull set the
+   * arrow's speed and an overlong hold wandered the aim. The user reversed
+   * that decision: a click fires. See the spec's amended "Desktop shot" row.
    *
-   * Reaching `MIN_LOOSE_DRAW` looses the arrow at whatever strength the draw
-   * had reached; short of that, there is nothing to loose and the draw is
-   * simply abandoned — closer to a string slipping off a slack finger than a
-   * shot. Either way the draw itself resets, ready to begin again once the
-   * nock is full.
+   * Gated on `ending` the same as everything else that could begin something
+   * new: the round's last arrow does not get a second one chasing it.
    */
-  releaseDraw(): boolean {
-    if (!this.drawing) return false;
-    this.drawing = false;
-    const draw = this.draw;
-    const heldSeconds = this.heldSeconds;
-    this.draw = 0;
-    this.heldSeconds = 0;
-    if (draw < MIN_LOOSE_DRAW) return false;
-    const shot = this.fire(draw, false, heldSeconds);
-    if (shot) this.kick = 1;
-    return shot;
-  }
-
-  /**
-   * A tap on a touchscreen.
-   *
-   * A thumb is also the thing doing the aiming, so there is no holding a
-   * draw without losing the aim along with it — one tap looses immediately,
-   * at a solid fixed pull rather than the flinch-quick snap a bare click
-   * would otherwise give you. Gated on the same full nock `fire` itself now
-   * insists on, explicitly and not just by inheriting it — this is exactly
-   * the path that used to walk past `beginDraw`'s stricter gate and loose
-   * through `fire`'s old, looser one.
-   */
-  touchFire(): boolean {
-    if (this.attracting || this.ending || !nockReady(this.drawn)) return false;
-    return this.fire(TOUCH_DRAW, true);
-  }
-
-  /**
-   * Loose an arrow down the centre of the view, at `draw` strength.
-   *
-   * The single place a shot is actually loosed — `releaseDraw` and
-   * `touchFire` both end up here rather than each flying their own arrow.
-   * Gated on `ending` the same as everything else that could begin
-   * something new: the round's last arrow does not get a second one
-   * chasing it, however this call arrived.
-   */
-  fire(draw = 1, touch = false, heldSeconds = 0): boolean {
+  fire(touch = false): boolean {
     if (this.over || this.attracting || this.ending) return false;
     /*
      * One arrow at a time.
      *
      * A longbow is not a machine gun, and without this the honest answer to
-     * every target is to click as fast as the mouse allows. Making you wait
-     * for the nock is what turns aiming into a decision. The gate is a full
-     * nock (`nockReady`), the same one `beginDraw` uses — it used to be a
-     * half-nock door of its own (`drawn < 0.5`), which `touchFire` reached by
-     * calling straight in past `beginDraw`, firing a tapping phone every
-     * 210ms against a mouse's ~525ms. Nothing legitimate needs the looser
-     * door: a mouse always clears a full nock anyway on its way to a real
-     * pull, so raising this to match cost it nothing.
+     * every target is to click as fast as the mouse allows — which, now that
+     * a click *is* the whole shot, is the only thing standing between this
+     * and a machine gun. Making you wait for the nock is what turns aiming
+     * into a decision. It is also the one gate either input asks, so a mouse
+     * and a thumb get exactly the same number of arrows out of the same span
+     * of clock; see `nockReady`.
      */
     if (!nockReady(this.drawn)) return false;
     this.shots += 1;
@@ -1884,25 +1810,18 @@ export class World {
      */
     const from = this.nock?.getWorldPosition(new T.Vector3()) ?? this.camera.position.clone();
     const dir = this.raycaster.ray.direction.clone();
-    /*
-     * The cost of an overheld draw.
-     *
-     * `drawShake` is 0 until well past a full draw, so a normal shot — held
-     * for less than the time it takes to actually pull the string back — is
-     * never touched by this. Only holding at full draw and waiting for a
-     * certainty wanders the aim, which is the whole point of it existing.
-     */
-    const shake = drawShake(heldSeconds);
-    if (shake > 0) {
-      const wobble = new T.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize();
-      dir.applyAxisAngle(wobble, shake * Math.random()).normalize();
-    }
-    const vel = dir.multiplyScalar(drawSpeed(draw));
+    // Every arrow leaves at the same speed, because every arrow leaves at the
+    // same draw. Nothing the player does between shots changes this number.
+    const vel = dir.multiplyScalar(drawSpeed(SHOT_DRAW));
     const mesh = makeArrowMesh();
     mesh.position.copy(from);
     mesh.lookAt(from.clone().add(vel));
     this.scene.add(mesh);
     this._arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5), touch });
+    // The recoil. `releaseDraw` used to set this, since letting go was the
+    // moment a shot became real; the click is that moment now, so it is set
+    // here — on every shot, from either input, rather than on one of them.
+    this.kick = 1;
     return true;
   }
 
@@ -1991,9 +1910,11 @@ export class World {
       this.driftCamera(dt);
 
       // Ease the field of view rather than snapping it: a scope that changes
-      // magnification instantly reads as a glitch. Drawing narrows it too, a
-      // little — the world closing in as the shot comes together.
-      const want = this.scoped ? FOV_SCOPE : FOV_WIDE - this.draw * DRAW_FOV_NARROW;
+      // magnification instantly reads as a glitch. The scope is the only
+      // thing that moves it now — the draw used to creep it in by four
+      // degrees as the shot came together, and there is no longer a shot
+      // coming together to watch.
+      const want = this.scoped ? FOV_SCOPE : FOV_WIDE;
       this.camera.fov += (want - this.camera.fov) * Math.min(1, dt * 9);
       this.camera.updateProjectionMatrix();
       // The release kick rides on top of the aimed pitch rather than changing
@@ -2051,7 +1972,7 @@ export class World {
    * Run the world with nothing at stake: the wood lit and moving, butts
    * rising and settling, the camera drifting on its own — and, via
    * `attracting`, every input that could shoot or score refusing outright
-   * (see `look`, `fire`, `beginDraw`, `touchFire`, `setScoped`) and `step`
+   * (see `look`, `fire`, `setScoped`) and `step`
    * itself skipping the clock, every wind-up and shot, and any hit's
    * consequences (see `attractStep`). Butts of both colours rise — the
    * menu is the day as it is — and none of them can do anything. This is what runs from the moment the
@@ -2097,9 +2018,6 @@ export class World {
     this.wood.sun.intensity = this.sunBaseIntensity;
     this.lastMusicWave = -1;
     this.drawn = 1;
-    this.draw = 0;
-    this.drawing = false;
-    this.heldSeconds = 0;
     this.kick = 0;
     this.spawnIn = 0.5;
     this.yaw = 0;

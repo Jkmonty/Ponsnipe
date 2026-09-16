@@ -544,10 +544,10 @@
   .site .ctl-touch { display: inline; }
 }
 
-/* The draw meter: a thin lime bar, opposite the health bar, that fills as the
-   string comes back. Only rendered while actually drawing, so its own CSS
-   never has to hide an empty track. */
-.site .arc-draw {
+/* The nock meter: a thin lime bar, opposite the health bar, that fills as the
+   next arrow comes back onto the string after a shot. Only rendered while it
+   is actually refilling, so its own CSS never has to hide a full track. */
+.site .arc-nock {
   position: absolute;
   right: var(--sp-3);
   bottom: var(--sp-3);
@@ -561,12 +561,12 @@
   overflow: hidden;
   pointer-events: none;
 }
-.site .arc-draw i {
+.site .arc-nock i {
   display: block;
   height: 100%;
   background: var(--lime);
-  /* No easing: the meter is the truth of how far the string is back right
-     now, not a smoothed impression of it. */
+  /* No easing: the meter is the truth of how far the next arrow is back on
+     the string right now, not a smoothed impression of it. */
   transition: none;
 }
 
