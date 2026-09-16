@@ -31,8 +31,9 @@ export interface WaveState {
   /**
    * The fraction of `maxUp` that may be red at once, not a per-spawn
    * probability by itself — `world.ts` turns it into a hard headcount via
-   * `Math.round(maxUp * hostileShare)` (floored up to at least one once any
-   * red is allowed at all) and refuses a new red past that count, which is
+   * `Math.round(maxUp * hostileShare)` (with a floor of one, which none of
+   * the three shares below is low enough to reach — see `spawn`) and
+   * refuses a new red past that count, which is
    * what actually makes wave 0 "at most one" rather than merely unlikely to
    * be more. The spec's "a third of them" and "half red" are literally this
    * fraction at wave 1 and wave 2; wave 0's 0.2 is chosen so that, against

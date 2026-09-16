@@ -838,8 +838,14 @@ export class World {
      * `Math.floor`/`Math.ceil`: it is the same rounding `waveAt`'s own doc
      * comment promises and the pacing test asserts, so wave 0's 3 * 0.2
      * lands on the "at most one" the spec states in words, not on zero.
-     * `Math.max(1, ...)` only matters once `hostileShare` is high enough
-     * that rounding could otherwise floor a real allowance to nothing.
+     *
+     * `Math.max(1, ...)` is the floor under that rounding, and it matters
+     * when the share is *low*, not high: a `maxUp * hostileShare` below 0.5
+     * rounds to zero, which would leave a wave that is meant to have reds
+     * in it with none at all. It does not bind on anything that ships —
+     * wave 0 rounds to 1, wave 1 to 2, wave 2 to 5 — so it is a guard on
+     * the three numbers in `waves.ts` being retuned, not a rule any wave
+     * currently reaches.
      *
      * On an all-red day that cap is deliberately set aside in favour of
      * `wave.maxUp` itself — every slot the wave allows, not just its
