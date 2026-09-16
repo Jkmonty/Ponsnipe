@@ -1032,3 +1032,123 @@ test("the music loop's playback rate tightens only in wave 2, and by a measurabl
     `the loop should complete in under ${LOOP_SECONDS}s once tightened, not just play at a different number`,
   );
 });
+
+/*
+ * Round 1 review finding: `waveAt`'s own "at most one red in wave 0" was
+ * only ever proven as arithmetic (`Math.round(maxUp * hostileShare) === 1`
+ * in the ordering test above) — never as something `World.spawn` actually
+ * enforces frame to frame. This drives a real, mixed-stock round (several
+ * green, one red, so a genuine choice exists every spawn) through the whole
+ * of wave 0 and checks the live headcount directly against `w.butts`,
+ * rather than trusting that the arithmetic and the code agree.
+ */
+test("the wave 0 hostile cap holds live, not just as arithmetic in waves.ts", () => {
+  const originalRandom = Math.random;
+  try {
+    // Pinned to 0, the same technique the pre-existing wind-up and whistle
+    // tests use: with `Math.random() < wave.hostileShare * 1.4` always true,
+    // every spawn that still has hostile room *will* want to be hostile —
+    // the bias is maxed out, not left to chance, so a cap that held only
+    // because the dice never asked for a second red would not fool this.
+    Math.random = () => 0;
+    const stocks = [
+      { symbol: "AAA", changePct: 4 },
+      { symbol: "BBB", changePct: 2 },
+      { symbol: "CCC", changePct: 1 },
+      { symbol: "DDD", changePct: 3 },
+      { symbol: "EEE", changePct: -3 }, // the one red ticker on an otherwise green day
+    ];
+    const WAVE_0_MAX_UP = waveAt(0).maxUp;
+    const w = new World(makeNullSurface(), stocks, () => {});
+    w.start();
+    const dt = 1 / 60;
+    let maxHostileSeen = 0;
+
+    // 15s, comfortably inside wave 0's 0-20s band the whole way.
+    for (let i = 0; i < 15 * 60; i++) {
+      w.step(dt);
+      const activeHostile = w.butts.filter((b) => b.dead === 0 && b.hostile).length;
+      maxHostileSeen = Math.max(maxHostileSeen, activeHostile);
+      assert.ok(
+        activeHostile <= 1,
+        `wave 0 must never show more than one live red target on a day green stocks are available (saw ${activeHostile} at frame ${i})`,
+      );
+    }
+    assert.equal(
+      maxHostileSeen,
+      1,
+      "with the hostile bias maxed out and a red ticker available, the cap should actually have been reached, not merely never exceeded",
+    );
+    // The range should still have filled to its normal ceiling — the cap
+    // stops at one *red*, not at one target overall; green fills the rest.
+    const activeUp = w.butts.filter((b) => b.dead === 0).length;
+    assert.equal(activeUp, WAVE_0_MAX_UP, "green stocks were available, so the range should still fill to wave 0's own maxUp");
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+/*
+ * Round 1 review finding, the actual bug: on a day every tracked ticker is
+ * down, `spawn`'s old fallback (`up.length ? up : this.stocks`) reached for
+ * the unfiltered stock list the instant the hostile bias rolled against a
+ * red pick, which is entirely red on an all-red day — silently bypassing
+ * `hostileRoom` and letting wave 0 fill with more than the "at most one"
+ * the spec promises. The fix does not restore that cap unconditionally
+ * (see `spawn`'s own comment on `allRedDay`): a hard cap of one on a day
+ * with zero green stocks would leave wave 0 with at most one *target* on
+ * the whole range. So this test checks the deliberate replacement instead:
+ * the cap is allowed to rise to `wave.maxUp` on such a day, every target
+ * that does appear is honestly red (never a down ticker painted green to
+ * manufacture a "safe" shot), and the range still fills rather than sitting
+ * near-empty.
+ */
+test("an all-red day bends the wave 0 hostile cap on purpose, up to maxUp, and never past it", () => {
+  const originalRandom = Math.random;
+  try {
+    // Pinned for the same reason as the test above: with no green stock at
+    // all, `wantHostile`'s `up.length === 0` arm is already forced true, so
+    // this mainly keeps the rest of `spawn` (rank, x, the stock index into
+    // a one-element `down` pool) deterministic rather than adding anything
+    // new to what pinning proves here.
+    Math.random = () => 0;
+    const stocks = [
+      { symbol: "AAA", changePct: -4 },
+      { symbol: "BBB", changePct: -2 },
+      { symbol: "CCC", changePct: -1 },
+      { symbol: "DDD", changePct: -3 },
+      { symbol: "EEE", changePct: -0.5 },
+    ];
+    const WAVE_0_MAX_UP = waveAt(0).maxUp;
+    const w = new World(makeNullSurface(), stocks, () => {});
+    w.start();
+    const dt = 1 / 60;
+    let maxHostileSeen = 0;
+
+    for (let i = 0; i < 15 * 60; i++) {
+      w.step(dt);
+      const live = w.butts.filter((b) => b.dead === 0);
+      const activeHostile = live.filter((b) => b.hostile).length;
+      maxHostileSeen = Math.max(maxHostileSeen, activeHostile);
+      assert.ok(
+        live.every((b) => b.hostile),
+        "every live target on an all-red day must actually be hostile — no down ticker should be painted green to manufacture a safe shot",
+      );
+      assert.ok(
+        activeHostile <= WAVE_0_MAX_UP,
+        `the bent cap must still stop at wave 0's own maxUp (${WAVE_0_MAX_UP}), not spawn without limit (saw ${activeHostile} at frame ${i})`,
+      );
+    }
+    assert.ok(
+      maxHostileSeen > 1,
+      `an all-red day should be allowed past the normal "at most one" cap (saw a peak of only ${maxHostileSeen})`,
+    );
+    assert.equal(
+      maxHostileSeen,
+      WAVE_0_MAX_UP,
+      `the range should fill all the way to wave 0's own maxUp (${WAVE_0_MAX_UP}) rather than stopping short of it`,
+    );
+  } finally {
+    Math.random = originalRandom;
+  }
+});

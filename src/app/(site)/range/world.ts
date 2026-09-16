@@ -628,6 +628,16 @@ export class World {
    */
   private spawn(hostileActive: boolean, wave: WaveState) {
     if (!this.stocks.length) return;
+    const down = this.stocks.filter((x) => x.changePct < 0);
+    const up = this.stocks.filter((x) => x.changePct >= 0);
+    /*
+     * A real market-wide selloff — every tracked ticker down on the day —
+     * leaves nothing green to fall back on. This is deliberately distinct
+     * from `up.length === 0` used loosely elsewhere: it is checked here,
+     * once, and named, rather than left as an implicit consequence of an
+     * unfiltered fallback nobody had to reason about.
+     */
+    const allRedDay = down.length > 0 && up.length === 0;
     /*
      * Half the range should be shooting back — but never past `wave`'s own
      * cap on how many reds may be up at once. `Math.round` rather than
@@ -636,9 +646,24 @@ export class World {
      * lands on the "at most one" the spec states in words, not on zero.
      * `Math.max(1, ...)` only matters once `hostileShare` is high enough
      * that rounding could otherwise floor a real allowance to nothing.
+     *
+     * On an all-red day that cap is deliberately set aside in favour of
+     * `wave.maxUp` itself — every slot the wave allows, not just its
+     * hostile share of them. The alternative, holding the normal cap, was
+     * considered and rejected: with no green stock anywhere, honouring
+     * "at most one red in wave 0" would mean at most one *target* on the
+     * whole range, since every remaining ticker is red by definition — a
+     * nearly empty wood on exactly the day the game is most topical. A
+     * broad selloff is real data, not a bug to paper over, so the range
+     * stays full and reads as what it is: today, everything is red. This
+     * is the one place `hostileShare`'s own "at most one" promise is
+     * knowingly not what ships — tests/range.test.ts covers the normal
+     * case live ("the wave 0 hostile cap holds live...") and this
+     * deliberate exception separately ("an all-red day bends the wave 0
+     * hostile cap on purpose...").
      */
     const activeHostileUp = this._butts.filter((b) => b.dead === 0 && b.hostile).length;
-    const hostileCap = Math.max(1, Math.round(wave.maxUp * wave.hostileShare));
+    const hostileCap = allRedDay ? wave.maxUp : Math.max(1, Math.round(wave.maxUp * wave.hostileShare));
     const hostileRoom = activeHostileUp < hostileCap;
     /*
      * Hostility is real: a butt is red because the share is down today. But
@@ -646,10 +671,9 @@ export class World {
      * being a game. So the draw is biased above `wave.hostileShare` itself —
      * still a real ticker that really is down, just picked for more often
      * than chance would — and then capped by `hostileRoom` above so the bias
-     * cannot push a wave past its own allowance.
+     * cannot push a wave past its own allowance (or, on an all-red day, past
+     * the deliberately raised one).
      */
-    const down = this.stocks.filter((x) => x.changePct < 0);
-    const up = this.stocks.filter((x) => x.changePct >= 0);
     let pool: Stock[];
     if (!hostileActive) {
       if (!up.length) return;
@@ -657,7 +681,14 @@ export class World {
     } else {
       const wantHostile =
         hostileRoom && down.length > 0 && (up.length === 0 || Math.random() < wave.hostileShare * 1.4);
-      pool = wantHostile ? down : up.length ? up : this.stocks;
+      // No `up.length ? up : this.stocks` fallback here any more: `pool`
+      // is `down` exactly when `wantHostile` says so, and `wantHostile`
+      // already accounts for the all-red day via `hostileCap` above. If
+      // `wantHostile` is false there either the cap (raised or not) has
+      // been reached — nothing should spawn — or a green stock exists and
+      // belongs in `pool` instead.
+      if (!wantHostile && !up.length) return;
+      pool = wantHostile ? down : up;
     }
     const stock = pool[Math.floor(Math.random() * pool.length)];
     const rank: Rank = Math.random() < World.NEAR_CHANCE ? "near" : "far";
