@@ -41,6 +41,7 @@ import {
   SLOW_MOTION_SCALE,
   FINAL_STRETCH_MS,
   ENDING_MAX_S,
+  ROUND_MS,
   type Snapshot,
 } from "../src/app/(site)/range/world";
 import {
@@ -1364,32 +1365,43 @@ test("endingGate: time run out with nothing in the air is simply over, at normal
 });
 
 /*
- * The spec's Failure table: "Reduced motion is set → Attract drift, slow
- * motion and screen shake are off; the game plays." Both halves of that
- * sentence are the assertion. Off must not mean broken, so `timeUp` — which
- * is what holds the round open for a last arrow and what refuses new input
- * once the clock has gone — has to come back identical on every branch.
+ * The spec's Failure table, as amended: reduced motion takes the last
+ * arrow's slow-motion camera out and leaves the clock's own last two
+ * seconds alone. The tail is the one branch the player is still shooting
+ * in, and the shot-count test further down is why it may not move with the
+ * setting; here it is only that the two branches are told apart at all.
+ *
+ * Off must not mean broken either, so `timeUp` — which is what holds the
+ * round open for a last arrow and what refuses new input once the clock has
+ * gone — has to come back identical on every branch, gated or not.
  */
-test("endingGate: reduced motion takes the slow motion out of both branches and nothing else", () => {
-  for (const state of [
+test("endingGate: reduced motion takes the last arrow's slow motion out, and only that one", () => {
+  const states = [
     { msLeft: 0, arrowInFlight: true },
     { msLeft: FINAL_STRETCH_MS, arrowInFlight: false },
     { msLeft: FINAL_STRETCH_MS + 1, arrowInFlight: true },
     { msLeft: 0, arrowInFlight: false },
-  ]) {
+  ];
+  for (const state of states) {
     const normal = endingGate({ ...state, reducedMotion: false });
     const reduced = endingGate({ ...state, reducedMotion: true });
-    assert.equal(
-      reduced.timeScale,
-      1,
-      `reduced motion should leave every branch at full speed (${JSON.stringify(state)} gave ${reduced.timeScale})`,
-    );
     assert.equal(
       reduced.timeUp,
       normal.timeUp,
       `reduced motion must not change whether the round may finish (${JSON.stringify(state)})`,
     );
   }
+
+  assert.equal(
+    endingGate({ msLeft: 0, arrowInFlight: true, reducedMotion: true }).timeScale,
+    1,
+    "the last arrow should be followed out at full speed, with no camera sweeping after it",
+  );
+  assert.equal(
+    endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: false, reducedMotion: true }).timeScale,
+    SLOW_MOTION_SCALE,
+    "the last two seconds must stay at quarter speed with the setting on — it is time the player is still shooting in",
+  );
 });
 
 /*
@@ -1622,15 +1634,17 @@ function withReducedMotion<R>(on: boolean, build: () => R): R {
  * Reduced motion, all the way through a live ending rather than only
  * through `endingGate`'s arithmetic. Three things, because "off" must not
  * come out as "broken":
- *   - the ending runs at full speed, measured against an otherwise
- *     identical world that did not ask for it;
+ *   - the "last two seconds" tail is quarter speed with the setting and
+ *     without it alike, measured against an otherwise identical world
+ *     nowhere near the end of its round — the branch the flag deliberately
+ *     does not reach, since it is time the player is still shooting in;
  *   - the camera does not sweep after the last arrow;
  *   - the round still ends, on that arrow resolving.
  * The speed is read off `sidestep`, which moves at one exact known rate
  * with no randomness in it — the same property the slow-motion test above
  * already leans on.
  */
-test("reduced motion: the ending runs at full speed, the camera stays put, and the round still ends", () => {
+test("reduced motion: the last two seconds still slow, the camera stays put, and the round still ends", () => {
   const dt = 1 / 60;
   const stock = [{ symbol: "UP", changePct: 1 }];
 
@@ -1655,8 +1669,8 @@ test("reduced motion: the ending runs at full speed, the camera stays put, and t
     "without the setting the tail should still be the spec's own quarter speed",
   );
   assert.ok(
-    Math.abs(stepOfTheTail(true) - reference) < 1e-9,
-    `with reduced motion the tail should move exactly as far as an ordinary frame (${stepOfTheTail(true)} vs ${reference})`,
+    Math.abs(stepOfTheTail(true) - reference * SLOW_MOTION_SCALE) < 1e-9,
+    `with the setting on the tail should still be quarter speed (${stepOfTheTail(true)} vs ${reference * SLOW_MOTION_SCALE}) — the flag reaches the last arrow, not this`,
   );
 
   // The last-arrow ending: the camera, and that the round still finishes.
@@ -1674,6 +1688,66 @@ test("reduced motion: the ending runs at full speed, the camera stays put, and t
   assert.ok(w.over, "the round must still end — reduced motion turns the cinematic off, not the game");
   assert.equal(w.facing.yaw, aimed.yaw, "the view must not have swept sideways after the arrow");
   assert.equal(w.facing.pitch, aimed.pitch, "nor tilted after it");
+});
+
+/*
+ * The one thing the reduced-motion flag may never do: change the score.
+ *
+ * `step` feeds the ending's scaled `dt` to both timers that gate a shot —
+ * the nock's refill and the bow's pull — so whatever scale the "last two
+ * seconds" tail runs at decides how many arrows a player can get away
+ * inside it. Neutralising that scale for the setting and not against it
+ * therefore paid out in shots, and shots are points on a board that pays a
+ * prize. Extra shots are the same defect as fewer, so what is asserted here
+ * is the relationship and not either count: whatever the game's rate of
+ * fire turns out to be, the same two seconds of clock have to allow the
+ * same number of them both ways round.
+ *
+ * Two windows, each exactly `FINAL_STRETCH_MS` of clock wide so they are
+ * comparable: one in the middle of the round, which is also what stops the
+ * equality being satisfied by a driver that never looses anything at all,
+ * and the tail itself.
+ *
+ * The driver is the full-draw player, the higher-scoring pattern and the
+ * one the defect landed on: back on the string the instant the nock allows
+ * and let go the instant it is at a full pull. `beginDraw` is a no-op while
+ * already drawing or still nocking, so calling it every frame is simply
+ * holding the button down. A single up stock keeps the range hostile-free,
+ * so nothing but the clock can end either window.
+ */
+test("reduced motion cannot change how many shots two seconds of clock allow, at the end or anywhere else", () => {
+  const dt = 1 / 60;
+  const stock = [{ symbol: "UP", changePct: 1 }];
+
+  const shotsBetween = (reduced: boolean, from: number, to: number) => {
+    const w = withReducedMotion(reduced, () => new World(makeNullSurface(), stock, () => {}));
+    w.start();
+    w.msLeft = from;
+    let shots = 0;
+    while (w.msLeft > to && !w.over) {
+      w.beginDraw();
+      w.step(dt);
+      if (w.pull >= 1 && w.releaseDraw()) shots += 1;
+    }
+    return shots;
+  };
+
+  const midRound = shotsBetween(false, ROUND_MS, ROUND_MS - FINAL_STRETCH_MS);
+  assert.ok(
+    midRound > 0,
+    "the full-draw driver has to be able to loose something in an ordinary two seconds, or every equality below is vacuous",
+  );
+  assert.equal(
+    shotsBetween(true, ROUND_MS, ROUND_MS - FINAL_STRETCH_MS),
+    midRound,
+    "reduced motion must not change the rate of fire away from the ending either",
+  );
+
+  assert.equal(
+    shotsBetween(true, FINAL_STRETCH_MS, 0),
+    shotsBetween(false, FINAL_STRETCH_MS, 0),
+    "the last two seconds must allow a full-draw player exactly the same shots with the setting as without it",
+  );
 });
 
 /*

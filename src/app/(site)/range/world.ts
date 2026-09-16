@@ -118,10 +118,14 @@ const START_LIVES = 3;
  * ending's own ceiling (`ENDING_MAX_S`), both of which are counts of real
  * seconds and would mean nothing measured in slowed ones.
  *
- * Under reduced motion this scale is never applied at all — `endingGate`
- * returns 1 in its place, per the spec's Failure table — and the ending
- * runs at full speed instead. Everything else about it is unchanged: the
- * round still waits for a last arrow and still ends when it resolves.
+ * Under reduced motion `endingGate` returns 1 in place of this scale on
+ * the last-arrow branch only, so that ending plays out at full speed with
+ * the camera left where the shot was aimed. The "last two seconds" tail
+ * keeps this scale whatever the setting says: it is time the player is
+ * still shooting in, and both the nock and the pull are fed the scaled
+ * `dt`, so a tail that ran at full speed for one setting and quarter speed
+ * for the other would put a different number of arrows in the air for the
+ * same two real seconds. `endingGate` says why at length.
  */
 export const SLOW_MOTION_SCALE = 0.25;
 /** The spec's own "last two seconds" — how far out from the round's own end
@@ -219,22 +223,41 @@ export interface EndingGates {
 
 export function endingGate(state: EndingState): EndingGates {
   /*
-   * Reduced motion, from the spec's Failure table: "Attract drift, slow
-   * motion and screen shake are off; the game plays."
+   * Reduced motion, from the spec's Failure table. It turns off one of the
+   * two branches below and not the other, and the spec's row has been
+   * amended to say which and why — it was written before the ending had
+   * two branches to tell apart.
    *
-   * Only the scale is neutralised. `timeUp` is untouched on both branches,
-   * so the round still refuses new input the moment the clock runs out,
-   * still waits for a last arrow that is already flying, and still ends the
-   * instant that arrow resolves — at full speed, and still under
-   * `ENDING_MAX_S`, which is a count of real seconds either way. Off has to
-   * mean off, not broken: the row ends "the game plays".
+   * Off is the last-arrow branch. That one is a quarter-speed camera
+   * sweeping across yaw and pitch to follow an arrow down for as long as
+   * `ENDING_MAX_S` allows, which is close to the worst case for the setting
+   * that row exists for. It costs the player nothing to take away, because
+   * no new arrow can be loosed once the clock has gone.
+   *
+   * On for everyone is the "last two seconds" tail. It moves no camera at
+   * all — it is two real seconds of the world itself slowing down — and it
+   * is two seconds the player is still shooting in: `step` feeds the scaled
+   * `dt` to both the nock's refill and the bow's pull, so how far the
+   * string gets inside the window is exactly what this scale decides.
+   * Neutralising it here would hand a full-draw player shots that the same
+   * player without the setting cannot take. A posted score on a board that
+   * pays a prize must not depend on an accessibility setting, in either
+   * direction: extra shots are the same defect as fewer, and the tests hold
+   * the two counts equal rather than pinning either number.
+   *
+   * `timeUp` is untouched on both branches either way, so the round still
+   * refuses new input the moment the clock runs out, still waits for a last
+   * arrow that is already flying, and still ends the instant that arrow
+   * resolves — still under `ENDING_MAX_S`, which is a count of real seconds
+   * however the frame is scaled. Off has to mean off, not broken: the row
+   * ends "the game plays".
    */
-  const slow = state.reducedMotion ? 1 : SLOW_MOTION_SCALE;
+  const lastArrow = state.reducedMotion ? 1 : SLOW_MOTION_SCALE;
   if (state.msLeft <= 0) {
-    return { timeScale: state.arrowInFlight ? slow : 1, timeUp: true };
+    return { timeScale: state.arrowInFlight ? lastArrow : 1, timeUp: true };
   }
   if (state.msLeft <= FINAL_STRETCH_MS && !state.arrowInFlight) {
-    return { timeScale: slow, timeUp: false };
+    return { timeScale: SLOW_MOTION_SCALE, timeUp: false };
   }
   return { timeScale: 1, timeUp: false };
 }
@@ -461,9 +484,11 @@ export class World {
    *     camera/model shake this round adds (see `runLoop` and `stepRock`);
    *   - the pollen drifting through the light (`step`);
    *   - the attract camera's own drift (`driftCamera`);
-   *   - the ending's slow motion, through `endingGate`, and the camera that
-   *     would otherwise sweep after the last arrow (`step`'s `followArrow`
-   *     call) — together, the spec's "slow motion ... off" row.
+   *   - the last-arrow ending's slow motion, through `endingGate`, and the
+   *     camera that would otherwise sweep after that arrow (`step`'s
+   *     `followArrow` call) — together, the spec's "slow motion ... off"
+   *     row. The "last two seconds" tail is deliberately not on this list
+   *     and runs at quarter speed for everyone; `endingGate` says why.
    * The ending is deliberately listed: it was the one thing here that the
    * flag did not reach, and that was a Critical rather than a polish item,
    * because the setting exists for exactly a quarter-speed camera swinging
@@ -628,6 +653,16 @@ export class World {
       without reaching into the private fields it writes. */
   get facing(): { yaw: number; pitch: number } {
     return { yaw: this.yaw, pitch: this.pitch };
+  }
+
+  /** How far the string is pulled back right now, 0..1 — the same number
+      `snapshot` already publishes as `draw`, for the same test-only reason
+      as `butts`/`arrows`/`sidestep`/`facing`. A test measuring how many
+      shots a window of the round allows has to let go at a full pull and
+      not a frame before, and the pull is one of the two timers the
+      ending's scaled `dt` reaches. */
+  get pull(): number {
+    return this.draw;
   }
 
   /**
