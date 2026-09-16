@@ -64,12 +64,15 @@ export default function ArcadePage() {
   const [wallet, setWallet] = useState("");
   const [posted, setPosted] = useState<string | null>(null);
   /** What became of the share image. `label` replaces the button's own,
-      which is why the clipboard path costs the card no height at all; `note`
-      is only set where a button's worth of words is not enough — the
-      download path, where the image is a file to attach rather than a paste,
-      and the one case where nothing could be drawn. `line` is narrower
-      still: only where the text could not be put on the clipboard either,
-      so the card has to print it to be selected by hand. */
+      which is why the clipboard path costs the card no height at all.
+      `note` and `line` are alternatives and never both at once. `note` is a
+      sentence, for the paths where a button's worth of words is not enough —
+      the download path that did get the text onto the clipboard, and the one
+      case where nothing could be drawn. `line` is the text itself, printed
+      only where the clipboard took neither the image nor the text, and it
+      replaces the sentence rather than following it: the overlay that clips
+      this card has room for one row below the buttons at phone width, not
+      two (see `.arc-paste` in site.css). */
   const [shared, setShared] = useState<{ label: string; note?: string; line?: string } | null>(null);
   /** True from the press until the image has been handed over. Drawing it
       waits on the fonts and the mark, which on a cold cache is long enough
@@ -285,16 +288,17 @@ export default function ArcadePage() {
         /*
          * The line still has to be handed over somehow, and text on the
          * clipboard is more widely allowed than an image — a browser that
-         * refuses `write` may still honour `writeText`. Only
-         * when that is refused too is the line printed on the card for the
-         * player to select, which is the one path that makes the card
-         * taller.
+         * refuses `write` may still honour `writeText`. Only when that is
+         * refused too is the line printed on the card for the player to
+         * select, and then it is printed instead of the sentence rather than
+         * under it: this is the path with the least room left, so the row it
+         * costs has to be the text and not a description of the text.
          */
         try {
           await navigator.clipboard.writeText(line);
           setShared({ label: "Saved", note: "In your downloads. The line to paste is copied." });
         } catch {
-          setShared({ label: "Saved", note: "In your downloads. The line to paste with it:", line });
+          setShared({ label: "Saved", line });
         }
       }
     } finally {
@@ -675,13 +679,33 @@ export default function ArcadePage() {
                   {/*
                     Only where there is still something for the player to do:
                     the clipboard path says "Copied" on the button itself and
-                    adds no line, so the common case leaves the card exactly
-                    the height it was before this control existed.
+                    sets neither of these, so the common case leaves the card
+                    exactly the height it was before this control existed.
                   */}
                   {shared?.note && (
                     <p className="arc-share" aria-live="polite">
                       {shared.note}
-                      {shared.line && <span className="arc-share-line">{shared.line}</span>}
+                    </p>
+                  )}
+                  {/*
+                    The line to paste, where the clipboard would take neither
+                    the image nor the text. One row: a caption beside the
+                    field rather than over it, and the line itself scrolling
+                    sideways rather than wrapping, because what clips this
+                    card is the overlay's own client box, and at 375×812
+                    that leaves 43px under the button row — see `.arc-paste`
+                    in site.css for the measurements. `tabIndex` because the
+                    field scrolls, and a scrollable box that cannot be focused
+                    cannot be read from a keyboard; `user-select: all` in the
+                    stylesheet is what still puts the whole line on the
+                    clipboard from one click, however little of it shows.
+                  */}
+                  {shared?.line && (
+                    <p className="arc-paste" aria-live="polite">
+                      <span className="lab arc-paste-tag">Paste</span>
+                      <span className="arc-share-line" tabIndex={0}>
+                        {shared.line}
+                      </span>
                     </p>
                   )}
                   <p className="arc-controls mono">

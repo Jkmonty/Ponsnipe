@@ -430,21 +430,67 @@
 
 /* What became of the image, on the paths where the button's own label is not
    the whole story. The clipboard path sets no note at all, so the card is
-   exactly as tall as it was before this control existed.
-   `.arc-share-line` is the text to paste, printed only where the clipboard
-   would take neither the image nor the text, and so has to be selected. */
+   exactly as tall as it was before this control existed. */
 .site .arc-share { margin: 0; color: var(--moss); font-size: 12.5px; line-height: 1.5; max-width: 42ch; }
+
+/* The line to paste, on the one path that has to print it: the clipboard
+   refused the image and then refused the text too.
+
+   One row, and the caption beside the field rather than above it, because
+   the box that clips this card is the overlay and not the viewport. At
+   375x812 the overlay's client box is 340px tall and the results card
+   already stands 323px before anything is printed here, so 43px is left
+   between the bottom of the button row and the overlay's bottom edge, and
+   the card's own 6px gap takes the first of it. A sentence on its own line
+   above a block that wrapped the line over three cost 97px, so the text sat
+   53px below that edge — reachable, but only by dragging inside a container
+   whose scrollbar nobody would think to look for. This row costs 29px and
+   ends 8px above the edge. The sentence the download path prints is dropped
+   on this path rather than shortened: there is room for one row here, and
+   the row has to be the text.
+
+   (39px, not 29, wherever the platform gives the box a scrollbar that takes
+   space rather than floating over it — which is desktop, where the card has
+   the room for it.)
+
+   `contain: inline-size` is load-bearing, and is what pays for the nowrap.
+   A nowrap box's intrinsic width is the whole line; .arc-overlay's grid
+   track is auto-sized and .arc-card is `width: min(480px, 100%)` measured
+   against that track, so the line's width feeds straight back into the
+   card's. Measured at 375px without containment: the card 480px and this
+   row 722px, both wider than the phone they are on. With it, 351px and
+   325px. The wrapped block this replaces measured 351px here too, which is
+   why nothing needed containment before.
+
+   `user-select: all` is what keeps the whole line copyable however little of
+   it is on screen: one click or tap selects every character, not the visible
+   ones. The sideways scroll is only for reading it, and page.tsx puts
+   tabindex on the field so a keyboard can do that too. */
+.site .arc-paste {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  text-align: left;
+}
+.site .arc-paste-tag { flex: none; }
 .site .arc-share-line {
-  display: block;
-  margin-top: 6px;
-  padding: 6px 8px;
+  flex: 1 1 0%;
+  min-width: 0;
+  contain: inline-size;
+  padding: 5px 8px;
   border-radius: var(--r-ctl);
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--hair-w);
   font-family: var(--mono-site);
   font-size: 11.5px;
   color: var(--moon);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
   user-select: all;
 }
 
