@@ -1,6 +1,7 @@
 import * as T from "three";
 import type { Stock } from "./world";
 import { rand } from "./rand";
+import { ballisticElevation, SHOT_SPEED } from "./arrows";
 
 /**
  * The four ways a target can hold itself up, chosen once when it rises
@@ -10,7 +11,7 @@ import { rand } from "./rand";
  * - `stand`: rises and stays, as every butt used to.
  * - `drift`: tracks sideways along its rank, bouncing back at the edge —
  *   the motion every butt had unconditionally before this type existed.
- * - `peek`: rises for `PEEK_WINDOW` seconds and drops, whether hit or not.
+ * - `peek`: rises for `peekWindow` seconds and drops, whether hit or not.
  * - `swing`: hangs from a branch and swings through a shallow, bounded arc.
  */
 export type Behaviour = "stand" | "drift" | "peek" | "swing";
@@ -29,8 +30,145 @@ export const RANKS: Record<Rank, { z: number; faceScale: number; bonus: number }
   far: { z: -40, faceScale: 0.5, bonus: 2 },
 };
 
-/** How long a `peek` stays fully up before it drops on its own — hit or not. */
-export const PEEK_WINDOW = 1.8;
+/**
+ * Where the shooting line stands, in z — `world.ts` puts the camera here.
+ *
+ * It lives beside `RANKS` because the gap between this line and a rank's own
+ * z is what decides how long an arrow spends in the air reaching that rank,
+ * and that is what decides how long a butt standing there has to stay up.
+ */
+export const SHOOTER_Z = 20;
+
+/**
+ * How far either side of centre a butt may rise: `world.ts`'s spawner draws
+ * its x from exactly this. The far corner of that spread, not the middle of
+ * it, is the shot a rank has to be able to answer — a butt that comes up at
+ * the edge of its rank is as ordinary as one that comes up in front of you.
+ */
+export const SPAWN_X_LIMIT = 30;
+
+/**
+ * How high a butt's face and rim stand above the ground it rises from — the
+ * height `makeButt` builds them at, and the height an arrow has to climb to.
+ */
+export const FACE_HEIGHT = 5.2;
+
+/**
+ * How high the nock sits when a shot leaves it. `world.ts` puts the eye at
+ * y 3.6 and hangs the nock 0.2 below it; a traced shot leaves at 3.43, the
+ * few hundredths being the pitch of the view.
+ */
+export const NOCK_HEIGHT = 3.4;
+
+/**
+ * The longest horizontal shot a butt of `rank` can ask for: `SPAWN_X_LIMIT`
+ * out to the side and the whole depth from `SHOOTER_Z` to the rank's own z.
+ * 51.6 units at the near rank, 67.1 at the far.
+ */
+export function longestShotTo(rank: Rank): number {
+  return Math.hypot(SPAWN_X_LIMIT, SHOOTER_Z - RANKS[rank].z);
+}
+
+/**
+ * How long the one shot this game looses spends in the air reaching the far
+ * corner of `rank` — 1.05 seconds at the near rank, 1.37 at the far.
+ *
+ * The worst case of the spread and not its average, because a dwell derived
+ * from the average leaves every butt past the middle of its rank unhittable,
+ * which is the same defect in a smaller size.
+ *
+ * `ballisticElevation` is the solver `World.fire` actually launches at, so
+ * the horizontal component here is the one the arrow really flies at: the
+ * shot leaves 8.0 degrees above the flat at the near rank and 9.3 at the
+ * far, and dividing by the cosine of that is the whole difference between
+ * this and range over speed.
+ */
+export function flightTimeTo(rank: Rank): number {
+  const range = longestShotTo(rank);
+  const elevation = ballisticElevation(range, FACE_HEIGHT - NOCK_HEIGHT, SHOT_SPEED);
+  return range / (SHOT_SPEED * Math.cos(elevation));
+}
+
+/**
+ * How long a target has to be up before the arrow is even loosed.
+ *
+ * The player has to see it clear the hedge, decide it is worth a shot and
+ * put the reticle on it — and if they have just loosed at something else
+ * they cannot answer at all until the nock refills, which is `NOCK_TIME`
+ * (0.42s) in world.ts. A quarter of a second to notice plus that refill is
+ * 0.67; 0.8 is that with a little left to swing the view across a rank
+ * sixty units wide.
+ *
+ * This is the one number in this group that is chosen rather than derived.
+ * Everything it is added to is measured: `flightTimeTo` is a different
+ * number at each rank, which is the whole reason one shared dwell could
+ * never have been right for both of them.
+ */
+export const AIM_WINDOW = 0.8;
+
+/**
+ * The floor under every dwell at `rank` — react, then fly. 1.85 seconds at
+ * the near rank, 2.17 at the far.
+ *
+ * A dwell shorter than this cannot be answered at all in the worst case of
+ * its own rank's spread, and all three dwells were shorter than this. A
+ * green butt was given 0.5 to 1.2 seconds against the far rank's 1.37s
+ * flight, so a far green was never hittable at any x and a near one was a
+ * coin toss. Those numbers were set when a click was an instant raycast and
+ * a target only had to be up at the moment you clicked; nothing revisited
+ * them when arrows were given travel time.
+ */
+export function minimumDwell(rank: Rank): number {
+  return AIM_WINDOW + flightTimeTo(rank);
+}
+
+/**
+ * How long a `peek` stays fully up before it drops on its own — hit or not.
+ *
+ * Exactly `minimumDwell`, which makes it the tightest of the three dwells by
+ * construction: the fleeting target gets the reaction and the flight and not
+ * one tenth of a second more, at whichever rank it rose in.
+ *
+ * It was a flat 1.8 seconds for both ranks — within a twentieth of a second
+ * of what the near rank needs, and a third of a second short of the far
+ * rank, where it left about four tenths of a second to see the target,
+ * decide and click. The behaviour's identity is unchanged ("rises, and drops
+ * whether hit or not"); what changes is that the window is measured against
+ * the flight to the rank it rose in.
+ */
+export function peekWindow(rank: Rank): number {
+  return minimumDwell(rank);
+}
+
+/** How much longer than `minimumDwell` a green butt may stand: the same 0.7
+    seconds of spread its whole dwell used to be (`rand(0.5, 1.2)`). */
+export const GREEN_SPREAD = 0.7;
+
+/** And a red one: the same 1.1 seconds of spread its whole dwell used to be
+    (`rand(1.3, 2.4)`), the widest of the three, because destroying a red
+    butt is how you stop it shooting you and it cannot be destroyed if it is
+    already back in cover when the arrow arrives. */
+export const HOSTILE_SPREAD = 1.1;
+
+/**
+ * How long a butt of this rank, colour and behaviour stays fully up.
+ *
+ * All three start at `minimumDwell(rank)` — a target that is up must stay up
+ * long enough to be shot *and hit*, at its own rank — and differ only in how
+ * far past that they may run: a `peek` not at all, a green butt by up to
+ * `GREEN_SPREAD`, a red one by up to `HOSTILE_SPREAD`. Each spread is the
+ * width the old hand-picked range had, so the three keep the character they
+ * were given; it is the floor they sit on that is now derived from how long
+ * an arrow takes to get there.
+ *
+ * `rand` rather than an inline `Math.random` for the same reason everything
+ * else here uses it: a test that pins `Math.random` to 0 gets the shortest
+ * dwell of the spread, which is the case worth pinning.
+ */
+export function dwellFor(rank: Rank, hostile: boolean, behaviour: Behaviour): number {
+  if (behaviour === "peek") return peekWindow(rank);
+  return minimumDwell(rank) + rand(0, hostile ? HOSTILE_SPREAD : GREEN_SPREAD);
+}
 
 /** How far a `swing` travels either side of the branch it hangs from. */
 export const SWING_AMPLITUDE = 4.5;
@@ -100,8 +238,6 @@ export interface Butt {
  * between a safe near shot and a smaller, better-paying far one is real.
  */
 export const LANES = [-12, -25, -38];
-/** How near an arrow has to pass to count. Generous: this is an arcade. */
-export const HIT_RADIUS = 2.6;
 /**
  * The face's own radius, in local (and world, since a butt is never scaled)
  * units. This is the yardstick `ringOf` measures an impact against, so it is
@@ -374,11 +510,17 @@ export function stepButt(b: Butt, dt: number, bounds = 34): void {
   }
 
   // Rise, and dwell once fully up before sinking back into cover on its
-  // own. This is also what retires a `peek`: `makeButt` pins its `dwell` to
-  // `PEEK_WINDOW` rather than the usual random spread, so it ducks on
-  // exactly this same timer — the same one that fires whether or not the
-  // butt was ever hit, since a credited hit takes the `dead > 0` branch
-  // above instead and never reaches here again.
+  // own. This is also what retires a `peek`: `dwellFor` pins its `dwell` to
+  // `peekWindow` rather than adding a random spread on top of the floor, so
+  // it ducks on exactly this same timer — the same one that fires whether or
+  // not the butt was ever hit, since a credited hit takes the `dead > 0`
+  // branch above instead and never reaches here again.
+  //
+  // The clock only starts once `out` reaches 1, which is what makes `dwell`
+  // the time a butt is *fully* up rather than the time it is in the scene:
+  // the 0.42s climb out of cover is on top of it. Every one of the numbers
+  // `dwellFor` hands out is longer than the flight time to the rank the butt
+  // rose in, so what counts down here always outlasts an arrow aimed at it.
   if (b.rising) {
     b.out = Math.min(1, b.out + dt * 2.4);
     if (b.out >= 1) {
@@ -545,7 +687,7 @@ export function makeButt(stock: Stock, rank: Rank, x: number, behaviour: Behavio
    * on. Cover should hide a butt while it is down and let it stand clear
    * when it is up — not crop it forever.
    */
-  face.position.y = 5.2;
+  face.position.y = FACE_HEIGHT;
   group.add(face);
 
   const rim = new T.Mesh(
@@ -565,7 +707,7 @@ export function makeButt(stock: Stock, rank: Rank, x: number, behaviour: Behavio
       flatShading: true,
     }),
   );
-  rim.position.y = 5.2;
+  rim.position.y = FACE_HEIGHT;
   group.add(rim);
 
   const post = new T.Mesh(
@@ -598,18 +740,21 @@ export function makeButt(stock: Stock, rank: Rank, x: number, behaviour: Behavio
     out: 0,
     rising: true,
     /*
-     * A red that never fires is scenery.
+     * How long it stands fully up once it is clear of cover — see `dwellFor`
+     * above, which is where the three cases and the arithmetic behind them
+     * live.
      *
-     * The first shot was on a 0.6-1.3s timer while a butt stood up for only
-     * 0.4-1.1s, so most of them sank back into cover without ever loosing —
-     * which is why the reds seemed harmless. They now stand long enough to
-     * shoot, and shoot soon enough to matter.
-     *
-     * A `peek` overrides this to a fixed `PEEK_WINDOW` instead: "rises for
-     * 1.8 seconds and drops" means exactly that duration, not the usual
-     * random spread.
+     * Two separate things have to be true of this number and only the first
+     * ever was. A red that never fires is scenery: its first shot waits on a
+     * 0.25-0.6s cooldown and then a 900ms wind-up, so a butt that stood up
+     * for the 0.4-1.1s this once was sank back into cover without ever
+     * loosing, which is why the reds seemed harmless. And a target that
+     * cannot be hit is scenery too: an arrow takes up to 1.05s to cross the
+     * near rank and 1.37s to cross the far one, so a green butt on the old
+     * 0.5-1.2s was back in cover before the arrow aimed at it could arrive.
+     * `dwellFor` is what answers both.
      */
-    dwell: behaviour === "peek" ? PEEK_WINDOW : hostile ? rand(1.3, 2.4) : rand(0.5, 1.2),
+    dwell: dwellFor(rank, hostile, behaviour),
     cooldown: hostile ? rand(0.25, 0.6) : rand(0.6, 1.3),
     winding: false,
     windUp: 0,

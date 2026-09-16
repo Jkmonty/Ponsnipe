@@ -176,8 +176,29 @@ safe shot and a good one is real.
 |---|---|
 | Stand | Rises and stays, as now |
 | Drift | Tracks sideways along its rank |
-| Peek | Rises for 1.8 seconds and drops whether hit or not |
+| Peek | Rises, and drops whether hit or not, on the tightest window its rank allows |
 | Swing | Hangs from a branch and swings through a shallow arc |
+
+**How long a target stays up** is derived, not chosen. Every dwell starts at
+`minimumDwell(rank)` — the time to notice a target and put the reticle on it,
+plus the time the one shot this game looses actually spends in the air
+reaching the far corner of that rank — and differs only in how far past that
+floor it may run: a `peek` not at all, a green butt by up to 0.7 s, a red one
+by up to 1.1 s. That works out at 1.85 s at the near rank and 2.17 s at the
+far.
+
+*This is new. The spec previously gave `peek` a flat 1.8 seconds and said
+nothing at all about the others, which were `rand(0.5, 1.2)` for a green butt
+and `rand(1.3, 2.4)` for a red one. Those numbers date from the original
+arcade, when a click was an instant raycast and a target only had to be up at
+the moment you clicked. Phase 1 gave arrows travel time and nothing revisited
+them, so a green butt was up for 0.5 to 1.2 seconds against a flight of 1.37 s
+to the far rank: a far-rank green target was not hittable at any x, and a
+near-rank one was a coin toss. Measured in a live round, a dead-centre shot at
+a standing butt connected 2 times in 42 at the far rank and 50 in 78 at the
+near. It is now 63 in 63 and 77 in 77. The arc, the travel time and the lead a
+moving target needs are all unchanged; what was wrong was that a target's life
+was set before any of them existed.*
 
 **Incoming arrows.** A red butt winds up over 900 ms with a visible tell, the
 face turning to you and a red glow rising, then looses an arrow at 34-42 m/s (the speed the game has always used; the spec previously said 30, which never matched the code) with

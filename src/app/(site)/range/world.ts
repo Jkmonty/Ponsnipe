@@ -34,6 +34,8 @@ import {
   pickBehaviour,
   FACE_RADIUS,
   RANKS,
+  SHOOTER_Z,
+  SPAWN_X_LIMIT,
   type Butt,
   type Rank,
 } from "./butts";
@@ -41,7 +43,7 @@ import {
   makeArrowMesh,
   looseEnemyArrow,
   stepArrows,
-  drawSpeed,
+  SHOT_SPEED,
   ballisticElevation,
   collectTargets,
   ARROW_LIFE,
@@ -294,19 +296,6 @@ const RELEASE_KICK_TIME = 0.2;
     and the only thing standing between the player and a machine gun now that
     a shot takes no time of its own to prepare. */
 const NOCK_TIME = 0.42;
-/**
- * What every shot looses at.
- *
- * One click or one tap, one arrow, at this pull — a solid, deliberate draw
- * with no wait and nothing to hold. It was `TOUCH_DRAW` while a thumb was
- * the only input that fired at a fixed strength and a mouse pulled its own
- * string; a click looses the same way now, so the name no longer says
- * "touch". The number is unchanged: it was tuned against the ranks' real
- * distances and the wave pacing, and raising it to a full 1 would quietly
- * retune the difficulty of a round that posts to a board.
- */
-const SHOT_DRAW = 0.8;
-
 /**
  * How long a hostile butt winds up — face turning to the player, rim glow
  * rising — before it actually looses. Exported so the wind-up-then-loose
@@ -562,7 +551,7 @@ export class World {
    * The nock's own refill, 0..1, climbing back to 1 on its own over
    * `NOCK_TIME` after every shot. This is the rate-of-fire gate and the only
    * timer a shot waits on: how hard the string is pulled is no longer a
-   * number the player moves, it is the constant `SHOT_DRAW`.
+   * number the player moves, it is the constant `SHOT_DRAW` in arrows.ts.
    *
    * There used to be a second field, `draw`, one letter away and easy to
    * conflate with this one — how far the string was pulled back right now,
@@ -616,7 +605,10 @@ export class World {
     this.camera = new T.PerspectiveCamera(FOV_WIDE, 1, 0.1, 400);
     // Back from the first hedge, so there is ground between you and the
     // nearest butt and the range reads as a range rather than a wall.
-    this.camera.position.set(0, 3.6, 20);
+    // `SHOOTER_Z` rather than a literal 20: `butts.ts` measures each rank's
+    // own range from this same line to work out how long a butt there has to
+    // stay up, so the two cannot be allowed to drift apart.
+    this.camera.position.set(0, 3.6, SHOOTER_Z);
     // stepArrows finds the player by this flag, so a hostile arrow's
     // proximity check has an Object3D to measure against.
     this.camera.userData.isPlayer = true;
@@ -972,7 +964,10 @@ export class World {
     }
     const stock = pool[Math.floor(Math.random() * pool.length)];
     const rank: Rank = Math.random() < World.NEAR_CHANCE ? "near" : "far";
-    const x = rand(-30, 30);
+    // The same spread `butts.ts`'s `SPAWN_X_LIMIT` takes the worst-case shot
+    // from: a butt at the edge of this is the longest shot its rank can ask
+    // for, and the one its dwell has to outlast.
+    const x = rand(-SPAWN_X_LIMIT, SPAWN_X_LIMIT);
     const behaviour = pickBehaviour(wave.wave);
     const butt = makeButt(stock, rank, x, behaviour);
     // stepArrows steers the player's own shots toward whatever carries this
@@ -1830,8 +1825,10 @@ export class World {
      */
     const from = this.nock?.getWorldPosition(new T.Vector3()) ?? this.camera.position.clone();
     // Every arrow leaves at the same speed, because every arrow leaves at the
-    // same draw. Nothing the player does between shots changes this number.
-    const speed = drawSpeed(SHOT_DRAW);
+    // same draw. Nothing the player does between shots changes this number —
+    // and `butts.ts` divides each rank's own longest shot by this same
+    // constant to decide how long a butt there stays up for.
+    const speed = SHOT_SPEED;
     const vel = this.raycaster.ray.direction.clone().multiplyScalar(speed);
     /*
      * The elevation that puts the arrow where the reticle is.
@@ -1862,10 +1859,14 @@ export class World {
      * actually pointing is the honest answer to "nothing is there".
      *
      * This lands before the aim assist, and could not be otherwise: the
-     * assist runs per frame inside `stepArrows`, and it only ever rotates
-     * the horizontal heading — `vel.y` is left to gravity by that
-     * function's own design, so nothing downstream can undo the elevation
-     * set here. Nor does setting it move what the assist's cone is
+     * assist runs per frame inside `stepArrows`, and what it writes back is
+     * only the horizontal heading — `vel.y` is left to gravity. That is a
+     * property of the call site in `stepArrows`, which flattens the velocity
+     * to y = 0 before steering and then writes back x and z alone, and not
+     * of `steerToward` itself, which rotates about a full 3D cross-product
+     * axis and would happily turn a vector through the vertical if it were
+     * handed one. The conclusion holds either way: nothing downstream can
+     * undo the elevation set here. Nor does setting it move what the assist's cone is
      * measured off: the heading below is the same bearing the flat launch
      * used, differing only by the width of the bow, since it runs from the
      * nock (0.12 units right of the eye) rather than from the eye — at the

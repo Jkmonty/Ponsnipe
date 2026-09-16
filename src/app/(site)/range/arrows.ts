@@ -1,6 +1,5 @@
 import * as T from "three";
 import type { Butt } from "./butts";
-import { HIT_RADIUS } from "./butts";
 import { rand } from "./rand";
 
 export interface Arrow {
@@ -126,10 +125,41 @@ export function looseEnemyArrow(scene: T.Scene, b: Butt, at: T.Vector3): Arrow {
     an arrow flat and fast, a barely-pulled string lobs it. Both ends are real
     numbers the function still has to honour, but the game itself now only
     ever asks for the one fixed draw every shot looses at — see `SHOT_DRAW`
-    in world.ts. */
+    below. */
 export const DRAW_MIN_SPEED = 28;
 export const DRAW_MAX_SPEED = 55;
 export const GRAVITY = 9.8;
+
+/**
+ * How near an arrow has to pass to count. Generous: this is an arcade.
+ *
+ * It was declared in `butts.ts` and only ever read here — it is the
+ * tolerance `stepArrows` measures a hostile arrow's closest approach to the
+ * player against. It moved because `butts.ts` now has to know how long an
+ * arrow takes to reach a rank (see `dwellFor` there), and a butt asking the
+ * arrows module a question while the arrows module asks the butts module
+ * one is a cycle. Nothing else imported it, so the move is a move and not a
+ * change.
+ */
+export const HIT_RADIUS = 2.6;
+
+/**
+ * What every shot looses at.
+ *
+ * One click or one tap, one arrow, at this pull — a solid, deliberate draw
+ * with no wait and nothing to hold. It was `TOUCH_DRAW` while a thumb was
+ * the only input that fired at a fixed strength and a mouse pulled its own
+ * string; a click looses the same way now, so the name no longer says
+ * "touch". The number is unchanged: it was tuned against the ranks' real
+ * distances and the wave pacing, and raising it to a full 1 would quietly
+ * retune the difficulty of a round that posts to a board.
+ *
+ * It was declared in `world.ts`, which is still the only place that fires a
+ * player's arrow. It lives here now because it is half of `SHOT_SPEED`
+ * below, which is what `butts.ts` needs to work out how long a target has
+ * to stand up for.
+ */
+export const SHOT_DRAW = 0.8;
 
 /** How long a stuck arrow lingers before it fades out of the scene. */
 const STUCK_FADE = 3;
@@ -151,6 +181,15 @@ export function drawSpeed(draw: number): number {
   const d = Math.max(0, Math.min(1, draw));
   return DRAW_MIN_SPEED + (DRAW_MAX_SPEED - DRAW_MIN_SPEED) * d;
 }
+
+/**
+ * The speed every player arrow leaves the string at — `drawSpeed` of the one
+ * draw the game looses at, 49.6 units a second, worked out once rather than
+ * at each of the two call sites that want it. `World.fire` launches at it;
+ * `butts.ts` divides a rank's own longest shot by it to find out how long an
+ * arrow spends in the air getting there.
+ */
+export const SHOT_SPEED = drawSpeed(SHOT_DRAW);
 
 /**
  * How far off a shot may be and still be helped home.
