@@ -389,12 +389,18 @@
    of the card, unscrollably, for every stage between roughly 760px and
    1000px wide (the stage's own max(340, width*0.58) height falls short of
    the card's ~540-560px there) — a band nobody had screenshotted, since
-   verification only ever checked 1280px and the mobile preset, and the
-   align-content: start override below used to apply only under the 720px
-   breakpoint. Moved here, to the unconditional base rule, so the card's own
-   top edge is always the scroll container's start edge and is always
-   reachable, at every width. */
-.site .arc-overlay { background: transparent; padding: var(--sp-5); overflow-y: auto; align-content: start; }
+   verification only ever checked 1280px and the mobile preset.
+
+   A plain `align-content: start` fixed the reachability but cost the
+   centred look at widths where the card already fits — at 1280px it sat
+   116px above where centring puts it, floating over a lot of empty wood.
+   `safe center` is the keyword built for exactly this split: it centres
+   like `center` whenever the content fits, and only falls back to start
+   alignment once centring would push the content's own start edge outside
+   the scrollable area — which is precisely the band this rule exists to
+   fix. One rule now covers both cases instead of trading one bug for
+   the other. */
+.site .arc-overlay { background: transparent; padding: var(--sp-5); overflow-y: auto; align-content: safe center; }
 .site .arc-card {
   width: min(480px, 100%);
   display: grid;
