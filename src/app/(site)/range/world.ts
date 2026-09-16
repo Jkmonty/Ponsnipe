@@ -107,6 +107,11 @@ const START_LIVES = 3;
  * things never multiplied by it: the round clock (`msLeft`) and the
  * ending's own ceiling (`ENDING_MAX_S`), both of which are counts of real
  * seconds and would mean nothing measured in slowed ones.
+ *
+ * Under reduced motion this scale is never applied at all — `endingGate`
+ * returns 1 in its place, per the spec's Failure table — and the ending
+ * runs at full speed instead. Everything else about it is unchanged: the
+ * round still waits for a last arrow and still ends when it resolves.
  */
 export const SLOW_MOTION_SCALE = 0.25;
 /** The spec's own "last two seconds" — how far out from the round's own end
@@ -132,6 +137,12 @@ export const FINAL_STRETCH_MS = 2_000;
  * flying when the round ends, and the results card comes up over a frozen
  * scene exactly as it does on every other path, rather than the arrow
  * winking out in mid-air.
+ *
+ * Those figures are real seconds spent at the quarter speed. Under reduced
+ * motion the ending runs at 1x, so the same flights take a quarter as long
+ * — 0.8s flat and 3.3s at the top of the clamp, measured — and this
+ * ceiling never fires at all. That is the right way round: the cap exists
+ * to cut a long slow-motion tail, and there is no tail to cut.
  */
 export const ENDING_MAX_S = 5;
 /** How fast the view eases toward the last arrow while it is being followed
@@ -175,6 +186,13 @@ export interface EndingState {
   /** Whether a player arrow ("mine") is still flying — not yet stuck in
       anything, not yet expired — the instant this frame begins. */
   arrowInFlight: boolean;
+  /**
+   * Whether the visitor asked for reduced motion. Required rather than
+   * optional so that every caller has to answer it: the whole reason this
+   * row of the spec's Failure table was missed is that the ending was
+   * written without the flag ever being in front of it.
+   */
+  reducedMotion: boolean;
 }
 
 export interface EndingGates {
@@ -190,11 +208,23 @@ export interface EndingGates {
 }
 
 export function endingGate(state: EndingState): EndingGates {
+  /*
+   * Reduced motion, from the spec's Failure table: "Attract drift, slow
+   * motion and screen shake are off; the game plays."
+   *
+   * Only the scale is neutralised. `timeUp` is untouched on both branches,
+   * so the round still refuses new input the moment the clock runs out,
+   * still waits for a last arrow that is already flying, and still ends the
+   * instant that arrow resolves — at full speed, and still under
+   * `ENDING_MAX_S`, which is a count of real seconds either way. Off has to
+   * mean off, not broken: the row ends "the game plays".
+   */
+  const slow = state.reducedMotion ? 1 : SLOW_MOTION_SCALE;
   if (state.msLeft <= 0) {
-    return { timeScale: state.arrowInFlight ? SLOW_MOTION_SCALE : 1, timeUp: true };
+    return { timeScale: state.arrowInFlight ? slow : 1, timeUp: true };
   }
   if (state.msLeft <= FINAL_STRETCH_MS && !state.arrowInFlight) {
-    return { timeScale: SLOW_MOTION_SCALE, timeUp: false };
+    return { timeScale: slow, timeUp: false };
   }
   return { timeScale: 1, timeUp: false };
 }
@@ -412,10 +442,20 @@ export class World {
       snapshot, only on a fresh `attract()`. */
   private attractT = 0;
   /**
-   * Read once at construction. The release kick and the butt's hit-recoil
-   * are the two pieces of camera/model shake this round adds that live
-   * outside CSS (where `prefers-reduced-motion` is handled generically) — so
-   * they are throttled here by hand.
+   * Read once at construction: everything this flag reaches lives outside
+   * CSS, where `prefers-reduced-motion` is handled generically, so each is
+   * throttled here by hand. What it reaches, in full —
+   *   - the release kick and the butt's hit-recoil, the two pieces of
+   *     camera/model shake this round adds (see `runLoop` and `stepRock`);
+   *   - the pollen drifting through the light (`step`);
+   *   - the attract camera's own drift (`driftCamera`);
+   *   - the ending's slow motion, through `endingGate`, and the camera that
+   *     would otherwise sweep after the last arrow (`step`'s `followArrow`
+   *     call) — together, the spec's "slow motion ... off" row.
+   * The ending is deliberately listed: it was the one thing here that the
+   * flag did not reach, and that was a Critical rather than a polish item,
+   * because the setting exists for exactly a quarter-speed camera swinging
+   * for five seconds.
    */
   private reducedMotion =
     typeof window !== "undefined" &&
@@ -1032,7 +1072,7 @@ export class World {
      * conditions it covers.
      */
     const arrowInFlight = this._arrows.some((a) => a.mine && a.stuck === 0);
-    const endGate = endingGate({ msLeft: this.msLeft, arrowInFlight });
+    const endGate = endingGate({ msLeft: this.msLeft, arrowInFlight, reducedMotion: this.reducedMotion });
     this.ending = endGate.timeUp;
     const dtScaled = dt * endGate.timeScale;
 
@@ -1271,7 +1311,14 @@ export class World {
       // frame — "the camera following it in", per the spec.
       const followed = this._arrows.find((a) => a.mine && a.stuck === 0);
       if (followed && this.endingSeconds < ENDING_MAX_S) {
-        this.followArrow(followed, dtScaled);
+        // Reduced motion takes the camera out of it, not the wait: the
+        // round still runs until this arrow resolves, the view simply
+        // stays where the shot was aimed instead of sweeping yaw and pitch
+        // across to follow it down. Slow motion is already off by here
+        // (see `endingGate`), and a quarter-speed camera swinging for up
+        // to five seconds is close to the worst case for the setting this
+        // row of the spec's Failure table exists for.
+        if (!this.reducedMotion) this.followArrow(followed, dtScaled);
       } else {
         /*
          * Either that arrow just resolved this frame — stuck in something,

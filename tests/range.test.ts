@@ -1180,17 +1180,17 @@ test("an all-red day bends the wave 0 hostile cap on purpose, up to maxUp, and n
  * below), so it has to come from here, not be re-derived at the call site.
  */
 test("endingGate: normal speed with real time left and something in the air", () => {
-  const g = endingGate({ msLeft: FINAL_STRETCH_MS + 1, arrowInFlight: true });
+  const g = endingGate({ msLeft: FINAL_STRETCH_MS + 1, arrowInFlight: true, reducedMotion: false });
   assert.equal(g.timeScale, 1);
   assert.equal(g.timeUp, false);
 });
 
 test("endingGate: the last two seconds slow down, but only with nothing in the air", () => {
-  const nothingFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: false });
+  const nothingFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: false, reducedMotion: false });
   assert.equal(nothingFlying.timeScale, SLOW_MOTION_SCALE, "the tail should run at the spec's own 0.25x");
   assert.equal(nothingFlying.timeUp, false, "the clock has not actually run out yet");
 
-  const stillFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: true });
+  const stillFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: true, reducedMotion: false });
   assert.equal(
     stillFlying.timeScale,
     1,
@@ -1199,18 +1199,47 @@ test("endingGate: the last two seconds slow down, but only with nothing in the a
 });
 
 test("endingGate: time run out with the last arrow still up waits at quarter speed rather than ending", () => {
-  const g = endingGate({ msLeft: 0, arrowInFlight: true });
+  const g = endingGate({ msLeft: 0, arrowInFlight: true, reducedMotion: false });
   assert.equal(g.timeScale, SLOW_MOTION_SCALE);
   assert.equal(g.timeUp, true);
 
-  const negative = endingGate({ msLeft: -40, arrowInFlight: true });
+  const negative = endingGate({ msLeft: -40, arrowInFlight: true, reducedMotion: false });
   assert.equal(negative.timeUp, true, "a clock already past zero must still count as time being up");
 });
 
 test("endingGate: time run out with nothing in the air is simply over, at normal speed", () => {
-  const g = endingGate({ msLeft: 0, arrowInFlight: false });
+  const g = endingGate({ msLeft: 0, arrowInFlight: false, reducedMotion: false });
   assert.equal(g.timeScale, 1, "nothing is being followed out, so there is nothing left to slow down for");
   assert.equal(g.timeUp, true);
+});
+
+/*
+ * The spec's Failure table: "Reduced motion is set → Attract drift, slow
+ * motion and screen shake are off; the game plays." Both halves of that
+ * sentence are the assertion. Off must not mean broken, so `timeUp` — which
+ * is what holds the round open for a last arrow and what refuses new input
+ * once the clock has gone — has to come back identical on every branch.
+ */
+test("endingGate: reduced motion takes the slow motion out of both branches and nothing else", () => {
+  for (const state of [
+    { msLeft: 0, arrowInFlight: true },
+    { msLeft: FINAL_STRETCH_MS, arrowInFlight: false },
+    { msLeft: FINAL_STRETCH_MS + 1, arrowInFlight: true },
+    { msLeft: 0, arrowInFlight: false },
+  ]) {
+    const normal = endingGate({ ...state, reducedMotion: false });
+    const reduced = endingGate({ ...state, reducedMotion: true });
+    assert.equal(
+      reduced.timeScale,
+      1,
+      `reduced motion should leave every branch at full speed (${JSON.stringify(state)} gave ${reduced.timeScale})`,
+    );
+    assert.equal(
+      reduced.timeUp,
+      normal.timeUp,
+      `reduced motion must not change whether the round may finish (${JSON.stringify(state)})`,
+    );
+  }
 });
 
 /*
@@ -1414,6 +1443,87 @@ test("with nothing in the air, the round still ends the instant the clock runs o
   w.msLeft = 1;
   w.step(1 / 60);
   assert.equal(w.over, true, "with nothing to follow out, the round should end on this same frame");
+});
+
+/**
+ * Build something with `prefers-reduced-motion: reduce` answering true.
+ *
+ * `World` reads the setting once, in its constructor, off
+ * `window.matchMedia` — so this stands `window` up for exactly the length
+ * of that call and puts it back afterwards, whatever happens. It is the
+ * real media query the real constructor asks, not an injected flag: the
+ * whole point is that this row of the spec's Failure table was missed
+ * because nothing ever built a `World` that had asked for it.
+ */
+function withReducedMotion<R>(on: boolean, build: () => R): R {
+  const g = globalThis as unknown as { window?: unknown };
+  const had = "window" in g;
+  const previous = g.window;
+  g.window = { matchMedia: (q: string) => ({ matches: on && q.includes("reduce") }) };
+  try {
+    return build();
+  } finally {
+    if (had) g.window = previous;
+    else delete g.window;
+  }
+}
+
+/*
+ * Reduced motion, all the way through a live ending rather than only
+ * through `endingGate`'s arithmetic. Three things, because "off" must not
+ * come out as "broken":
+ *   - the ending runs at full speed, measured against an otherwise
+ *     identical world that did not ask for it;
+ *   - the camera does not sweep after the last arrow;
+ *   - the round still ends, on that arrow resolving.
+ * The speed is read off `sidestep`, which moves at one exact known rate
+ * with no randomness in it — the same property the slow-motion test above
+ * already leans on.
+ */
+test("reduced motion: the ending runs at full speed, the camera stays put, and the round still ends", () => {
+  const dt = 1 / 60;
+  const stock = [{ symbol: "UP", changePct: 1 }];
+
+  const stepOfTheTail = (reduced: boolean) => {
+    const w = withReducedMotion(reduced, () => new World(makeNullSurface(), stock, () => {}));
+    w.start();
+    w.msLeft = FINAL_STRETCH_MS; // the "last two seconds" tail, nothing in the air
+    w.setStrafe(1);
+    w.step(dt);
+    return w.sidestep;
+  };
+  const reference = (() => {
+    const w = new World(makeNullSurface(), stock, () => {});
+    w.start();
+    w.setStrafe(1);
+    w.step(dt); // the same frame, nowhere near the end of the round
+    return w.sidestep;
+  })();
+
+  assert.ok(
+    Math.abs(stepOfTheTail(false) - reference * SLOW_MOTION_SCALE) < 1e-9,
+    "without the setting the tail should still be the spec's own quarter speed",
+  );
+  assert.ok(
+    Math.abs(stepOfTheTail(true) - reference) < 1e-9,
+    `with reduced motion the tail should move exactly as far as an ordinary frame (${stepOfTheTail(true)} vs ${reference})`,
+  );
+
+  // The last-arrow ending: the camera, and that the round still finishes.
+  const w = withReducedMotion(true, () => new World(makeNullSurface(), stock, () => {}));
+  w.start();
+  w.look(0, -9999); // the top of the pitch clamp: the longest flight, and the widest sweep
+  assert.ok(w.fire(), "the shot should have loosed");
+  const aimed = w.facing;
+  w.msLeft = 1;
+  let seconds = 0;
+  while (!w.over && seconds < ENDING_MAX_S * 4) {
+    w.step(dt);
+    seconds += dt;
+  }
+  assert.ok(w.over, "the round must still end — reduced motion turns the cinematic off, not the game");
+  assert.equal(w.facing.yaw, aimed.yaw, "the view must not have swept sideways after the arrow");
+  assert.equal(w.facing.pitch, aimed.pitch, "nor tilted after it");
 });
 
 /**
