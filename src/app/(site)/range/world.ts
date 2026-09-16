@@ -17,7 +17,8 @@
  * Three.js only lives on this route, so the terminal's bundle never sees it.
  */
 import * as T from "three";
-import { buildWood, disposeWood, rand, type Wood } from "./scene";
+import { buildWood, disposeWood, type Wood } from "./scene";
+import { rand } from "./rand";
 import {
   LANES,
   makeButt,
@@ -250,6 +251,14 @@ export class World {
   ) {
     this.renderer = new T.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    // Shadows and a filmic curve. The wood is flat-shaded low-poly, which
+    // reads as cardboard under a flat light — the long shadows of a low sun
+    // are what give it depth, and ACES stops the warm sun clipping to white
+    // where it lands.
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = T.PCFSoftShadowMap;
+    this.renderer.toneMapping = T.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
     this.camera = new T.PerspectiveCamera(FOV_WIDE, 1, 0.1, 400);
     // Back from the first hedge, so there is ground between you and the
     // nearest butt and the range reads as a range rather than a wall.

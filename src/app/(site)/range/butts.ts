@@ -1,6 +1,6 @@
 import * as T from "three";
 import type { Stock } from "./world";
-import { rand } from "./scene";
+import { rand } from "./rand";
 
 export interface Butt {
   group: T.Group;
@@ -41,6 +41,18 @@ export const FACE_RADIUS = 3.4;
 export function ringColourFor(hostile: boolean): string {
   return hostile ? "#ff5d5d" : "#7ae089";
 }
+
+/**
+ * The hostile rim's own colour, self-lit rather than reflected.
+ *
+ * Under a warm, low sun the wood's whole palette leans orange — a plain
+ * red material picks up that cast and drifts toward the same colour the
+ * green butts do. A rim that is slightly emissive in this colour ignores
+ * the light on it entirely, so a butt whose share is down today still
+ * reads unmistakably red at forty units, which is the one rule in this
+ * game that cannot bend.
+ */
+export const HOSTILE_RIM = "#ff2e2e";
 
 /**
  * The archery-roundel bands, gold at the centre out to the rim, as fractions
@@ -309,7 +321,15 @@ export function makeButt(stock: Stock, lane: number, x: number): Butt {
 
   const rim = new T.Mesh(
     new T.TorusGeometry(3.45, 0.24, 6, 24),
-    new T.MeshLambertMaterial({ color: new T.Color(ringColour), flatShading: true }),
+    new T.MeshLambertMaterial({
+      color: new T.Color(ringColour),
+      // Emissive only for the hostile rim: self-lit red does not take the
+      // sun's warm tint the way a reflective colour would, so it still
+      // reads as red rather than orange from a distance.
+      emissive: hostile ? new T.Color(HOSTILE_RIM) : 0x000000,
+      emissiveIntensity: hostile ? 1.1 : 0,
+      flatShading: true,
+    }),
   );
   rim.position.y = 5.2;
   group.add(rim);
@@ -320,6 +340,12 @@ export function makeButt(stock: Stock, lane: number, x: number): Butt {
   );
   post.position.y = 2.7;
   group.add(post);
+
+  // The butt casts its own shadow — the rim and post are what tell the eye
+  // it stands proud of the hedge behind it under a low, raking sun.
+  group.traverse((o) => {
+    if (o instanceof T.Mesh) o.castShadow = true;
+  });
 
   group.position.set(x, -9, z);
 

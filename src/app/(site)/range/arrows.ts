@@ -1,7 +1,7 @@
 import * as T from "three";
 import type { Butt } from "./butts";
 import { HIT_RADIUS } from "./butts";
-import { rand } from "./scene";
+import { rand } from "./rand";
 
 export interface Arrow {
   mesh: T.Mesh;

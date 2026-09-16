@@ -9,30 +9,69 @@
  */
 import * as T from "three";
 import { LANES } from "./butts";
+import { rand } from "./rand";
 
 export interface Wood {
   root: T.Group;
   sun: T.DirectionalLight;
 }
 
-export const rand = (a: number, b: number) => a + Math.random() * (b - a);
+/** The sun's elevation above the horizon, in degrees. Low: this is golden
+    hour, not noon, and everything about the shadows and the sky reads off
+    this one number. */
+export const SUN_ANGLE_DEG = 8;
 
 /**
  * The wood, built once.
  *
  * Fog does the heavy lifting: it hides the far edge of the ground plane, so
  * the world reads as continuing rather than as a disc floating in a colour.
+ * At golden hour the fog itself is warm — the haze a low sun throws across
+ * a wood — rather than the dusk-blue it was.
  */
 export function buildWood(scene: T.Scene): Wood {
   const root = new T.Group();
 
-  const dusk = new T.Color("#132a1f");
-  scene.background = new T.Color("#1d3a2a");
-  scene.fog = new T.Fog(dusk.getHex(), 40, 150);
+  scene.fog = new T.Fog(0xd8a367, 45, 190);
+  root.add(sky());
 
-  root.add(new T.AmbientLight(0x8fb39a, 1.5));
-  const sun = new T.DirectionalLight(0xffe9b0, 2.1);
-  sun.position.set(-30, 40, 20);
+  // Cool and dim: this is what makes a low sun read as low. A bright, warm
+  // ambient would fill in every shadow and flatten the light right back out
+  // — the shadowed side of a trunk should read as sky-lit blue, not as the
+  // same green the sunlit side is.
+  //
+  // The brief's own figure is 0.55; at 0.55 the ground plane (lit almost
+  // edge-on by an 8-degree sun, N·L ≈ sin(8°) ≈ 0.14) measured well under
+  // rgb(10,10,10) at the firing line — checked with actual pixel reads off
+  // the canvas, not by eye. Raising it to 1.0 keeps the same cool-blue,
+  // low-sun read (verified against the reds-stay-red check below) while
+  // making the ground and the shadows on it legible rather than a flat
+  // black plane.
+  root.add(new T.AmbientLight(0x6a7f9a, 1.0));
+
+  const sun = new T.DirectionalLight(0xffd9a0, 2.4);
+  const elevation = (SUN_ANGLE_DEG * Math.PI) / 180;
+  // Low, and to the right: +x is screen-right for the camera's default
+  // orientation (looking down -z), so this is a low sun over the shooter's
+  // right shoulder, not overhead.
+  sun.position.set(Math.cos(elevation) * 160, Math.sin(elevation) * 160, 55);
+  sun.target.position.set(0, 4, -55);
+  root.add(sun.target);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0015;
+  const shadowCam = sun.shadow.camera;
+  // Fitted to the range — the firing line to just past the palisade, and
+  // the width the butts and the near trees actually occupy — rather than
+  // the whole 400-unit ground plane. A shadow map has a budget, and most of
+  // that plane is fog before it is anything worth a hard shadow.
+  shadowCam.left = -110;
+  shadowCam.right = 110;
+  shadowCam.top = 90;
+  shadowCam.bottom = -50;
+  shadowCam.near = 10;
+  shadowCam.far = 420;
+  shadowCam.updateProjectionMatrix();
   root.add(sun);
 
   // Ground: one big plane, gently displaced so it is not a mirror.
@@ -47,7 +86,10 @@ export function buildWood(scene: T.Scene): Wood {
     new T.MeshLambertMaterial({ color: 0x2f5a3c, flatShading: true }),
   );
   ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
   root.add(ground);
+
+  motes(root);
 
   for (const z of LANES) hedge(root, z);
   for (let i = 0; i < 90; i++) {
@@ -88,13 +130,123 @@ export function buildWood(scene: T.Scene): Wood {
  * not the meshes that were drawn through it. `world.ts` keeps the `Wood`
  * handle this returns so `stop()` can call this and actually let a round's
  * scenery go.
+ *
+ * The pollen (a `T.Points`, not a `T.Mesh`) has its own geometry and material
+ * the same way — `instanceof T.Mesh` alone would walk straight past it and
+ * leak its buffer every round.
  */
 export function disposeWood(wood: Wood): void {
   wood.root.traverse((o) => {
-    if (!(o instanceof T.Mesh)) return;
+    if (!(o instanceof T.Mesh) && !(o instanceof T.Points)) return;
     o.geometry.dispose();
     (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
   });
+}
+
+/**
+ * The sky: a deep blue overhead falling through a warm mid-tone to a hot
+ * orange-gold band at the horizon.
+ *
+ * A flat background colour cannot give the horizon a band of colour that is
+ * hotter than the sky above it — that needs a gradient, so this is a large
+ * sphere seen from inside (`BackSide`) with a tiny shader doing the mixing
+ * per-pixel rather than a texture. It ignores fog (`fog: false`) and scene
+ * lighting entirely: it is the backdrop the fog and the sun's haze sit in
+ * front of, not an object the sun lights.
+ */
+function sky(): T.Mesh {
+  const geo = new T.SphereGeometry(380, 24, 16);
+  const mat = new T.ShaderMaterial({
+    uniforms: {
+      top: { value: new T.Color(0x16243a) },
+      mid: { value: new T.Color(0x6b4a3a) },
+      hot: { value: new T.Color(0xe08a3c) },
+      horizon: { value: new T.Color(0xf4b35a) },
+    },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vDir;
+      uniform vec3 top;
+      uniform vec3 mid;
+      uniform vec3 hot;
+      uniform vec3 horizon;
+      void main() {
+        float h = vDir.y;
+        vec3 col;
+        if (h > 0.5) {
+          col = mix(mid, top, smoothstep(0.5, 1.0, h));
+        } else if (h > 0.12) {
+          col = mix(hot, mid, smoothstep(0.12, 0.5, h));
+        } else {
+          col = mix(horizon, hot, smoothstep(-0.05, 0.12, h));
+        }
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+    side: T.BackSide,
+    fog: false,
+    depthWrite: false,
+  });
+  const mesh = new T.Mesh(geo, mat);
+  // Drawn first and never depth-tested against, so it cannot fight the fog
+  // or the scenery for which one is "in front".
+  mesh.renderOrder = -1;
+  return mesh;
+}
+
+/**
+ * Pollen drifting through the sun's beam.
+ *
+ * One `Points` cloud, one buffer: the positions are written back into the
+ * same `Float32Array` every frame (via `onBeforeRender`, which three.js
+ * calls immediately before drawing this object — so the motes update
+ * without `world.ts`'s loop needing to know they exist) rather than the
+ * cloud being rebuilt or new sprites being allocated per frame.
+ */
+function motes(root: T.Group) {
+  const COUNT = 260;
+  const SPAN = 12; // the height of the slab the pollen loops within
+  const positions = new Float32Array(COUNT * 3);
+  const baseY = new Float32Array(COUNT);
+  const speed = new Float32Array(COUNT);
+  for (let i = 0; i < COUNT; i++) {
+    positions[i * 3] = rand(-55, 55);
+    positions[i * 3 + 1] = rand(1.5, 1.5 + SPAN);
+    positions[i * 3 + 2] = rand(-60, 15);
+    baseY[i] = positions[i * 3 + 1];
+    speed[i] = rand(0.2, 0.55);
+  }
+  const geo = new T.BufferGeometry();
+  const posAttr = new T.BufferAttribute(positions, 3);
+  geo.setAttribute("position", posAttr);
+  const mat = new T.PointsMaterial({
+    color: 0xffdca0,
+    size: 0.14,
+    transparent: true,
+    opacity: 0.6,
+    depthWrite: false,
+    sizeAttenuation: true,
+  });
+  const points = new T.Points(geo, mat);
+  // The slab sits above the whole range, not just whatever the frustum
+  // currently contains, so it must never be culled against a stale box.
+  points.frustumCulled = false;
+  const start = performance.now();
+  points.onBeforeRender = () => {
+    const t = (performance.now() - start) / 1000;
+    for (let i = 0; i < COUNT; i++) {
+      const y = 1.5 + (((baseY[i] - 1.5 + t * speed[i]) % SPAN) + SPAN) % SPAN;
+      posAttr.setY(i, y);
+    }
+    posAttr.needsUpdate = true;
+  };
+  root.add(points);
 }
 
 /**
@@ -109,6 +261,7 @@ function oak(root: T.Group, x: number, z: number) {
   const leaf = new T.MeshLambertMaterial({ color: 0x2c5233, flatShading: true });
   const trunk = new T.Mesh(new T.CylinderGeometry(1.6, 2.8, 11, 7), bark);
   trunk.position.set(x, 5.5, z);
+  trunk.castShadow = true;
   root.add(trunk);
   // Boughs out and up, each carrying its own mass of leaves.
   for (let i = 0; i < 5; i++) {
@@ -160,9 +313,11 @@ function palisade(root: T.Group, z: number) {
     const h = rand(5.5, 7);
     const post = new T.Mesh(new T.CylinderGeometry(0.45, 0.55, h, 5), mat);
     post.position.set(x, h / 2, z + rand(-0.3, 0.3));
+    post.castShadow = true;
     root.add(post);
     const tip = new T.Mesh(new T.ConeGeometry(0.5, 1.1, 5), mat);
     tip.position.set(post.position.x, h + 0.5, post.position.z);
+    tip.castShadow = true;
     root.add(tip);
   }
 }
@@ -224,6 +379,7 @@ function hedge(root: T.Group, z: number) {
     m.position.set(x, r * 0.55, z + rand(-0.8, 0.8));
     m.scale.y = 0.75;
     m.rotation.y = rand(0, Math.PI);
+    m.receiveShadow = true;
     root.add(m);
   }
 }
