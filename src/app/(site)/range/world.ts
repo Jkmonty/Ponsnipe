@@ -1025,6 +1025,37 @@ export class World {
   }
 
   /**
+   * Record where the cursor is without touching the view — the half of
+   * `aimAt` a press needs and the half it must not get.
+   *
+   * `page.tsx` calls this instead of `aimAt` for a scoped press: a click is
+   * not a drag, but `aimAt`'s own scoped branch cannot tell the difference —
+   * it reads whatever gap sits between the cursor's last recorded position
+   * and wherever this event landed and turns the view by it, which is
+   * largest exactly when a target was being tracked and clicked in one
+   * motion (a coalesced pointerdown can land well away from the last real
+   * `pointermove`, and a tap has no preceding move over that pixel at all).
+   * That swung the view *and* fired the shot in the same event, so the arrow
+   * left down a reticle that had just moved out from under the target it was
+   * on.
+   *
+   * The cursor still has to move to where the press landed, though, or the
+   * next genuine `pointermove` computes its own delta against a now-stale
+   * position and pans by the gap the press left instead of its own — the bug
+   * moved, not fixed. This does exactly that half of `aimAt` and none of the
+   * turn.
+   *
+   * Unscoped, `page.tsx` keeps calling `aimAt` for a press, not this: the
+   * cursor *is* the aim there, so a click has to move it to where it landed
+   * for the shot to go anywhere near the reticle, and there is no pan for a
+   * click to trigger by mistake in the first place.
+   */
+  syncCursor(fx: number, fy: number) {
+    if (this.ending) return;
+    this.cursor.set(Math.max(0, Math.min(1, fx)), Math.max(0, Math.min(1, fy)));
+  }
+
+  /**
    * Raise or lower the scope.
    *
    * Unlocked, the view is fixed and the cursor does the aiming — so zooming

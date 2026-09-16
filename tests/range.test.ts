@@ -843,6 +843,73 @@ test("a target you can see and aim at is a target you can hit: fired dead centre
 });
 
 /*
+ * Bug A ("bow is inaccurate" / "bow doesn't shoot when scoped in"):
+ * `page.tsx`'s `onPointerDown` used to call the same `aimAt` a real
+ * `pointermove` calls, immediately before firing. Scoped, `aimAt` reads
+ * whatever gap sits between the cursor's last recorded position and the
+ * event's own coordinates and turns the view by it — right for a genuine
+ * move, wrong for a press, whose coordinates need never match wherever the
+ * last real move left the cursor (a coalesced `pointerdown`, or a tap with
+ * no preceding move over that pixel at all). That swung the view in the
+ * same event that loosed the arrow, largest exactly when a target was being
+ * tracked and clicked in one motion — measured live at 2.6° to 20.6° of
+ * swing across 5% to 40% of the canvas width.
+ *
+ * `World.syncCursor` is the fix: it records the press's own position
+ * without turning anything. Both halves are asserted, per the task's own
+ * warning that recording nothing at all on the press just moves the bug
+ * onto the next move instead of removing it: the press itself must not
+ * turn the view, and a subsequent genuine move must pan by its own delta
+ * from where the press left the cursor, not by the gap the press covered.
+ */
+test("a scoped press does not turn the view, and the next genuine move still pans by its own delta", () => {
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  // A baseline unscoped move records the cursor centred without turning
+  // anything (`aimAt`'s unscoped branch never pans) — standing in for the
+  // player's last real pointermove before the scope went up.
+  w.aimAt(0.5, 0.5);
+  w.setScoped(true);
+  const beforePress = w.facing;
+  // Not `assert.deepEqual` against a literal `{yaw:0,pitch:0}`: a ray traced
+  // dead centre can legitimately come back `-0` rather than `0` (`Math.atan2`
+  // does that for a direction with an exactly-zero x component), which is
+  // the same angle in every sense that matters here but fails a strict
+  // object comparison against a hand-written positive zero. What actually
+  // matters — that raising the scope over a centred cursor did not turn
+  // anything — is a magnitude check, not a sign check.
+  assert.ok(
+    Math.abs(beforePress.yaw) < 1e-9 && Math.abs(beforePress.pitch) < 1e-9,
+    `raising the scope over an already-centred cursor must not itself turn the view (got ${JSON.stringify(beforePress)})`,
+  );
+
+  // The press lands 20% of the canvas away from the last recorded cursor —
+  // squarely inside the task's own measured table (10.3° of swing at this
+  // offset under the old code).
+  w.syncCursor(0.7, 0.5);
+  assert.deepEqual(
+    w.facing,
+    beforePress,
+    "a press that lands away from the last cursor position must not turn the scoped view",
+  );
+
+  // The next genuine move — a real pointermove after the press — must pan
+  // by its own small delta from where the press left the cursor (0.7 to
+  // 0.75), not by the gap the press itself covered (0.5 to 0.75, which the
+  // old code would have left for this move to inherit).
+  w.aimAt(0.75, 0.5);
+  const ownDelta = -(0.75 - 0.7) * 0.9;
+  const staleDelta = -(0.75 - 0.5) * 0.9;
+  assert.ok(
+    Math.abs(w.facing.yaw - ownDelta) < 1e-9,
+    `the move should pan by its own 0.05 delta (expected yaw ${ownDelta}), not something else (got ${w.facing.yaw})`,
+  );
+  assert.ok(
+    Math.abs(w.facing.yaw - staleDelta) > 0.1,
+    "the move must not carry the press's own distance forward as if the press had never updated the cursor",
+  );
+});
+
+/*
  * The gate itself, in isolation — the arithmetic that the two-path parity
  * test below rests on.
  *
