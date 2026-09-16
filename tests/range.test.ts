@@ -625,19 +625,39 @@ test("the nock gate is one full pull for a tap and a click alike, not the old ha
  * checks the real `points`/`health`/`msLeft`/`butts` it produced — the
  * property the earlier attempts lacked is that deleting this test is the
  * only way to stop it guarding the bug, not editing it.
+ *
+ * One assertion here HAS since been edited, which is worth saying plainly.
+ * It read `butts.filter(b => b.hostile).length === 0` — no red butt may be
+ * raised at all. That was a proxy for "hostiles are off", and the proxy was
+ * what left attract mode with an empty wood on a market-wide selloff, when
+ * every ticker is red and the filter had nothing to draw from. Attract mode
+ * now draws from the whole day. So the assertion is replaced by the two
+ * things it was standing in for, both of which are stronger than it was and
+ * neither of which the old test checked at all: nothing may enter the
+ * wind-up, and no hostile arrow may ever exist. What is no longer asserted
+ * — that `spawn` itself was handed the gate — is no longer a defect either:
+ * the colour of a butt on the menu has no effect on the clock, the score,
+ * the health or the danger, and those are all still checked here.
  */
-test("attract mode cannot advance the clock, score, or spawn anything hostile", () => {
+test("attract mode cannot advance the clock, score, or let anything shoot", () => {
   const w = new World(makeNullSurface(), [
     { symbol: "UP", changePct: +1 },
     { symbol: "DOWN", changePct: -1 },
   ], () => {});
   w.attract();
   const before = { points: w.points, health: w.health, msLeft: w.msLeft };
-  for (let i = 0; i < 600; i++) w.step(1 / 60);
+  let windingUp = 0;
+  let hostileArrows = 0;
+  for (let i = 0; i < 600; i++) {
+    w.step(1 / 60);
+    windingUp += w.butts.filter((b) => b.winding).length;
+    hostileArrows += w.arrows.filter((a) => !a.mine).length;
+  }
   assert.equal(w.points, before.points);
   assert.equal(w.health, before.health);
   assert.equal(w.msLeft, before.msLeft);
-  assert.equal(w.butts.filter((b) => b.hostile).length, 0);
+  assert.equal(windingUp, 0, "no butt may so much as begin a wind-up while the menu is up");
+  assert.equal(hostileArrows, 0, "and none may ever loose an arrow");
 });
 
 /*
@@ -1241,6 +1261,58 @@ test("an all-red day bends the wave 0 hostile cap on purpose, up to maxUp, and n
   } finally {
     Math.random = originalRandom;
   }
+});
+
+/*
+ * The same day, in front of the menu instead of in a round.
+ *
+ * Attract mode drew from the green stocks only, and returned without
+ * raising anything at all when there were none — so a market-wide selloff,
+ * which is real data and the day this game is most topical, put a visitor's
+ * first sight of the range in an empty wood. Measured: 0 butts in 40
+ * simulated seconds against 31 on a mixed day.
+ *
+ * The filter was protecting nothing here, and the second half of this test
+ * is why: `hostileActive` is false for the whole of attract mode, so a red
+ * butt on the menu cannot wind up, cannot loose, and has no score or health
+ * to take. Both halves matter — raising reds would be the wrong fix if any
+ * of them could shoot.
+ */
+test("attract mode fills the range on an all-red day, and nothing it raises can shoot", () => {
+  const dt = 1 / 60;
+  const allRed = [
+    { symbol: "AAA", changePct: -4 },
+    { symbol: "BBB", changePct: -2 },
+  ];
+  const mixed = [
+    { symbol: "UPP", changePct: 3 },
+    { symbol: "DWN", changePct: -3 },
+  ];
+
+  const attractFor = (stocks: { symbol: string; changePct: number }[]) => {
+    const w = new World(makeNullSurface(), stocks, () => {});
+    w.attract();
+    const raised = new Set<unknown>();
+    let hostileArrows = 0;
+    let windingUp = 0;
+    for (let i = 0; i < 40 * 60; i++) {
+      w.step(dt);
+      for (const b of w.butts) raised.add(b);
+      hostileArrows += w.arrows.filter((a) => !a.mine).length;
+      windingUp += w.butts.filter((b) => b.winding).length;
+    }
+    return { raised: raised.size, hostileArrows, windingUp };
+  };
+
+  const red = attractFor(allRed);
+  const both = attractFor(mixed);
+  assert.ok(both.raised > 0, "a mixed day should raise targets on the menu, or this test proves nothing");
+  assert.ok(
+    red.raised > 0,
+    "an all-red day must raise targets on the menu too — the green filter has nothing to protect in attract mode",
+  );
+  assert.equal(red.hostileArrows, 0, "nothing raised in attract mode may ever loose an arrow");
+  assert.equal(red.windingUp, 0, "nor even begin the wind-up that would precede one");
 });
 
 /*

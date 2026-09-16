@@ -89,7 +89,15 @@ export interface Snapshot {
   attract: boolean;
   /** Which wave is running, 0..2, so the HUD can tighten in the storm.
       Stays 0 through the whole of attract mode, the same as `msLeft`
-      staying at `ROUND_MS` — the clock that would advance it never runs. */
+      staying at `ROUND_MS` — the clock that would advance it never runs.
+
+      Nothing reads this yet. The spec added it for a HUD that tightens in
+      wave 2, that HUD has not been built, and `page.tsx` never touches this
+      field at all. Left in place rather than removed — it costs one number
+      a frame and the HUD is still wanted — but it is not wired, and the
+      next reader should not assume it is. (The music does tighten for wave
+      2, off `World`'s own private `wave` in `step`; that is not this
+      field.) */
   wave: number;
 }
 
@@ -876,8 +884,30 @@ export class World {
      */
     let pool: Stock[];
     if (!hostileActive) {
-      if (!up.length) return;
-      pool = up;
+      /*
+       * Attract mode draws from the whole day, red tickers included.
+       *
+       * It used to take `up` only, and return without raising anything when
+       * there was no `up` — so on a market-wide selloff, which is a real
+       * day and the day this game is most topical, the menu behind the card
+       * was an empty wood. That is the first thing a visitor sees.
+       *
+       * The green filter was protecting nothing here. `hostileActive` is
+       * false for the whole of attract mode and `step` reads the same gate
+       * before any wind-up or shot, so a red butt raised here can never
+       * loose an arrow; there is no score and no health to take either. The
+       * red rim is only what the day looks like. The wave cap above still
+       * applies, because it is `maxUp` doing that work, not this filter.
+       *
+       * This is the only `this.stocks` in `spawn`, and it is deliberately
+       * not the one Task 4 removed. That one was an unfiltered fallback on
+       * the *round's* path, reached when the hostile cap had nothing green
+       * left to offer, and it bypassed the cap entirely. This branch is
+       * never reached while a round is running: `hostileActive` is false
+       * only during attract, where there is no cap to bypass because there
+       * is nothing to be capped.
+       */
+      pool = this.stocks;
     } else {
       const wantHostile =
         hostileRoom && down.length > 0 && (up.length === 0 || Math.random() < wave.hostileShare * 1.4);
