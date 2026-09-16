@@ -1140,8 +1140,17 @@ export class World {
    * defaults are only for a `World` nobody has resized yet (a fresh one in
    * a test, say): the same 960×560 fallback the old canvas-reading version
    * fell back to before its first real layout.
+   *
+   * A default parameter alone only catches `undefined` — the old code read
+   * `canvas.clientWidth || 960`, which also caught `0` (a real value a
+   * layout-less canvas actually reports). `||` here restores that: a zero
+   * or missing dimension both mean "no real size yet", not "a zero-sized
+   * stage" — do not tidy this back to a bare default, it would silently let
+   * `camera.aspect` and `surface.setSize` see a `0`/`NaN` again.
    */
-  resize(w = 960, h = 560) {
+  resize(w?: number, h?: number) {
+    w ||= 960;
+    h ||= 560;
     this.surface.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
