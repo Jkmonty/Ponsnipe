@@ -508,7 +508,33 @@ export default function ArcadePage() {
     setScoped(g.scoped);
   };
 
-  const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  /**
+   * `press` is true only from `onPointerDown`'s own call, right before it
+   * fires — never from `onPointerMove`, which always wants the ordinary
+   * panning/aiming below.
+   *
+   * A click is not a drag. Scoped and unlocked, the cursor pans the view
+   * (see `World.aimAt`'s scoped branch) — which is right for a real
+   * `pointermove`, but a press is not one: its coordinates can land well
+   * away from wherever the last real move left the cursor (a coalesced
+   * `pointerdown`, or a tap with no preceding move over that pixel at all),
+   * and treating that gap as a pan swung the view in the same event that
+   * loosed the arrow — largest exactly when a target was being tracked and
+   * clicked in one motion, which is what the user's "bow doesn't shoot when
+   * scoped in" report was. So a scoped press calls `World.syncCursor`
+   * instead: the cursor still moves to where the press landed, so the next
+   * genuine move computes its delta from there and not from a stale
+   * position, but nothing turns.
+   *
+   * Unscoped, a press still calls `aimAt` exactly as a move would: the
+   * cursor *is* the aim there, so the click has to move it to where it
+   * landed for the shot to go anywhere near the reticle, and `aimAt`'s
+   * unscoped branch never pans in the first place — there is no gap for a
+   * click to turn into a swing. Locked, a press still calls `look`: real
+   * relative mouse movement, not a distance from a stale position, so the
+   * same bug cannot arise there either.
+   */
+  const move = (e: React.PointerEvent<HTMLCanvasElement>, press = false) => {
     const g = gameRef.current;
     const cv = canvasRef.current;
     if (!g || !cv) return;
@@ -517,7 +543,13 @@ export default function ArcadePage() {
       return;
     }
     const r = cv.getBoundingClientRect();
-    g.aimAt((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+    const fx = (e.clientX - r.left) / r.width;
+    const fy = (e.clientY - r.top) / r.height;
+    if (press && g.scoped) {
+      g.syncCursor(fx, fy);
+      return;
+    }
+    g.aimAt(fx, fy);
   };
 
   // Not live while attracting either: no round has started, so the HUD
@@ -582,7 +614,10 @@ export default function ArcadePage() {
               if (e.button !== 0) return;
               // `move` first: a click is the whole shot now, so the aim this
               // very event carries has to be in before the arrow leaves.
-              move(e);
+              // `press` (see `move`'s own doc comment) is what keeps a
+              // scoped click from panning the view by the gap since the
+              // last real pointermove in this same motion that fires it.
+              move(e, true);
               /*
                * One press, one arrow — on a mouse exactly as on a thumb.
                *

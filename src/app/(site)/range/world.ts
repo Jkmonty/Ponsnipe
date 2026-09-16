@@ -32,6 +32,7 @@ import {
   bestSymbolAfter,
   stepButt,
   pickBehaviour,
+  lateralOffsetAt,
   FACE_RADIUS,
   RANKS,
   SHOOTER_Z,
@@ -304,6 +305,17 @@ const NOCK_TIME = 0.42;
  * from the real one.
  */
 export const TELL_MS = 900;
+
+/**
+ * How far off-centre a wind-up's bearing has to be, in radians, before the
+ * audible tell (`sfx.tell`, see below) pans all the way to one side — 60°,
+ * comfortably past the camera's own 36° half field of view, so a threat just
+ * outside the frame already reads as most of the way panned rather than
+ * still near dead centre, and one far around (the yaw clamp allows ±48.7°,
+ * and a butt can spawn further round than that still) simply pins at ±1
+ * rather than needing a second band.
+ */
+const TELL_PAN_MAX_ANGLE = Math.PI / 3;
 
 /** How far either side of centre a sidestep may reach — the full answer to
     an incoming arrow, not a token nudge (see the escape arithmetic in the
@@ -590,6 +602,17 @@ export class World {
         ground to close than a near-rank one. See `step`'s call, right after
         `stepArrows`. */
     whistle(distance: number): void;
+    /** A hostile butt's wind-up starting — the visual tell's audible half.
+        Called once per wind-up, exactly on the frame `cooldown` runs out and
+        `winding` is set (see `step`'s firing block), never once per frame the
+        way `whistle` is: this marks a moment beginning, not a continuously
+        changing distance. `distance` is the butt's real distance to the
+        player at that instant; `pan` is its bearing relative to the current
+        view, -1 hard left to +1 hard right, 0 dead ahead — so a threat
+        outside the frame still says which way to look. Optional for the same
+        reason `setWave` is: not every sound bench build has it, and a fake
+        `sfx` in a test need not either. */
+    tell?(distance: number, pan: number): void;
     /** Cue the music loop's own tightening for wave 2 — one loop's playback
         rate changing, not a second layer starting. Called once per wave
         change, not every frame (see `lastMusicWave`). Optional: not every
@@ -1025,6 +1048,37 @@ export class World {
   }
 
   /**
+   * Record where the cursor is without touching the view — the half of
+   * `aimAt` a press needs and the half it must not get.
+   *
+   * `page.tsx` calls this instead of `aimAt` for a scoped press: a click is
+   * not a drag, but `aimAt`'s own scoped branch cannot tell the difference —
+   * it reads whatever gap sits between the cursor's last recorded position
+   * and wherever this event landed and turns the view by it, which is
+   * largest exactly when a target was being tracked and clicked in one
+   * motion (a coalesced pointerdown can land well away from the last real
+   * `pointermove`, and a tap has no preceding move over that pixel at all).
+   * That swung the view *and* fired the shot in the same event, so the arrow
+   * left down a reticle that had just moved out from under the target it was
+   * on.
+   *
+   * The cursor still has to move to where the press landed, though, or the
+   * next genuine `pointermove` computes its own delta against a now-stale
+   * position and pans by the gap the press left instead of its own — the bug
+   * moved, not fixed. This does exactly that half of `aimAt` and none of the
+   * turn.
+   *
+   * Unscoped, `page.tsx` keeps calling `aimAt` for a press, not this: the
+   * cursor *is* the aim there, so a click has to move it to where it landed
+   * for the shot to go anywhere near the reticle, and there is no pan for a
+   * click to trigger by mistake in the first place.
+   */
+  syncCursor(fx: number, fy: number) {
+    if (this.ending) return;
+    this.cursor.set(Math.max(0, Math.min(1, fx)), Math.max(0, Math.min(1, fy)));
+  }
+
+  /**
    * Raise or lower the scope.
    *
    * Unlocked, the view is fixed and the cursor does the aiming — so zooming
@@ -1339,6 +1393,37 @@ export class World {
           if (b.cooldown <= 0) {
             b.winding = true;
             b.windUp = 0;
+            /*
+             * The tell made audible, exactly once per wind-up — on this same
+             * transition and nowhere else, so it cannot fire again on a
+             * later frame of a wind-up already under way. The rim's glow and
+             * the turn toward the player are visual only (`stepWindup`), and
+             * the camera's own 36° half field of view against a yaw clamp of
+             * ±48.7° and a spawn spread of ±30 units meant a red butt could
+             * wind up and loose entirely outside what the player could see,
+             * with nothing at all to hear either — see the spec's amended
+             * "Incoming arrows".
+             *
+             * Distance and bearing are both measured against the view once,
+             * right here, rather than tracked live the way `whistle`'s own
+             * arrow-distance is: this announces a threat starting, not a
+             * continuously changing position, and a wind-up does not move
+             * far enough in 900ms for a stale bearing to mislead anyone.
+             */
+            const dx = b.group.position.x - this.camera.position.x;
+            const dz = b.group.position.z - this.camera.position.z;
+            const distance = Math.hypot(dx, dz);
+            // Same convention `aimFromCursor`/`followArrow` use: the yaw a
+            // direction out of the camera corresponds to, so this can be
+            // compared straight against `this.yaw`, the view's own.
+            const buttYaw = Math.atan2(-dx, -dz);
+            const relative = Math.atan2(Math.sin(buttYaw - this.yaw), Math.cos(buttYaw - this.yaw));
+            // Positive `relative` is to the left of the view (turning right
+            // decreases `yaw`, which is what makes a point dead ahead read
+            // as having moved left) — `StereoPannerNode` wants the opposite
+            // sign, +1 for hard right.
+            const pan = Math.max(-1, Math.min(1, -relative / TELL_PAN_MAX_ANGLE));
+            this.sfx?.tell?.(distance, pan);
           }
         }
       }
@@ -1875,7 +1960,55 @@ export class World {
      */
     const aimed = this.raycaster.intersectObjects(collectTargets(this.scene).all, false)[0];
     if (aimed) {
-      const d = aimed.point.clone().sub(from);
+      /*
+       * Lead a moving target — the horizontal counterpart of the elevation
+       * solve just below, aimed at where the butt the ray struck will be
+       * when the arrow gets there rather than where it stood the instant
+       * the reticle found it. `drift` and `swing` both move a whole hit
+       * radius or more over this game's 0.86-1.37s of flight, which the
+       * elevation fix alone cannot answer: it puts the arrow exactly on the
+       * aimed point, and the aimed point was already wrong the moment it
+       * moved.
+       *
+       * Only a butt the ray actually struck is led — never one merely near
+       * the aim line, which is `collectTargets`' `all` (ground included)
+       * having no `Butt` behind it at all, and `.find` below simply not
+       * matching. Leading anything else would be steering the shot onto a
+       * target the player never put the reticle on, which is an aimbot and
+       * not this assist.
+       *
+       * Flight time depends on the range flown, and the range now depends on
+       * where the lead puts the point — so this iterates. Two passes
+       * converge: the first solves a flight time against the point exactly
+       * as struck (lead 0, so it reproduces the plain elevation-only solve);
+       * the second solves it again against the point that flight time
+       * already led to, and that second flight time is what the final lead
+       * uses. A third pass would move the point by a fraction of the arrow's
+       * own width at every range and rank this game has, which is why two is
+       * where it stops rather than a loop to a fixed epsilon.
+       *
+       * Only `x` moves. Every behaviour with any lateral motion (`drift`,
+       * `swing`) moves in `x` alone, never `y` or `z` (see `stepButt`), so
+       * shifting just the aimed point's `x` keeps it at exactly the same
+       * offset off the face's own centre the ray actually hit, rather than
+       * snapping it back onto the centre.
+       */
+      const point = aimed.point.clone();
+      const targetButt = this._butts.find((b) => b.face === aimed.object);
+      if (targetButt) {
+        let flightTime = 0;
+        for (let i = 0; i < 2; i++) {
+          const led = point.clone();
+          led.x += lateralOffsetAt(targetButt, flightTime);
+          const d0 = led.sub(from);
+          const range0 = Math.hypot(d0.x, d0.z);
+          if (range0 <= 1e-6) break;
+          const elevation0 = ballisticElevation(range0, d0.y, speed);
+          flightTime = range0 / (speed * Math.cos(elevation0));
+        }
+        point.x += lateralOffsetAt(targetButt, flightTime);
+      }
+      const d = point.clone().sub(from);
       const range = Math.hypot(d.x, d.z);
       if (range > 1e-6) {
         const elevation = ballisticElevation(range, d.y, speed);

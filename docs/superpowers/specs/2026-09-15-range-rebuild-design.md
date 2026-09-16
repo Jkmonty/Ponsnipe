@@ -152,6 +152,23 @@ target within 2.2° of its path, strong enough to forgive a pixel and far too
 weak to rescue a bad shot. The pull is 1.5× stronger on touch, because a
 thumb is not a mouse. A shot with no target near its path flies straight.
 
+*This section is about the pull spent during flight; it said nothing about
+where the shot is aimed in the first place, because until a later task
+nothing there needed to move. `World.fire` solves the elevation to wherever
+the aim ray meets a face — exact, and verified so — but it aimed at that
+face's position the instant the reticle found it, not where the target would
+be once the arrow, loosed now, actually arrived 0.86-1.37s later. A `drift`
+or `swing` target moves a hit radius or more in that time, which no amount
+of in-flight magnetism can rescue: the 2.2° cone above is measured from the
+arrow's current heading, and a target that has already moved out of it is
+outside the pull's reach regardless of how forgiving the pull is. `fire` now
+solves the horizontal aim the same way it already solves the vertical one —
+to where the target will be, not where it is — and only for the face the
+reticle actually struck, never one merely near the aim line, which would be
+an aimbot and not this assist. That is a second, one-shot solve at the
+moment of loosing; the steering above is a different mechanism and runs
+exactly as this section always said.*
+
 ### A hit
 
 - The butt rocks back on its post and settles.
@@ -184,7 +201,7 @@ safe shot and a good one is real.
 plus the time the one shot this game looses actually spends in the air
 reaching the far corner of that rank — and differs only in how far past that
 floor it may run: a `peek` not at all, a green butt by up to 0.7 s, a red one
-by up to 1.1 s. That works out at 1.85 s at the near rank and 2.17 s at the
+by up to 1.1 s. That works out at 2.55 s at the near rank and 2.87 s at the
 far.
 
 *This is new. The spec previously gave `peek` a flat 1.8 seconds and said
@@ -201,7 +218,15 @@ moving target needs are all unchanged; what was wrong was that a target's life
 was set before any of them existed.*
 
 **Incoming arrows.** A red butt winds up over 900 ms with a visible tell, the
-face turning to you and a red glow rising, then looses an arrow at 34-42 m/s (the speed the game has always used; the spec previously said 30, which never matched the code) with
+face turning to you and a red glow rising (and, since a later task, an
+audible one too — the wind-up asks the sound layer for a distance- and
+bearing-driven cue the instant it begins, on top of the two visual ones;
+this row said "visible tell" alone when a tell that could only be seen was
+still the whole of it, before it was found that the camera's 36° half field
+of view against a ±48.7° yaw clamp and a ±30-unit spawn spread let a butt
+wind up and loose entirely outside what the player could see, with nothing
+to hear either), then looses an arrow at 34-42 m/s (the speed the game has
+always used; the spec previously said 30, which never matched the code) with
 a whistle that rises as it nears. You have the flight time to move. Today the
 hit simply happens; this is the change that makes being shot at a thing you
 play against rather than a thing that occurs.

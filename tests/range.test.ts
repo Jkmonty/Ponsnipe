@@ -843,6 +843,73 @@ test("a target you can see and aim at is a target you can hit: fired dead centre
 });
 
 /*
+ * Bug A ("bow is inaccurate" / "bow doesn't shoot when scoped in"):
+ * `page.tsx`'s `onPointerDown` used to call the same `aimAt` a real
+ * `pointermove` calls, immediately before firing. Scoped, `aimAt` reads
+ * whatever gap sits between the cursor's last recorded position and the
+ * event's own coordinates and turns the view by it — right for a genuine
+ * move, wrong for a press, whose coordinates need never match wherever the
+ * last real move left the cursor (a coalesced `pointerdown`, or a tap with
+ * no preceding move over that pixel at all). That swung the view in the
+ * same event that loosed the arrow, largest exactly when a target was being
+ * tracked and clicked in one motion — measured live at 2.6° to 20.6° of
+ * swing across 5% to 40% of the canvas width.
+ *
+ * `World.syncCursor` is the fix: it records the press's own position
+ * without turning anything. Both halves are asserted, per the task's own
+ * warning that recording nothing at all on the press just moves the bug
+ * onto the next move instead of removing it: the press itself must not
+ * turn the view, and a subsequent genuine move must pan by its own delta
+ * from where the press left the cursor, not by the gap the press covered.
+ */
+test("a scoped press does not turn the view, and the next genuine move still pans by its own delta", () => {
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  // A baseline unscoped move records the cursor centred without turning
+  // anything (`aimAt`'s unscoped branch never pans) — standing in for the
+  // player's last real pointermove before the scope went up.
+  w.aimAt(0.5, 0.5);
+  w.setScoped(true);
+  const beforePress = w.facing;
+  // Not `assert.deepEqual` against a literal `{yaw:0,pitch:0}`: a ray traced
+  // dead centre can legitimately come back `-0` rather than `0` (`Math.atan2`
+  // does that for a direction with an exactly-zero x component), which is
+  // the same angle in every sense that matters here but fails a strict
+  // object comparison against a hand-written positive zero. What actually
+  // matters — that raising the scope over a centred cursor did not turn
+  // anything — is a magnitude check, not a sign check.
+  assert.ok(
+    Math.abs(beforePress.yaw) < 1e-9 && Math.abs(beforePress.pitch) < 1e-9,
+    `raising the scope over an already-centred cursor must not itself turn the view (got ${JSON.stringify(beforePress)})`,
+  );
+
+  // The press lands 20% of the canvas away from the last recorded cursor —
+  // squarely inside the task's own measured table (10.3° of swing at this
+  // offset under the old code).
+  w.syncCursor(0.7, 0.5);
+  assert.deepEqual(
+    w.facing,
+    beforePress,
+    "a press that lands away from the last cursor position must not turn the scoped view",
+  );
+
+  // The next genuine move — a real pointermove after the press — must pan
+  // by its own small delta from where the press left the cursor (0.7 to
+  // 0.75), not by the gap the press itself covered (0.5 to 0.75, which the
+  // old code would have left for this move to inherit).
+  w.aimAt(0.75, 0.5);
+  const ownDelta = -(0.75 - 0.7) * 0.9;
+  const staleDelta = -(0.75 - 0.5) * 0.9;
+  assert.ok(
+    Math.abs(w.facing.yaw - ownDelta) < 1e-9,
+    `the move should pan by its own 0.05 delta (expected yaw ${ownDelta}), not something else (got ${w.facing.yaw})`,
+  );
+  assert.ok(
+    Math.abs(w.facing.yaw - staleDelta) > 0.1,
+    "the move must not carry the press's own distance forward as if the press had never updated the cursor",
+  );
+});
+
+/*
  * The gate itself, in isolation — the arithmetic that the two-path parity
  * test below rests on.
  *
@@ -924,6 +991,145 @@ test("a click and a tap loose the same arrows, as many and as fast, over the sam
     click.every((v) => v === click[0]),
     "no shot may leave faster or slower than another: there is one draw now, and the player does not set it",
   );
+});
+
+/*
+ * Bug B (the rest of report 1: "bow is inaccurate"): `fire()` solves the
+ * elevation exactly, to wherever the aim ray lands — verified in the tests
+ * above — but it aims at where a moving target's face stood the instant the
+ * reticle found it, not where that face will be once the arrow, loosed now,
+ * actually gets there 0.86-1.37s later. A `drift` target moves about 2.5
+ * units in that time against a hit radius of 2.6, so a shot the reticle
+ * said was dead centre the moment it was aimed lands where the target used
+ * to be.
+ *
+ * Written the way the bug was found: a live `World`, aim dead centre at the
+ * drifting face as it stands right now, fire once, step until the arrow
+ * resolves. The target itself is built with `makeButt` and put directly into
+ * the world's own scene and butt list — the same two things `World.spawn`
+ * does, minus the coin-flips (which stock, which rank, which x, which
+ * direction and speed) — rather than waited for out of the real spawner.
+ * Wave 0 only ever spawns `stand` (`BEHAVIOURS_BY_WAVE` in butts.ts), so
+ * waiting on the spawner for a `drift` butt of a *specific* rank, at a
+ * *specific* x, alone, and staying alone for the whole of a flight, needs
+ * wave 1 or later and would still be rare and slow to gather in volume; a
+ * built butt gets every one of those for free and lets this sweep x and
+ * drift direction/speed deliberately, the way the earlier dead-centre tests
+ * sweep spawn position by waiting for it. `dwell` is set high enough that a
+ * duck mid-flight cannot be blamed on the lead, and each trial aims and
+ * fires exactly once — a throwaway probe shot is not an option, since
+ * `fire()` zeroes `drawn` and a second shot would not be the first one
+ * aimed.
+ *
+ * The assertion is the relationship, not a percentage, exactly as the two
+ * tests above it already do it: a shot aimed dead centre at a target the
+ * player can see and track must connect, moving or not. Run with the lead
+ * itself disabled — the `if (targetButt)` block below deleted, `point` left
+ * exactly as the ray struck it — over the same 36 shots a side, the near
+ * rank came back clean (36/36: this sweep's own `vx`/`x` combinations happen
+ * to keep the near rank's larger face and shorter flight inside the old
+ * code's tolerance) and the far rank missed 18 of 36 — 50%, in the same
+ * range the task's own live measurement of drift/far reports (30% hit, 70%
+ * miss). A live round's actual spread of drift speeds is not this test's
+ * fixed sweep, and near/far diverging here rather than matching the task's
+ * table on both is that difference, not a sign the bug was only ever half
+ * real: the far rank's smaller face (half the near rank's radius) and
+ * longer flight (up to 1.37s against 1.05s) make it the one this sweep was
+ * always going to catch. After leading the shot, both ranks come back clean.
+ */
+test("a dead-centre shot leads a drifting target: aimed at where it stands, it still connects once the arrow arrives", () => {
+  const dt = 1 / 60;
+  // `look`'s own unscoped sensitivity — see the earlier dead-centre tests,
+  // which aim the same way for the same reason.
+  const LOOK_K = 0.0022;
+  const stock = { symbol: "UP", changePct: 1 };
+  // No stocks handed to `World` itself: `spawn` (which draws from
+  // `this.stocks`) no-ops on an empty list, so nothing but the one butt
+  // this test raises by hand is ever on the range — the same "one target on
+  // the range removes the question entirely" reasoning the earlier
+  // dead-centre tests rely on, made true by construction instead of by
+  // waiting for it and hoping.
+  const w = new World(makeNullSurface(), [], () => {});
+
+  /*
+   * Raise one `drift` butt directly, fully up and already moving, bypassing
+   * `World.spawn`'s own random draw of rank/x/direction/speed entirely — the
+   * scene and butt list are private, but `w.butts` already hands back the
+   * live array `world.ts` itself mutates (see its own doc comment: "the
+   * test... needs to see what it actually did... without a second copy of
+   * `World`'s own spawn/retire logic living in the test file"), so pushing
+   * onto it is using that same seam rather than a new one. The scene has no
+   * such getter, so this is the one place this file reaches past a private
+   * field, and only to put the mesh where `collectTargets` (arrows.ts) —
+   * which walks the real scene graph — can find it, exactly as `spawn` does.
+   *
+   * `rising: true` here is not "still climbing out of cover" — `stepButt`
+   * only advances `out` past 1 while `rising` is true and drops it back
+   * toward 0 the instant it is false, so a fully-up butt meant to *stay* up
+   * is `rising: true` with `out` already at 1 and `dwell` left high, not
+   * `rising: false`. Getting this backwards was this test's own first bug,
+   * not the fix's: it ducked the injected butt back into cover about a
+   * third of a second in (`out` decays at `2.4`/s from 1, and `isTargetable`
+   * needs it above 0.15), well inside the flight, and then removed it from
+   * the scene entirely — so every shot flew on into open air and the arrow
+   * was blamed on the lead for a target that was never there to hit.
+   */
+  const raise = (rank: Rank, x: number, vx: number): Butt => {
+    const butt = makeButt(stock, rank, x, "drift");
+    butt.vx = vx;
+    butt.out = 1;
+    butt.rising = true;
+    butt.dwell = 999; // long past any flight time; nothing here should duck
+    butt.group.position.set(x, 0, RANKS[rank].z); // stepButt's own fully-up position
+    butt.face.userData.arrowTarget = true;
+    (w as unknown as { scene: T.Scene }).scene.add(butt.group);
+    (w.butts as Butt[]).push(butt);
+    return butt;
+  };
+
+  const shoot = (rank: Rank, x: number, vx: number) => {
+    w.start();
+    const target = raise(rank, x, vx);
+
+    // Aim dead centre at the face's position right now — where the target
+    // is, not where it is going, exactly what the player's own click does
+    // and exactly what the bug report measured against.
+    const face = target.face.getWorldPosition(new T.Vector3());
+    const d = face.clone().sub(w.eye);
+    const yaw = Math.atan2(-d.x, -d.z);
+    const pitch = Math.asin(d.y / d.length());
+    w.look(-(yaw - w.facing.yaw) / LOOK_K, -(pitch - w.facing.pitch) / LOOK_K);
+    assert.ok(
+      Math.abs(w.facing.yaw - yaw) < 1e-6 && Math.abs(w.facing.pitch - pitch) < 1e-6,
+      "the view has to actually reach the face, or the shot below was never aimed at it",
+    );
+
+    assert.ok(w.fire(), "the nock is full at the start of a round, so the one shot has to loose");
+    const arrow = w.arrows[w.arrows.length - 1];
+    for (let g = 0; g < 600 && arrow.stuck === 0 && w.arrows.includes(arrow); g++) w.step(dt);
+    return { x, struck: target.dead > 0 };
+  };
+
+  for (const rank of ["near", "far"] as const) {
+    const shots: { x: number; struck: boolean }[] = [];
+    // A deliberate sweep across the rank's own spread (`SPAWN_X_LIMIT` is
+    // 30) and both drift directions at two speeds, rather than a spawn
+    // position taken on faith from the RNG — every combination the task's
+    // own measurement table would call a `drift` shot.
+    for (const x of [-28, -21, -14, -7, 0, 7, 14, 21, 28]) {
+      for (const vx of [-3.5, -2, 2, 3.5]) {
+        shots.push(shoot(rank, x, vx));
+      }
+    }
+    assert.equal(shots.length, 36, `${rank} rank: the sweep itself should never lose a trial`);
+    const missed = shots.filter((s) => !s.struck);
+    assert.deepEqual(
+      missed,
+      [],
+      `${rank} rank: a shot aimed dead centre at a drifting face, the moment it was aimed, must still connect once the arrow arrives — the shot has to be led to where the target the reticle found will actually be`,
+    );
+  }
+  w.stop();
 });
 
 /*
@@ -1306,6 +1512,79 @@ test("a hostile butt winds up for the full TELL_MS before it looses, and never d
     // Past it: winding should have cleared, meaning the shot was loosed.
     for (let i = 0; i < 10; i++) w.step(dt);
     assert.equal(w.butts[0].winding, false, "winding should clear the instant the shot is loosed, at TELL_MS and not before");
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+/*
+ * Bug C ("getting hit from targets i can't see in the distance"): the
+ * wind-up above is purely visual — the rim's glow and the turn toward the
+ * player — and the camera's 36° half field of view against a ±48.7° yaw
+ * clamp and a ±30-unit spawn spread meant a red butt could wind up and
+ * loose entirely outside what the player could see, with nothing to hear
+ * either. `World.step`'s firing block now asks `sfx.tell(distance, pan)`
+ * exactly on the transition into a wind-up (`cooldown` running out and
+ * `winding` being set), which is what this drives against a fake `sfx` the
+ * same way the existing whistle test does, since nothing about the sound
+ * itself is otherwise observable from outside `World`.
+ *
+ * With `Math.random` pinned to 0 several hostile butts wind up over the
+ * course of this run (the wind-up test above notes the same thing), so this
+ * counts every wind-up-start transition across every butt directly off
+ * `winding`, rather than assuming there is only one, and requires the tell
+ * to fire exactly that many times: once per wind-up, never once per frame
+ * of it, and never skipped.
+ */
+test("a hostile butt entering its wind-up asks the sound layer for the tell, once per wind-up and never once per frame", () => {
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0;
+    const w = new World(makeNullSurface(), [{ symbol: "DOWN", changePct: -1 }], () => {});
+    w.start();
+    const calls: { distance: number; pan: number }[] = [];
+    w.sfx = {
+      loose() {},
+      thunk() {},
+      miss() {},
+      hurt() {},
+      chime() {},
+      horn() {},
+      marker() {},
+      whistle() {},
+      tell(distance: number, pan: number) {
+        calls.push({ distance, pan });
+      },
+    };
+    const dt = 1 / 60;
+    const wasWinding = new WeakSet<Butt>();
+    let windUpStarts = 0;
+    for (let i = 0; i < 300; i++) {
+      w.step(dt);
+      for (const b of w.butts) {
+        if (b.winding) {
+          if (!wasWinding.has(b)) {
+            windUpStarts++;
+            wasWinding.add(b);
+          }
+        } else {
+          wasWinding.delete(b);
+        }
+      }
+    }
+    assert.ok(windUpStarts > 0, "at least one hostile butt should have started winding up within five seconds");
+    assert.equal(
+      calls.length,
+      windUpStarts,
+      "the tell must fire exactly once per wind-up — not once per frame of it, and not skipped",
+    );
+    for (const c of calls) {
+      assert.ok(
+        c.distance > 0 && Number.isFinite(c.distance),
+        "the tell's distance must be the winding butt's real distance to the player",
+      );
+      assert.ok(c.pan >= -1 && c.pan <= 1, "the tell's pan must stay within the stereo range, -1 to 1");
+    }
   } finally {
     Math.random = originalRandom;
   }
