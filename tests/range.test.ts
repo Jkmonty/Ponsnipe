@@ -6,11 +6,25 @@ import {
   drawShake,
   assistAngle,
   stepArrows,
+  looseEnemyArrow,
   DRAW_MIN_SPEED,
   DRAW_MAX_SPEED,
   type Arrow,
 } from "../src/app/(site)/range/arrows";
-import { ringOf, ringMultiplier, comboAfter, streakAfter, resolveButtHit } from "../src/app/(site)/range/butts";
+import {
+  ringOf,
+  ringMultiplier,
+  comboAfter,
+  streakAfter,
+  resolveButtHit,
+  isTargetable,
+  applyButtHit,
+  bestSymbolAfter,
+  LANES,
+  RING_FRACTIONS,
+  FACE_RADIUS,
+} from "../src/app/(site)/range/butts";
+import { nockReady } from "../src/app/(site)/range/world";
 
 /** A bare arrow mesh — nothing from arrows.ts is needed to build one for a test. */
 function makeTestArrow(overrides: Partial<Arrow> & { vel: T.Vector3 }): Arrow {
@@ -198,13 +212,27 @@ test("a touch-fired arrow is steered by the wider cone; a mouse-fired one at the
   assert.ok(touchArrow.vel.x > 0, "inside its wider cone, the touch shot should be pulled toward the target");
 });
 
-test("the rings run gold, red, blue, black, white from the centre out", () => {
+test("the rings run gold, red, blue, black, white from the centre out, matching RING_FRACTIONS — the same numbers tickerLabel paints from", () => {
   const r = 10;
+  const [f1, f2, f3, f4] = RING_FRACTIONS;
   assert.equal(ringOf(0, r), 1);
-  assert.equal(ringOf(1.5, r), 2);
-  assert.equal(ringOf(4, r), 3);
-  assert.equal(ringOf(6.5, r), 4);
-  assert.equal(ringOf(9, r), 5);
+  assert.equal(ringOf(((f1 + f2) / 2) * r, r), 2);
+  assert.equal(ringOf(((f2 + f3) / 2) * r, r), 3);
+  assert.equal(ringOf(((f3 + f4) / 2) * r, r), 4);
+  assert.equal(ringOf(r, r), 5, "at the rim, beyond the outermost drawn ring");
+});
+
+test("a hit just inside a RING_FRACTIONS boundary scores one ring better than a hit just outside it", () => {
+  const r = 10;
+  // Only the first four fractions are boundaries `ringOf` actually compares
+  // against — the fifth is the outer edge tickerLabel paints to, with
+  // everything beyond it (out to the rim and past) falling to the same
+  // catch-all outermost ring, so there is no fifth step to find.
+  for (const f of RING_FRACTIONS.slice(0, 4)) {
+    const justInside = ringOf(f * r - 0.001 * r, r);
+    const justOutside = ringOf(f * r + 0.001 * r, r);
+    assert.equal(justOutside, justInside + 1, `the boundary at ${f} should be where the ring number steps`);
+  }
 });
 
 test("the gold is worth three of the outside", () => {
@@ -243,20 +271,232 @@ test("a credited hit destroys its target, green or red alike — a standing butt
   assert.equal(red.destroyButt, true);
 });
 
-test("a destroyed butt fails world.ts's own re-arm check, so it cannot be scored twice", () => {
-  // world.ts's per-frame guard, reproduced exactly:
-  //   b.face.userData.arrowTarget = b.dead <= 0 && b.out > 0.15;
-  const isTargetable = (dead: number, out: number) => dead <= 0 && out > 0.15;
+/*
+ * The whole-branch review found that neither of the two tests above ever
+ * executes the real hit path: one calls only `resolveButtHit`, the other
+ * (until this change) defined its own local copy of `isTargetable` instead
+ * of importing the real one from butts.ts. Change world.ts's hit handler to
+ * `if (result.destroyButt && b.hostile)` — the exact defect that shipped
+ * last round, which left every non-hostile credited hit standing to be
+ * farmed — and both of the tests above still pass, because neither one ever
+ * calls `applyButtHit` or checks the real `isTargetable` against a real
+ * `Butt`. This test does both, on a green (non-hostile) butt, so it fails
+ * the instant destruction stops applying uniformly.
+ *
+ * Built by hand rather than via `makeButt`: `makeButt` calls `tickerLabel`,
+ * which needs a real DOM `document` to render a canvas texture — the same
+ * reason `onArrowHit` itself (which also spawns a canvas-texture popup)
+ * cannot be driven directly in this test runner. `isTargetable` and
+ * `applyButtHit` only ever read `dead`, `out`, `rock` and `hostile`, so a
+ * plain object carrying just those is the real functions under real data,
+ * not a reimplementation of them.
+ */
+test("applyButtHit and the real isTargetable are the hit path — a credited hit on a GREEN butt takes it out of play too", () => {
+  const butt = { hostile: false, dead: 0, out: 1, rock: 1 } as unknown as import("../src/app/(site)/range/butts").Butt;
+  assert.equal(butt.hostile, false);
+  assert.equal(isTargetable(butt), true, "an unstruck, fully-risen butt should be a valid target");
 
-  const out = 1; // fully risen
-  assert.equal(isTargetable(0, out), true, "an unstruck, fully-risen butt should be a valid target");
+  const result = resolveButtHit({
+    hostile: butt.hostile,
+    ring: 5,
+    basePoints: 100,
+    comboBefore: 3,
+    streakBefore: 3,
+    bestRingBefore: 2,
+  });
+  assert.equal(result.destroyButt, true);
 
-  const result = resolveButtHit({ hostile: false, ring: 5, basePoints: 100, comboBefore: 3, streakBefore: 3, bestRingBefore: 2 });
-  const dead = result.destroyButt ? 0.6 : 0;
+  applyButtHit(butt, result);
 
   assert.equal(
-    isTargetable(dead, out),
+    isTargetable(butt),
     false,
     "a credited hit must take the target out of play, or every later arrow this round scores off the same standing butt",
+  );
+});
+
+test("bestSymbolAfter tracks the cumulative total per ticker, not the single biggest hit", () => {
+  const points = new Map<string, number>();
+  let best = bestSymbolAfter(points, { bestSymbol: "", bestSymbolPoints: 0 }, "AAA", 50);
+  assert.equal(best.bestSymbol, "AAA");
+  assert.equal(best.bestSymbolPoints, 50);
+
+  best = bestSymbolAfter(points, best, "BBB", 80);
+  assert.equal(best.bestSymbol, "BBB", "a single bigger hit takes the lead");
+  assert.equal(best.bestSymbolPoints, 80);
+
+  // AAA's second hit is smaller than BBB's one big hit, but it pushes AAA's
+  // running total past BBB's — the cumulative total is what should decide
+  // the leader, not whichever ticker handed back the single biggest hit.
+  best = bestSymbolAfter(points, best, "AAA", 40);
+  assert.equal(points.get("AAA"), 90);
+  assert.equal(best.bestSymbol, "AAA", "the cumulative total, not the single biggest hit, decides the leader");
+  assert.equal(best.bestSymbolPoints, 90);
+});
+
+/*
+ * Task 2 gave every arrow gravity in `stepArrows`; `looseEnemyArrow`'s flat,
+ * straight-at-the-camera aim was never revisited, so a hostile arrow now
+ * drops out from under its own aim line. The whole-branch review simulated
+ * this exact function 1,800 times and scored zero hits. This drives the
+ * real `looseEnemyArrow` and `stepArrows` — no reimplementation of either —
+ * at each lane and a spread of x positions, and fails outright if a single
+ * shot does not connect.
+ */
+test("a hostile arrow loosed at the player from every lane comes within HIT_RADIUS", () => {
+  const originalRandom = Math.random;
+  const player = new T.Object3D();
+  const at = new T.Vector3(0, 3.6, 20);
+  player.position.copy(at);
+  player.userData.isPlayer = true;
+
+  try {
+    for (const laneZ of LANES) {
+      for (const x of [-25, 0, 25]) {
+        for (const speedFrac of [0, 1]) {
+          // Pin every rand() call (speed, spin, ...) to one end of its range,
+          // so this is deterministic rather than a flaky draw.
+          Math.random = () => speedFrac;
+
+          const scene = new T.Scene();
+          scene.add(player);
+          const group = new T.Group();
+          group.position.set(x, 0, laneZ);
+          const fakeButt = { group } as unknown as import("../src/app/(site)/range/butts").Butt;
+
+          const arrow = looseEnemyArrow(scene, fakeButt, at);
+          const arrows: Arrow[] = [arrow];
+
+          let hitPlayer = false;
+          const dt = 1 / 60;
+          for (let i = 0; i < 300 && arrows.length && !hitPlayer; i++) {
+            stepArrows(arrows, dt, scene, (_a, hit) => {
+              if (hit === player) hitPlayer = true;
+            });
+          }
+          assert.ok(hitPlayer, `lane ${laneZ}, x ${x}, speedFrac ${speedFrac} should have hit the player`);
+        }
+      }
+    }
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+/*
+ * Found while verifying the fix above against a real `Butt` in the browser
+ * (`window.__arcade`), not by inspection: `from` in `looseEnemyArrow` sits
+ * exactly on the face's own plane (the face is a zero-thickness disc
+ * centred at that same point), and `stepArrows` raycasts every arrow —
+ * including one still on frame zero — against every live face, this one's
+ * own included. A ray whose origin lies on that plane self-intersects at
+ * distance zero before the arrow has gone anywhere, `stuck` on the very
+ * frame it spawns. This was invisible both to the test above (whose fake
+ * butt has a bare `T.Group` for a face, i.e. no geometry to self-intersect)
+ * and to the reviewer's own 1,800-trial simulation for the same reason —
+ * so a full natural round in the live game still did zero damage even
+ * after the ballistics fix, until this was found and fixed too.
+ */
+test("a hostile arrow does not self-intersect its own launching butt's face on the frame it spawns", () => {
+  const scene = new T.Scene();
+  const player = new T.Object3D();
+  const at = new T.Vector3(0, 3.6, 20);
+  player.position.copy(at);
+  player.userData.isPlayer = true;
+  scene.add(player);
+
+  const group = new T.Group();
+  group.position.set(0, 0, LANES[0]);
+  // A real face mesh — no texture map, so no `document`/DOM dependency —
+  // standing in for the one `makeButt` actually builds.
+  const face = new T.Mesh(new T.CircleGeometry(FACE_RADIUS, 22), new T.MeshBasicMaterial({ side: T.DoubleSide }));
+  face.position.y = 5.2;
+  face.userData.arrowTarget = true;
+  group.add(face);
+  scene.add(group);
+
+  const fakeButt = { group } as unknown as import("../src/app/(site)/range/butts").Butt;
+  const arrow = looseEnemyArrow(scene, fakeButt, at);
+  const arrows: Arrow[] = [arrow];
+
+  stepArrows(arrows, 1 / 60, scene, () => {});
+
+  assert.equal(
+    arrow.stuck,
+    0,
+    "the arrow must not stick to the face it was just fired from on the very frame it spawns",
+  );
+});
+
+test("looseEnemyArrow's elevation is clamped rather than NaN when the range is beyond what the speed can reach", () => {
+  const scene = new T.Scene();
+  const group = new T.Group();
+  group.position.set(0, 0, 0);
+  const fakeButt = { group } as unknown as import("../src/app/(site)/range/butts").Butt;
+  // Absurdly far, so GRAVITY * range / speed^2 is guaranteed to exceed 1.
+  const farAway = new T.Vector3(0, 3.6, -100000);
+
+  const arrow = looseEnemyArrow(scene, fakeButt, farAway);
+
+  assert.ok(Number.isFinite(arrow.vel.x), "vel.x must not be NaN");
+  assert.ok(Number.isFinite(arrow.vel.y), "vel.y must not be NaN");
+  assert.ok(Number.isFinite(arrow.vel.z), "vel.z must not be NaN");
+  assert.ok(arrow.vel.y > 0, "the best available shot at an out-of-range target is still the steepest one, not level");
+});
+
+/*
+ * `touchFire` used to call `fire` directly, and `fire`'s own gate
+ * (`drawn < 0.5`) was looser than `beginDraw`'s (`drawn < 1`) — a tapping
+ * phone could loose a shot every ~210ms against a mouse's own ~525ms.
+ * `nockReady` is now the one gate both paths ask, so a value that used to
+ * pass the old, looser `fire` threshold must now fail it too.
+ */
+test("the nock gate is one full pull for a tap and a click alike, not the old half-nock door", () => {
+  assert.equal(nockReady(0), false);
+  assert.equal(nockReady(0.5), false, "0.5 was fire()'s own old threshold — exactly what let touch fire 2.5x as fast");
+  assert.equal(nockReady(0.99), false);
+  assert.equal(nockReady(1), true);
+});
+
+/*
+ * `steerToward`'s old `* 10` rate let it out-correct gravity every frame, so
+ * any shot inside the assist cone converged onto the exact same point
+ * regardless of how far off it had been aimed — the reviewer measured
+ * identical impact radii for a perfectly aimed shot and one 2.5 degrees off.
+ * This fires two shots at the same target, one with a small aim error and
+ * one with a larger one (both still inside the mouse assist cone), and
+ * requires the larger error to land further off-centre — "forgiven", not
+ * "decided for you."
+ */
+test("aim assist forgives a near miss in proportion to the error, rather than deciding the ring at spawn", () => {
+  const scene = new T.Scene();
+  const target = new T.Object3D(); // no geometry: influences steering, never registers a raycast hit
+  const distance = 15;
+  target.position.set(0, 0, -distance);
+  target.userData.arrowTarget = true;
+  scene.add(target);
+
+  const speed = 40;
+  const fireWithError = (deg: number): Arrow => {
+    const rad = (deg * Math.PI) / 180;
+    const vel = new T.Vector3(Math.sin(rad), 0, -Math.cos(rad)).multiplyScalar(speed);
+    const mesh = new T.Mesh(new T.CylinderGeometry(0.012, 0.012, 1.1, 5), new T.MeshBasicMaterial());
+    scene.add(mesh);
+    return { mesh, vel, life: 6, mine: true, stuck: 0, spin: 0, touch: false };
+  };
+
+  const small = fireWithError(0.2);
+  const big = fireWithError(2);
+
+  const dt = 1 / 60;
+  const steps = Math.ceil(distance / speed / dt) + 5;
+  for (let i = 0; i < steps; i++) stepArrows([small], dt, scene, () => {});
+  for (let i = 0; i < steps; i++) stepArrows([big], dt, scene, () => {});
+
+  const smallOffset = Math.abs(small.mesh.position.x);
+  const bigOffset = Math.abs(big.mesh.position.x);
+  assert.ok(
+    bigOffset > smallOffset + 0.05,
+    `a 2-degree miss (offset ${bigOffset}) should land measurably further off-centre than a 0.2-degree miss (offset ${smallOffset}), not identically`,
   );
 });

@@ -43,17 +43,30 @@ export function ringColourFor(hostile: boolean): string {
 }
 
 /**
+ * The archery-roundel bands, gold at the centre out to the rim, as fractions
+ * of the face's own radius — the one source of truth both `tickerLabel`
+ * (which paints its discs at these fractions, scaled to its own canvas) and
+ * `ringOf` (which classifies an impact by the same numbers) read from.
+ *
+ * These used to be two hand-picked literals that quietly drifted apart:
+ * `ringOf` classified at 0.1 / 0.3 / 0.5 / 0.7, `tickerLabel` drew at these
+ * numbers here. Nothing lined up — the disc that looked gold scored only 2x,
+ * and the real 3x zone, the inner tenth, was invisible, hidden entirely
+ * under the ticker band drawn across the face's own centre.
+ */
+export const RING_FRACTIONS = [0.2656, 0.4688, 0.6406, 0.8125, 0.9844] as const;
+
+/**
  * Which ring an impact lands in, by how far it struck from the face's own
- * centre relative to the face's own radius — proportions matching the rings
- * `tickerLabel` actually draws: gold inside 0.1, red to 0.3, blue to 0.5,
- * black to 0.7, white beyond.
+ * centre relative to the face's own radius, against `RING_FRACTIONS` — the
+ * same boundaries `tickerLabel` paints, not a separate guess at them.
  */
 export function ringOf(distanceFromCentre: number, faceRadius: number): number {
   const p = faceRadius > 0 ? distanceFromCentre / faceRadius : 1;
-  if (p < 0.1) return 1; // gold
-  if (p < 0.3) return 2; // red
-  if (p < 0.5) return 3; // blue
-  if (p < 0.7) return 4; // black
+  if (p < RING_FRACTIONS[0]) return 1; // gold
+  if (p < RING_FRACTIONS[1]) return 2; // red
+  if (p < RING_FRACTIONS[2]) return 3; // blue
+  if (p < RING_FRACTIONS[3]) return 4; // black
   return 5; // white
 }
 
@@ -138,6 +151,66 @@ export function resolveButtHit(input: ButtHitInput): ButtHitResult {
 }
 
 /**
+ * Whether a butt is currently something an arrow can be steered toward or
+ * credited for hitting — the exact condition `world.ts` re-arms
+ * `arrowTarget` from every frame. Exported so both `world.ts` and this
+ * file's own tests read the one predicate, rather than the test keeping a
+ * hand-copied version of it that could silently stop matching the real one.
+ */
+export function isTargetable(b: Butt): boolean {
+  return b.dead <= 0 && b.out > 0.15;
+}
+
+/** How long a destroyed butt takes to fall before it leaves the scene. */
+const DEATH_FALL_TIME = 0.6;
+
+/**
+ * Apply a credited hit's lifecycle decision to the butt it struck — pulled
+ * out of `world.ts`'s `onArrowHit` the way `resolveButtHit` was, so the
+ * mutation itself is a plain function this file's tests can call directly
+ * against the real `isTargetable` above, rather than only ever checking
+ * `resolveButtHit`'s `destroyButt` field in isolation and trusting that
+ * `onArrowHit` acts on it unconditionally. (It didn't, once: `if
+ * (result.destroyButt && b.hostile)` shipped and left every non-hostile hit
+ * standing to be farmed, and neither existing test noticed because neither
+ * exercised this mutation.)
+ */
+export function applyButtHit(b: Butt, result: ButtHitResult): void {
+  if (result.destroyButt) {
+    b.dead = DEATH_FALL_TIME;
+    b.rock = 0;
+  }
+}
+
+export interface BestSymbolState {
+  bestSymbol: string;
+  bestSymbolPoints: number;
+}
+
+/**
+ * Fold one hit's points into the running per-ticker total (mutating
+ * `symbolPoints`, the one running tally the round keeps) and say whether
+ * that ticker's cumulative total now leads the round.
+ *
+ * "The ticker that earned the most" means the highest total over the whole
+ * round, not whichever one happened to hand back the single biggest hit —
+ * pulled out of `onArrowHit` so that rule is a plain function a test can
+ * call directly instead of only reading the doc comment above the field it
+ * used to be inlined next to.
+ */
+export function bestSymbolAfter(
+  symbolPoints: Map<string, number>,
+  before: BestSymbolState,
+  symbol: string,
+  gained: number,
+): BestSymbolState {
+  const total = (symbolPoints.get(symbol) ?? 0) + gained;
+  symbolPoints.set(symbol, total);
+  if (total > before.bestSymbolPoints) return { bestSymbol: symbol, bestSymbolPoints: total };
+  return before;
+}
+
+/**
  * The ticker, drawn to a texture.
  *
  * A canvas texture rather than a font loader: it needs one short string per
@@ -155,31 +228,46 @@ export function resolveButtHit(input: ButtHitInput): ButtHitResult {
  */
 export function tickerLabel(text: string, colour: string): T.Texture {
   const S = 256;
+  const half = S / 2;
   const cv = document.createElement("canvas");
   cv.width = S;
   cv.height = S;
   const c = cv.getContext("2d")!;
+  // Largest first: each disc paints over the middle of the last, so what
+  // ends up visible between two boundaries is whichever colour was painted
+  // last for that radius — the same `RING_FRACTIONS` `ringOf` scores against.
   const rings: [number, string][] = [
-    [126, colour],
-    [104, "#f4edda"],
-    [82, colour],
-    [60, "#f4edda"],
-    [34, "#e8b54a"],
+    [RING_FRACTIONS[4] * half, colour],
+    [RING_FRACTIONS[3] * half, "#f4edda"],
+    [RING_FRACTIONS[2] * half, colour],
+    [RING_FRACTIONS[1] * half, "#f4edda"],
+    [RING_FRACTIONS[0] * half, "#e8b54a"],
   ];
   for (const [r, fill] of rings) {
     c.beginPath();
-    c.arc(S / 2, S / 2, r, 0, Math.PI * 2);
+    c.arc(half, half, r, 0, Math.PI * 2);
     c.fillStyle = fill;
     c.fill();
   }
-  // A band behind the letters, so the ticker survives the rings under it.
+  /*
+   * A band low in the disc, not across its centre.
+   *
+   * It used to run through the middle of the face — `fillRect(0, 104, S,
+   * 48)`, covering the centre plus or minus 24px — which sat directly on
+   * top of the gold ring, the one worth 3x, and hid it completely. Full
+   * width is fine down here: the face is a circle, so the disc's own edge
+   * clips the rectangle into a chord rather than letting it run past the
+   * roundel.
+   */
+  const bandTop = S * 0.76;
+  const bandH = S * 0.16;
   c.fillStyle = "rgba(12, 18, 24, 0.82)";
-  c.fillRect(0, 104, S, 48);
+  c.fillRect(0, bandTop, S, bandH);
   c.fillStyle = "#f8f4e6";
-  c.font = "bold 42px ui-monospace, SFMono-Regular, monospace";
+  c.font = "bold 34px ui-monospace, SFMono-Regular, monospace";
   c.textAlign = "center";
   c.textBaseline = "middle";
-  c.fillText(text.slice(0, 6), S / 2, 129);
+  c.fillText(text.slice(0, 6), half, bandTop + bandH / 2 + 1);
   const tex = new T.CanvasTexture(cv);
   tex.colorSpace = T.SRGBColorSpace;
   return tex;
@@ -258,4 +346,29 @@ export function makeButt(stock: Stock, lane: number, x: number): Butt {
     dead: 0,
     rock: 1,
   };
+}
+
+/**
+ * Free a retired butt's GPU-side resources: not just the face's geometry,
+ * but its material and the 256x256 ticker texture on it, and the rim and
+ * post's own geometry and material besides.
+ *
+ * Retirement used to dispose the face geometry alone, and only on one of the
+ * two paths a butt leaves the scene by — the fall after being struck, never
+ * the duck back into cover. At 100-150 butts a round that is tens of
+ * megabytes of texture a round, never freed; `renderer.dispose()` in
+ * `world.ts`'s `stop()` does not touch any of it. Walking `b.group`'s own
+ * children rather than naming `face`/`rim`/`post` individually means a
+ * fourth mesh added to a butt later is disposed here for free.
+ */
+export function disposeButt(b: Butt): void {
+  for (const child of b.group.children) {
+    if (!(child instanceof T.Mesh)) continue;
+    child.geometry.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const m of materials) {
+      (m as T.MeshBasicMaterial).map?.dispose();
+      m.dispose();
+    }
+  }
 }

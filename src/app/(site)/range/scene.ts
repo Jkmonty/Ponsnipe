@@ -79,6 +79,25 @@ export function buildWood(scene: T.Scene): Wood {
 }
 
 /**
+ * Free every mesh's geometry and material under the wood's root.
+ *
+ * `page.tsx` builds a new `World` — and so a whole new wood, roughly 700
+ * scenery geometries and materials — every round, and the old one used to
+ * just be discarded: `buildWood`'s return value was never kept anywhere, so
+ * nothing could ever free it, and `renderer.dispose()` frees the GPU context,
+ * not the meshes that were drawn through it. `world.ts` keeps the `Wood`
+ * handle this returns so `stop()` can call this and actually let a round's
+ * scenery go.
+ */
+export function disposeWood(wood: Wood): void {
+  wood.root.traverse((o) => {
+    if (!(o instanceof T.Mesh)) return;
+    o.geometry.dispose();
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
+  });
+}
+
+/**
  * A great oak, the size the Major Oak actually is.
  *
  * The ordinary trees are cones on sticks and read as woodland. One tree that

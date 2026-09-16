@@ -429,7 +429,10 @@
   .site .hero-cta .hbtn { width: 100%; }
 }
 
-/* Everything honours reduced motion. Nothing animates behind text anyway. */
+/* Everything honours reduced motion. Nothing animates behind text anyway.
+   The combo pop (.arc-combo) used to be missing from this list — the release
+   kick and the butt's hit-recoil are not CSS at all, so world.ts throttles
+   those two itself, gated on the same media query. */
 @media (prefers-reduced-motion: reduce) {
-  .site .pin, .site .board-row, .site .butt-note { animation: none; }
+  .site .pin, .site .board-row, .site .butt-note, .site .arc-combo { animation: none; }
 }

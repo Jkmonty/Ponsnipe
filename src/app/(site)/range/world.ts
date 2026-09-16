@@ -6,25 +6,30 @@
  * narrows the field of view rather than drawing a smaller circle, and an arrow
  * coming at you grows.
  *
- * Everything here is primitive geometry generated in code: cones, cylinders,
- * jittered icosahedra. That is not a shortcut, it is the art style — the
- * low-poly games this is modelled on are boxes and cones with flat shading and
- * a warm sky, and none of it is sculpted. So there are no asset files to load,
- * nothing to fetch, and the whole wood is built in a few milliseconds.
+ * This file is the game itself: the render loop, the camera and the bow,
+ * spawning and retiring butts, stepping arrows, and turning a credited hit
+ * into score, health and the HUD's snapshot. The wood the range stands in —
+ * the trees, hedges, ground and everything else built once out of primitive
+ * geometry and never moved — lives in `scene.ts`; this file only asks for it,
+ * tags the one mesh in it an arrow can stick into (the ground), and disposes
+ * it when the round ends.
  *
  * Three.js only lives on this route, so the terminal's bundle never sees it.
  */
 import * as T from "three";
-import { buildWood, rand } from "./scene";
+import { buildWood, disposeWood, rand, type Wood } from "./scene";
 import {
   LANES,
   makeButt,
-  tickerLabel,
   ringColourFor,
   ringOf,
   resolveButtHit,
   comboAfter,
   streakAfter,
+  isTargetable,
+  applyButtHit,
+  disposeButt,
+  bestSymbolAfter,
   FACE_RADIUS,
   type Butt,
 } from "./butts";
@@ -57,8 +62,9 @@ export interface Snapshot {
   /** The best (lowest-numbered, so 1 is gold) ring struck this round.
       0 means nothing has been struck yet. Phase 3 only. */
   bestRing: number;
-  /** The ticker whose single hit earned the most points this round.
-      Empty until the first hit lands. Phase 3 only. */
+  /** The ticker with the highest cumulative points earned this round — the
+      running total per symbol, not whichever one happened to hand back a
+      single big hit. Empty until the first hit lands. Phase 3 only. */
   bestSymbol: string;
   msLeft: number;
   over: boolean;
@@ -94,6 +100,25 @@ const NOCK_TIME = 0.42;
 /** What a tap on a touchscreen looses at — a solid, deliberate pull with no wait. */
 const TOUCH_DRAW = 0.8;
 
+/**
+ * Whether the nock is back far enough to loose another arrow — the single
+ * rate-of-fire gate for both the mouse path (`beginDraw`/`releaseDraw`) and
+ * the touch path (`touchFire`).
+ *
+ * It used to be two different numbers in two different places: `fire` itself
+ * only asked for half a nock (`drawn < 0.5`), which was invisible while the
+ * only way in was `beginDraw`'s own stricter `drawn < 1` gate — a mouse
+ * always cleared 0.5 long before it could finish a real pull anyway. But
+ * `touchFire` calls `fire` directly, skipping `beginDraw` entirely, so it
+ * walked straight through the loose half of the door: a tapping phone could
+ * loose a shot every 210ms, against a mouse's own ~525ms floor of a full
+ * nock plus the minimum pull. Nothing legitimate needs the half-nock door,
+ * so both paths now ask this one function the same question.
+ */
+export function nockReady(drawn: number): boolean {
+  return drawn >= 1;
+}
+
 /** How long the recoil on impact takes to settle back upright — the butt
     still rocks even on a hit that goes on to destroy it. */
 const ROCK_TIME = 0.4;
@@ -111,8 +136,9 @@ const ROCK_ANGLE = (28 * Math.PI) / 180;
 const POPUP_LIFE = 0.9;
 /** How fast the points popup drifts upward off the face, in world units/second. */
 const POPUP_RISE = 2.2;
-/** The popup sprite's width and height, in world units. */
-const POPUP_SCALE = 2.2;
+/** The points chip's height in world units; its width follows the text's own
+    aspect ratio, since it is a chip sized to fit its label, not a square. */
+const POPUP_SCALE = 1.1;
 
 export class World {
   private renderer: T.WebGLRenderer;
@@ -124,6 +150,9 @@ export class World {
   /** Points popups floating up off a struck face — a sprite each, aged out
       and disposed once they finish fading rather than left to accumulate. */
   private popups: { sprite: T.Sprite; age: number }[] = [];
+  /** The scenery built once by `buildWood` — kept only so `stop()` can hand
+      it to `disposeWood` rather than leaking a round's worth of it. */
+  private wood: Wood;
   private raf = 0;
   private running = false;
   private last = 0;
@@ -131,6 +160,16 @@ export class World {
   /** Head turn, in radians. Clamped so you cannot spin round to the trees behind. */
   private yaw = 0;
   private pitch = 0;
+  /**
+   * Read once at construction. The release kick and the butt's hit-recoil
+   * are the two pieces of camera/model shake this round adds that live
+   * outside CSS (where `prefers-reduced-motion` is handled generically) — so
+   * they are throttled here by hand.
+   */
+  private reducedMotion =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   points = 0;
   health = 100;
@@ -142,9 +181,9 @@ export class World {
   bestRing = 0;
   bestSymbol = "";
   /**
-   * Running total earned per ticker this round — not shown itself, kept
-   * only to decide whether a symbol's cumulative total now beats
-   * `bestSymbol`'s. "The ticker that earned the most" means over the whole
+   * Running total earned per ticker this round — not shown itself, fed into
+   * `bestSymbolAfter` on every hit to decide whether a symbol's cumulative
+   * total now leads. "The ticker that earned the most" means over the whole
    * round, not whichever one happened to hand back a single big hit.
    */
   private symbolPoints = new Map<string, number>();
@@ -218,8 +257,8 @@ export class World {
     // stepArrows finds the player by this flag, so a hostile arrow's
     // proximity check has an Object3D to measure against.
     this.camera.userData.isPlayer = true;
-    const wood = buildWood(this.scene);
-    this.tagGround(wood.root);
+    this.wood = buildWood(this.scene);
+    this.tagGround(this.wood.root);
     this.buildBow();
     this.resize();
   }
@@ -571,8 +610,9 @@ export class World {
       this.stepRock(b, dt);
       // Only a butt that is actually up and not already falling is
       // something a flying arrow should be steered toward or able to hit —
-      // the same condition fire() used to filter its raycast targets by.
-      b.face.userData.arrowTarget = b.dead <= 0 && b.out > 0.15;
+      // the same predicate `onArrowHit` reads before crediting a hit, so the
+      // two cannot silently disagree about what is a live target.
+      b.face.userData.arrowTarget = isTargetable(b);
 
       if (b.hostile && b.out > 0.6) {
         b.cooldown -= dt;
@@ -590,13 +630,14 @@ export class World {
     this.butts = this.butts.filter((b) => {
       if (b.dead >= 0) return true;
       this.scene.remove(b.group);
-      b.face.geometry.dispose();
+      disposeButt(b);
       return false;
     });
     // A butt that has fully ducked has done its job and can go.
     this.butts = this.butts.filter((b) => {
       if (b.dead > 0 || b.rising || b.out > 0.01) return true;
       this.scene.remove(b.group);
+      disposeButt(b);
       return false;
     });
 
@@ -622,7 +663,11 @@ export class World {
   private stepRock(b: Butt, dt: number) {
     if (b.rock < 1) b.rock = Math.min(1, b.rock + dt / ROCK_TIME);
     const settle = 1 - b.rock;
-    b.group.rotation.x = -ROCK_ANGLE * settle * settle;
+    // Reduced motion keeps the hit registering (the popup, the marker, the
+    // sound) without the 28-degree flinch — this is the one piece of it
+    // that was still shaking the world itself rather than a screen overlay.
+    const angle = this.reducedMotion ? 0 : ROCK_ANGLE;
+    b.group.rotation.x = -angle * settle * settle;
   }
 
   /**
@@ -653,16 +698,64 @@ export class World {
   }
 
   /**
-   * The ticker chip that pops off a struck face: a sprite showing the
-   * points just earned, on a short upward path that fades. Reuses
-   * `tickerLabel`'s canvas-texture rendering rather than a second way of
-   * drawing text to a texture — fed the points string instead of a symbol.
+   * A small dark rounded chip, sized to its own text, with a thin border in
+   * the stock's own colour.
+   *
+   * The popup used to call `tickerLabel` for this — a whole archery roundel,
+   * rings and all, baked into a 256x256 texture several times a second at
+   * combo. It was disposed correctly, but it also meant the "ticker chip"
+   * the spec describes actually rendered as a miniature second target, with
+   * "+123" written over it, flying off the one you had just struck. This
+   * draws only what a chip needs: the text, and a panel sized to fit it.
+   */
+  private chipTexture(text: string, colour: string): { tex: T.Texture; aspect: number } {
+    const scale = 3; // supersampled, so the text is crisp at a small on-screen size
+    const font = `bold ${15 * scale}px ui-monospace, SFMono-Regular, monospace`;
+    const measure = document.createElement("canvas").getContext("2d")!;
+    measure.font = font;
+    const textW = measure.measureText(text).width;
+    const padX = 12 * scale;
+    const padY = 8 * scale;
+    const w = Math.ceil(textW + padX * 2);
+    const h = Math.ceil(15 * scale + padY * 2);
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    const c = cv.getContext("2d")!;
+    const r = 10 * scale;
+    c.beginPath();
+    c.moveTo(r, 0);
+    c.arcTo(w, 0, w, h, r);
+    c.arcTo(w, h, 0, h, r);
+    c.arcTo(0, h, 0, 0, r);
+    c.arcTo(0, 0, w, 0, r);
+    c.closePath();
+    c.fillStyle = "rgba(12, 18, 24, 0.82)";
+    c.fill();
+    c.lineWidth = 2 * scale;
+    c.strokeStyle = colour;
+    c.stroke();
+    c.fillStyle = "#f8f4e6";
+    c.font = font;
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.fillText(text, w / 2, h / 2 + scale);
+    const tex = new T.CanvasTexture(cv);
+    tex.colorSpace = T.SRGBColorSpace;
+    return { tex, aspect: w / h };
+  }
+
+  /**
+   * The points chip that pops off a struck face: a sprite showing the
+   * ticker and the points just earned, on a short upward path that fades.
    */
   private spawnPopup(b: Butt, gained: number, colour: string) {
-    const tex = tickerLabel(`+${gained}`, colour);
-    const mat = new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const { tex, aspect } = this.chipTexture(`${b.stock.symbol} +${gained}`, colour);
+    // Left to occlude normally: a chip this small has no reason to draw
+    // through the trees and terrain the way the old roundel-sized popup did.
+    const mat = new T.SpriteMaterial({ map: tex, transparent: true });
     const sprite = new T.Sprite(mat);
-    sprite.scale.set(POPUP_SCALE, POPUP_SCALE, 1);
+    sprite.scale.set(POPUP_SCALE * aspect, POPUP_SCALE, 1);
     sprite.position.copy(b.face.getWorldPosition(new T.Vector3()));
     this.scene.add(sprite);
     this.popups.push({ sprite, age: 0 });
@@ -734,12 +827,14 @@ export class World {
       // hit. A share card naming a lucky one-off gold instead of the ticker
       // that actually paid the most over the round would be a wrong answer,
       // not just a different one.
-      const total = (this.symbolPoints.get(b.stock.symbol) ?? 0) + result.gained;
-      this.symbolPoints.set(b.stock.symbol, total);
-      if (total > this.bestSymbolPoints) {
-        this.bestSymbolPoints = total;
-        this.bestSymbol = b.stock.symbol;
-      }
+      const best = bestSymbolAfter(
+        this.symbolPoints,
+        { bestSymbol: this.bestSymbol, bestSymbolPoints: this.bestSymbolPoints },
+        b.stock.symbol,
+        result.gained,
+      );
+      this.bestSymbol = best.bestSymbol;
+      this.bestSymbolPoints = best.bestSymbolPoints;
 
       this.spawnPopup(b, result.gained, ringColourFor(b.hostile));
 
@@ -747,11 +842,11 @@ export class World {
       // standing butt left alive after being scored is exactly the exploit
       // `resolveButtHit`'s `destroyButt` field exists to prevent (see
       // butts.ts). It still rocks on the way down: `stepRock` runs for a
-      // falling butt too.
-      if (result.destroyButt) {
-        b.dead = 0.6;
-        b.rock = 0;
-      }
+      // falling butt too. `applyButtHit` is the same function this file's
+      // tests exercise directly against the real `isTargetable`, so this
+      // call site and the test cannot silently drift apart the way the
+      // inline version once did.
+      applyButtHit(b, result);
       this.onChange(this.snapshot());
       return;
     }
@@ -789,7 +884,7 @@ export class World {
    * last arrow is still on its way back onto the string.
    */
   beginDraw(): void {
-    if (this.over || this.drawing || this.drawn < 1) return;
+    if (this.over || this.drawing || !nockReady(this.drawn)) return;
     this.drawing = true;
     this.draw = 0;
     this.heldSeconds = 0;
@@ -841,9 +936,13 @@ export class World {
    * A thumb is also the thing doing the aiming, so there is no holding a
    * draw without losing the aim along with it — one tap looses immediately,
    * at a solid fixed pull rather than the flinch-quick snap a bare click
-   * would otherwise give you.
+   * would otherwise give you. Gated on the same full nock `fire` itself now
+   * insists on, explicitly and not just by inheriting it — this is exactly
+   * the path that used to walk past `beginDraw`'s stricter gate and loose
+   * through `fire`'s old, looser one.
    */
   touchFire(): boolean {
+    if (!nockReady(this.drawn)) return false;
     return this.fire(TOUCH_DRAW, true);
   }
 
@@ -860,9 +959,15 @@ export class World {
      *
      * A longbow is not a machine gun, and without this the honest answer to
      * every target is to click as fast as the mouse allows. Making you wait
-     * for the nock is what turns aiming into a decision.
+     * for the nock is what turns aiming into a decision. The gate is a full
+     * nock (`nockReady`), the same one `beginDraw` uses — it used to be a
+     * half-nock door of its own (`drawn < 0.5`), which `touchFire` reached by
+     * calling straight in past `beginDraw`, firing a tapping phone every
+     * 210ms against a mouse's ~525ms. Nothing legitimate needs the looser
+     * door: a mouse always clears a full nock anyway on its way to a real
+     * pull, so raising this to match cost it nothing.
      */
-    if (this.drawn < 0.5) return false;
+    if (!nockReady(this.drawn)) return false;
     this.shots += 1;
     /*
      * Matrices first.
@@ -947,8 +1052,12 @@ export class World {
       this.camera.updateProjectionMatrix();
       // The release kick rides on top of the aimed pitch rather than changing
       // it, so it settles back to exactly where you were looking rather than
-      // leaving the view drifted.
-      this.camera.rotation.set(this.pitch - this.kick * RELEASE_KICK, this.yaw, 0, "YXZ");
+      // leaving the view drifted. Reduced motion zeroes the kick itself
+      // rather than skipping this line — `kick` still decays normally, so a
+      // shot still visibly registers through the sound and the bow's own
+      // recoil, it just does not shake the camera to say so.
+      const releaseKick = this.reducedMotion ? 0 : RELEASE_KICK;
+      this.camera.rotation.set(this.pitch - this.kick * releaseKick, this.yaw, 0, "YXZ");
 
       this.renderer.render(this.scene, this.camera);
       since += dt;
@@ -961,6 +1070,17 @@ export class World {
     this.raf = requestAnimationFrame(loop);
   }
 
+  /**
+   * Free everything this round built.
+   *
+   * Used to dispose only the popups and the renderer — every arrow still in
+   * flight, every butt still standing when the round ended, and the whole
+   * wood (roughly 700 scenery geometries and materials, built fresh by
+   * `buildWood` every round) were simply discarded, leaking their GPU-side
+   * resources for as long as the tab stayed open. `renderer.dispose()` frees
+   * the WebGL context; it does not touch a single geometry or texture drawn
+   * through it.
+   */
   stop() {
     this.running = false;
     cancelAnimationFrame(this.raf);
@@ -968,6 +1088,15 @@ export class World {
     // do so — free their textures now rather than leaking them.
     for (const p of this.popups) this.disposePopup(p);
     this.popups = [];
+    for (const a of this.arrows) {
+      this.scene.remove(a.mesh);
+      a.mesh.geometry.dispose();
+      (Array.isArray(a.mesh.material) ? a.mesh.material : [a.mesh.material]).forEach((m) => m.dispose());
+    }
+    this.arrows = [];
+    for (const b of this.butts) disposeButt(b);
+    this.butts = [];
+    disposeWood(this.wood);
     this.renderer.dispose();
   }
 }

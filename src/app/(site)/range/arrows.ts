@@ -39,7 +39,32 @@ export function makeArrowMesh(): T.Mesh {
 export function looseEnemyArrow(scene: T.Scene, b: Butt, at: T.Vector3): Arrow {
   const from = b.group.position.clone().add(new T.Vector3(0, 5.2, 0));
   const to = at.clone();
-  const vel = to.sub(from).normalize().multiplyScalar(rand(34, 42));
+  const speed = rand(34, 42);
+  /*
+   * The ballistic solution for a flat trajectory, not a straight line to
+   * the target.
+   *
+   * Every arrow got gravity in the same change that first wrote this
+   * function's flat, straight-at-the-camera aim — correct the day it was
+   * written, wrong from the moment gravity existed, because the arrow now
+   * drops out from under its own aim line and 1,800 simulated trials
+   * scored zero hits. `0.5 * asin(g * range / v^2)` is the elevation that
+   * sends a shot of this speed exactly `range` before gravity brings it
+   * back to launch height. Beyond what the speed can reach the argument to
+   * `asin` would exceed 1 and hand back NaN, so it is clamped to the
+   * steepest angle the speed can still manage — the best available shot
+   * rather than no shot at all.
+   */
+  const toGround = to.clone().sub(from);
+  const range = Math.hypot(toGround.x, toGround.z);
+  const dir =
+    range > 1e-6
+      ? new T.Vector3(toGround.x / range, 0, toGround.z / range)
+      : new T.Vector3(0, 0, -1);
+  const arg = Math.max(-1, Math.min(1, (GRAVITY * range) / (speed * speed)));
+  const elevation = 0.5 * Math.asin(arg);
+  const vel = dir.multiplyScalar(speed * Math.cos(elevation));
+  vel.y = speed * Math.sin(elevation);
   // Unlit and pale, because an arrow you cannot see coming is not a
   // challenge, it is just damage arriving.
   const mesh = new T.Mesh(
@@ -47,7 +72,20 @@ export function looseEnemyArrow(scene: T.Scene, b: Butt, at: T.Vector3): Arrow {
     new T.MeshBasicMaterial({ color: 0xffd9a0 }),
   );
   mesh.geometry.rotateX(Math.PI / 2);
-  mesh.position.copy(from);
+  /*
+   * Nudged off the face's own plane, along the direction it is about to
+   * fly — not started exactly on it.
+   *
+   * `from` sits exactly on the butt's own face (the face is a zero-thickness
+   * disc centred at this same point), and `stepArrows` raycasts every arrow
+   * against every live face, this one's own included, from the instant it
+   * spawns. A ray whose origin lies on that plane self-intersects at
+   * distance zero on its very first frame — `stuck` before it has gone
+   * anywhere. This was invisible to a fixture without a real face mesh (this
+   * function's own unit tests among them), and would have swallowed every
+   * hostile shot regardless of the ballistics fix above.
+   */
+  mesh.position.copy(from).addScaledVector(vel.clone().normalize(), 0.6);
   scene.add(mesh);
   return { mesh, vel, life: 4, mine: false, stuck: 0, spin: rand(2, 5) };
 }
@@ -109,14 +147,22 @@ export function assistAngle(touch: boolean): number {
  * the rest of the way home over its flight, rather than being teleported onto
  * the target the instant it is loosed. Outside the cone nothing happens at
  * all, so a shot that is genuinely wide still misses.
+ *
+ * The correction rate is `maxAngle` itself, not some multiple of it. A `* 10`
+ * used to live on the step below, which at 60Hz out-corrected gravity's own
+ * pull every single frame (roughly 0.43 degrees of correction against about
+ * 0.17 degrees of fall) — so any shot inside the cone flew a pure-pursuit
+ * line straight onto the face centre regardless of how far off it had been
+ * aimed, or how far away the target stood. That pinned every assisted shot
+ * to the same ring at spawn and cancelled gravity for it besides. The assist
+ * is meant to forgive a near miss over the flight, not fly the arrow home for
+ * you, so the rate it corrects at has to be comparable to the error it is
+ * forgiving, not several times larger.
  */
 export function steerToward(dir: T.Vector3, to: T.Vector3, maxAngle: number, dt: number): void {
   const angle = dir.angleTo(to);
   if (angle <= 1e-6 || angle > maxAngle) return;
-  // Quick relative to the assist angle itself, so a shot that qualifies has
-  // time to actually arrive during a normal flight instead of drifting
-  // toward the target and running out of road.
-  const step = Math.min(angle, maxAngle * 10 * dt);
+  const step = Math.min(angle, maxAngle * dt);
   const axis = dir.clone().cross(to);
   if (axis.lengthSq() < 1e-9) {
     dir.copy(to);
@@ -194,6 +240,9 @@ export function stepArrows(
   // not last frame's — matrixWorld only updates lazily otherwise.
   scene.updateMatrixWorld();
   const { steerable, all, player } = collectTargets(scene);
+  // Faces already credited this call — see the comment at the raycast hit
+  // below for why this replaced a write onto the scene graph itself.
+  const claimedThisTick = new Set<T.Object3D>();
 
   for (const a of arrows) {
     if (a.stuck > 0) {
@@ -210,25 +259,45 @@ export function stepArrows(
     const before = a.mesh.position.clone();
     a.vel.y -= GRAVITY * dt;
 
+    /*
+     * Aim assist steers the heading, not the fall.
+     *
+     * Only the horizontal (x/z) component of velocity is ever nudged here —
+     * `vel.y` is left exactly as gravity just set it, above. Steering used to
+     * turn the full 3D velocity toward the target, which pulled the shot back
+     * up onto the target's height every frame and cancelled gravity outright
+     * for anything inside the cone: the headline feel change of a full-draw
+     * shot dropping at range was invisible whenever the assist engaged. A
+     * flying arrow's drop is real; only where it is headed sideways gets any
+     * help finding home.
+     */
     if (a.mine && steerable.length) {
       const maxAngle = assistAngle(!!a.touch);
-      const dir = a.vel.clone().normalize();
-      let best: T.Object3D | undefined;
-      let bestAngle = maxAngle;
-      for (const obj of steerable) {
-        const to = obj.getWorldPosition(new T.Vector3()).sub(before);
-        if (to.lengthSq() < 1) continue;
-        to.normalize();
-        const angle = dir.angleTo(to);
-        if (angle < bestAngle) {
-          bestAngle = angle;
-          best = obj;
+      const horiz = new T.Vector3(a.vel.x, 0, a.vel.z);
+      const horizSpeed = horiz.length();
+      if (horizSpeed > 1e-6) {
+        horiz.normalize();
+        let best: T.Object3D | undefined;
+        let bestAngle = maxAngle;
+        for (const obj of steerable) {
+          const to = obj.getWorldPosition(new T.Vector3()).sub(before);
+          to.y = 0;
+          if (to.lengthSq() < 1) continue;
+          to.normalize();
+          const angle = horiz.angleTo(to);
+          if (angle < bestAngle) {
+            bestAngle = angle;
+            best = obj;
+          }
         }
-      }
-      if (best) {
-        const to = best.getWorldPosition(new T.Vector3()).sub(before).normalize();
-        steerToward(dir, to, maxAngle, dt);
-        a.vel.copy(dir.multiplyScalar(a.vel.length()));
+        if (best) {
+          const to = best.getWorldPosition(new T.Vector3()).sub(before);
+          to.y = 0;
+          to.normalize();
+          steerToward(horiz, to, maxAngle, dt);
+          a.vel.x = horiz.x * horizSpeed;
+          a.vel.z = horiz.z * horizSpeed;
+        }
       }
     }
 
@@ -273,13 +342,19 @@ export function stepArrows(
          * `steerable`/`all` are snapshotted once at the top of this call, so
          * two arrows landing on the same face in the same tick would both
          * find it here and both fire `onHit` — the second scoring against a
-         * butt the first already killed. Claiming the tag the instant a hit
-         * resolves (rather than waiting for world.ts's once-a-frame refresh,
-         * which runs before this loop, not during it) makes a second arrow
-         * this same tick see the face as already spoken for.
+         * butt the first already killed. `claimedThisTick`, local to this one
+         * call, is the claim; it used to be `obj.userData.arrowTarget = false`
+         * written straight onto the scene graph, a handshake with world.ts (it
+         * re-arms the flag from the butt's own dead/out state every frame)
+         * that only worked because every credited hit destroys its target —
+         * which is exactly why that coupling was a Critical, not a balance
+         * tweak, the day a hit stopped always destroying. The `userData`
+         * tagging that marks a face targetable in the first place is
+         * untouched here; only the once-per-tick claim moved off it.
          */
-        const alreadyClaimed = obj.userData.arrowTarget === false;
-        if (obj.userData.arrowTarget) obj.userData.arrowTarget = false;
+        const isTarget = !!obj.userData.arrowTarget;
+        const alreadyClaimed = isTarget && claimedThisTick.has(obj);
+        if (isTarget) claimedThisTick.add(obj);
         a.mesh.position.copy(hit.point);
         a.stuck = dt;
         if (!alreadyClaimed) onHit(a, obj, hit.point.clone());
