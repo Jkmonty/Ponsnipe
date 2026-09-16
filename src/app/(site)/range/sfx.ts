@@ -58,6 +58,17 @@ const KIT: Record<string, number> = {
  * on a high-refresh display. */
 const CREAK_INTERVAL = 0.035;
 
+/** The same throttle as `CREAK_INTERVAL`, for the same reason: `whistle()`
+ * is called once per rendered frame a hostile arrow is in flight, and this
+ * bounds the grain count rather than the audible result, which is one
+ * continuous tone from the overlap. */
+const WHISTLE_INTERVAL = 0.035;
+/** Distance, in world units, at or beyond which the whistle sits at its
+ * lowest, quietest pitch. The far rank fires from about 40 units out, so
+ * this gives a far shot room to actually climb over its whole flight
+ * instead of starting most of the way up the register already. */
+const WHISTLE_MAX_DISTANCE = 45;
+
 /** The wind's steady-state level, and how long it takes to reach or leave it.
  * Deliberately under every effect's quietest layer (the thunk and miss noise
  * bursts sit around 0.1) so it can never read as a sound in its own right. */
@@ -87,6 +98,47 @@ const DRONE_PARTIALS: readonly (readonly [number, number])[] = [
   [110, 0.18], // octave
 ];
 
+/**
+ * How the music loop tightens for wave 2 — Phase 2 built this loop with the
+ * comment that it "tightens for wave 2" and then deliberately left that
+ * behaviour unwired, since waves did not exist yet. `World.step` now calls
+ * `Sfx.setWave` once per wave change with `waves.ts`'s own `wave` number,
+ * and this is the one thing that call changes: the already-playing
+ * `AudioBufferSourceNode`'s own `playbackRate`, ramped rather than snapped.
+ *
+ * This is the same loop, not a second layer under it — `musicStart` renders
+ * `DRONE_PARTIALS` into one buffer exactly once per round and plays it back
+ * through one node throughout; `setWave` only ever touches that node's own
+ * `playbackRate` AudioParam. A resample is also the one way to "tighten" a
+ * fixed buffer without decoding or re-synthesising anything: every partial
+ * in `DRONE_PARTIALS` rises by the same ratio (root 55Hz becomes
+ * 55 * MUSIC_TIGHTEN_RATE), and the 8-second loop is read in 8 /
+ * MUSIC_TIGHTEN_RATE seconds — audibly faster and higher, not merely
+ * louder. The loop's click-free seam (see `LOOP_SECONDS`'s own comment)
+ * survives this unchanged: `loop = true` and a non-1 `playbackRate` both
+ * read the same underlying buffer, whose first and last samples already
+ * match in value and slope, so scaling *how fast* it is read cannot
+ * introduce a seam that scaling *what* is read would not already have.
+ *
+ * `musicRateForWave` is exported and kept a plain function of one number
+ * specifically so it can be asserted in `tests/range.test.ts` without an
+ * `AudioContext` — nobody on this project can hear whether wave 2 actually
+ * sounds tighter, so what is checked instead is the number the tightening
+ * is built from: wave 2's rate must exceed every earlier wave's, by a
+ * margin large enough to be a deliberate change and not floating-point
+ * noise, and the resulting root frequency and loop duration are worked out
+ * arithmetically in that test rather than asserted by ear.
+ */
+const MUSIC_BASE_RATE = 1;
+const MUSIC_TIGHTEN_RATE = 1.18;
+/** How long the ramp between rates takes, so a wave boundary is heard as a
+    tightening over a second or so rather than a jump-cut in pitch. */
+const MUSIC_RATE_RAMP = 1.2;
+
+export function musicRateForWave(wave: number): number {
+  return wave >= 2 ? MUSIC_TIGHTEN_RATE : MUSIC_BASE_RATE;
+}
+
 export class Sfx {
   private ctx: AudioContext | null = null;
   /** One bus, so the whole game can be ducked or muted in one place. */
@@ -103,6 +155,9 @@ export class Sfx {
    * a fresh context's `currentTime` is 0, the same as this field's default
    * would otherwise be. */
   private lastCreak = -Infinity;
+  /** The last `whistle()` grain's start time, for `WHISTLE_INTERVAL` — same
+   * reasoning and the same -Infinity-not-0 trap as `lastCreak` above. */
+  private lastWhistle = -Infinity;
   private wind: { src: AudioBufferSourceNode; lfo: OscillatorNode; gain: GainNode } | null = null;
   private music: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   /** The rendered drone, built once offline and reused by every round. */
@@ -343,6 +398,28 @@ export class Sfx {
     this.noise(t, 0.05, level, centre * 0.85, centre * 1.15, "bandpass", 3.5);
   }
 
+  /**
+   * The incoming whistle of a hostile arrow, called every frame one is in
+   * flight (see `World.step`, right after `stepArrows`) with its real,
+   * current distance to the player. This is the first sound in this project
+   * tuned by something in the world rather than a fixed envelope — a canned
+   * sweep started at launch cannot know how far a shot actually has to
+   * travel, and a far-rank arrow crosses roughly half again the ground a
+   * near-rank one does, so distance, not elapsed time, is what has to drive
+   * the climb. Throttled the same way `creak` is: grains overlap into one
+   * continuous tone rather than flooding the graph with one per frame.
+   */
+  whistle(distance: number) {
+    if (!this.ctx || this.muted) return;
+    const t = this.t;
+    if (t - this.lastWhistle < WHISTLE_INTERVAL) return;
+    this.lastWhistle = t;
+    const near = 1 - Math.max(0, Math.min(1, distance / WHISTLE_MAX_DISTANCE));
+    const freq = 480 + near * 1500; // a low pass-by out at range, climbing toward a shriek as it closes
+    const level = 0.05 + near * 0.1; // always under the marker, loudest right as it arrives
+    this.tone(t, freq, freq * 1.08, 0.08, level, "sine", 0.004);
+  }
+
   /** A miss: the shaft going past into the trees. */
   miss() {
     if (!this.ctx) return;
@@ -564,6 +641,25 @@ export class Sfx {
     m.gain.gain.setValueAtTime(Math.max(0.0001, m.gain.gain.value), t);
     m.gain.gain.exponentialRampToValueAtTime(0.0001, t + LOOP_FADE);
     m.src.stop(t + LOOP_FADE + 0.05);
+  }
+
+  /**
+   * Cue the music loop's own tightening for the round's current wave — see
+   * `musicRateForWave`'s own comment for what this changes and why. A no-op
+   * before the loop has actually started (`musicStart`'s offline render is
+   * asynchronous, so a wave-0-to-1 boundary crossed in the first moment of
+   * a round could in principle land before `this.music` exists) rather than
+   * queuing anything: `World` calls this again on every wave change, not
+   * only once, so the next call after the loop starts catches it.
+   */
+  setWave(wave: number) {
+    if (!this.ctx || !this.music) return;
+    const target = musicRateForWave(wave);
+    const rate = this.music.src.playbackRate;
+    const t = this.ctx.currentTime;
+    rate.cancelScheduledValues(t);
+    rate.setValueAtTime(rate.value, t);
+    rate.linearRampToValueAtTime(target, t + MUSIC_RATE_RAMP);
   }
 
   close() {

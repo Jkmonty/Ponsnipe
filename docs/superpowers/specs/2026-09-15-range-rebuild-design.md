@@ -21,7 +21,7 @@ These came out of the brainstorm and are not open.
 |---|---|
 | Platforms | Desktop and phone both |
 | Scope this round | Feel, danger, ending and look, all four |
-| Round shape | Unchanged: 60 seconds, three arrows taken ends it |
+| Round shape | Unchanged: 60 seconds, six arrows taken ends it (the spec previously said three; the game has always had 100 health at 18 a hit, which is six, and the code is what ships) |
 | Light | Golden hour: low sun, long shadows, warm haze |
 | Desktop shot | Hold to draw, release to loose; draw sets power |
 | Phone shot | Tap to fire at a fixed draw; drag to aim |
@@ -151,7 +151,7 @@ safe shot and a good one is real.
 | Swing | Hangs from a branch and swings through a shallow arc |
 
 **Incoming arrows.** A red butt winds up over 900 ms with a visible tell, the
-face turning to you and a red glow rising, then looses an arrow at 30 m/s with
+face turning to you and a red glow rising, then looses an arrow at 34-42 m/s (the speed the game has always used; the spec previously said 30, which never matched the code) with
 a whistle that rises as it nears. You have the flight time to move. Today the
 hit simply happens; this is the change that makes being shot at a thing you
 play against rather than a thing that occurs.
@@ -249,7 +249,7 @@ Every piece degrades rather than blocking.
 | A sound file fails | That sound is silent; the round plays. |
 | Targets are unavailable | The existing "no stock targets" state, unchanged. |
 | The clipboard is refused | The share image downloads instead. |
-| Reduced motion is set | Attract drift, slow motion and screen shake are off; the game plays. |
+| Reduced motion is set | Attract drift, screen shake and the last arrow's slow-motion camera are off; the game plays. The clock's own last two seconds still slow down for everyone (this row previously said slow motion was off outright, which was written before the ending had two branches to tell apart). That tail moves no camera, and it is time the player is still shooting in: the nock and the pull run on the slowed clock too, so turning it off for one setting and not the other would let an accessibility flag change how many arrows a round gets away, and so the score it posts. |
 
 ## Testing
 

@@ -175,9 +175,13 @@ export function steerToward(dir: T.Vector3, to: T.Vector3, maxAngle: number, dt:
 /**
  * Which of a scene's objects an arrow can end its flight in.
  *
- * Tagged at runtime by `world.ts` — a live butt's face with `arrowTarget`,
- * the ground with `arrowGround` — rather than this module reaching into
- * `butts.ts` or `scene.ts` to pick them out of the graph itself.
+ * Tagged at runtime rather than this module reaching into `butts.ts` or
+ * `scene.ts` to pick them out of the graph itself: the ground carries
+ * `arrowGround`, set once by `world.ts`; a butt's face carries
+ * `arrowTarget`, set by `world.ts` when it spawns and then rewritten by
+ * `stepButt` every frame from the butt's own state, so that what is read
+ * here is what is true this frame — a risen, unstruck butt and nothing
+ * else.
  */
 function collectTargets(scene: T.Scene): { steerable: T.Object3D[]; all: T.Object3D[]; player?: T.Object3D } {
   const steerable: T.Object3D[] = [];
@@ -220,12 +224,23 @@ function disposeArrow(scene: T.Scene, mesh: T.Mesh): void {
  * when given, is where in world space the arrow actually struck — a real
  * object hit always carries one; the ground-swallowed miss cases do not,
  * because there is nothing there worth scoring against a position on.
+ *
+ * `frozen`, when given, names arrows this frame simply does not happen to:
+ * they do not move, fall, fade, expire or collide with anything, and
+ * `onHit` cannot fire for them. They are not removed either — a frozen
+ * arrow is still in the list, at exactly the position, velocity, `life` and
+ * `stuck` it had when the freeze began, and resumes untouched the first
+ * frame it is no longer named. `world.ts` uses it for one thing (hostile
+ * arrows, for the duration of the ending — see `step`); this module does
+ * not know or care why, which is why it takes a predicate rather than a
+ * flag about whose arrow it is.
  */
 export function stepArrows(
   arrows: Arrow[],
   dt: number,
   scene: T.Scene,
   onHit: (a: Arrow, hit: T.Object3D, point?: T.Vector3) => void,
+  frozen?: (a: Arrow) => boolean,
 ): void {
   // Oldest first, so a heavy volley cannot pile the array past the cap. Real
   // flight time keeps far more arrows alive at once than the old instant hit
@@ -245,6 +260,11 @@ export function stepArrows(
   const claimedThisTick = new Set<T.Object3D>();
 
   for (const a of arrows) {
+    // Before anything else this frame would touch it, the stuck fade below
+    // included. The removal pass at the bottom needs no guard of its own:
+    // it retires an arrow on `stuck` or `life`, and a frozen one advances
+    // neither, so it cannot come due while it is held.
+    if (frozen?.(a)) continue;
     if (a.stuck > 0) {
       a.stuck += dt;
       const mat = a.mesh.material as T.Material & { opacity: number; transparent: boolean };
@@ -344,13 +364,21 @@ export function stepArrows(
          * find it here and both fire `onHit` — the second scoring against a
          * butt the first already killed. `claimedThisTick`, local to this one
          * call, is the claim; it used to be `obj.userData.arrowTarget = false`
-         * written straight onto the scene graph, a handshake with world.ts (it
-         * re-arms the flag from the butt's own dead/out state every frame)
-         * that only worked because every credited hit destroys its target —
-         * which is exactly why that coupling was a Critical, not a balance
-         * tweak, the day a hit stopped always destroying. The `userData`
-         * tagging that marks a face targetable in the first place is
-         * untouched here; only the once-per-tick claim moved off it.
+         * written straight onto the scene graph, a handshake with the butt
+         * loop that only worked because every credited hit destroys its
+         * target — which is exactly why that coupling was a Critical, not a
+         * balance tweak, the day a hit stopped always destroying. The
+         * `userData` tagging that marks a face targetable in the first place
+         * is untouched here; only the once-per-tick claim moved off it.
+         *
+         * What that handshake rested on, and what was written here as if it
+         * were already true: `stepButt` re-arming the flag from the butt's
+         * own dead/out state every frame. It did not do that for a *dead*
+         * butt — its death branch returned first — which is the only state
+         * in which the flag and the butt could disagree, and so the only
+         * one that mattered. A destroyed butt stayed a scoring target for
+         * the whole of its fall. `stepButt` now re-arms on that path too,
+         * which is what makes the sentence above describe the code.
          */
         const isTarget = !!obj.userData.arrowTarget;
         const alreadyClaimed = isTarget && claimedThisTick.has(obj);

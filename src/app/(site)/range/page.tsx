@@ -9,7 +9,10 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Butt from "../Butt";
-import { World, ROUND_MS, type Snapshot, type Stock } from "./world";
+import { World, ROUND_MS, accuracyPct, type Snapshot, type Stock } from "./world";
+import { ringName } from "./butts";
+import { makeSurface } from "./render";
+import { drawShare, shareText, type Run } from "./share";
 import { Sfx } from "./sfx";
 
 interface BoardRow {
@@ -19,6 +22,18 @@ interface BoardRow {
 }
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+
+/** The finished round, as the card shows it — the six numbers on screen and
+    nothing else. `share.ts` is handed this rather than the snapshot, so it
+    never sees the clock, the health or the wave. */
+const runOf = (s: Snapshot): Run => ({
+  points: s.points,
+  hits: s.hits,
+  shots: s.shots,
+  streak: s.streak,
+  bestRing: s.bestRing,
+  bestSymbol: s.bestSymbol,
+});
 
 /** "Mon 15 Sep · 00:00 UTC". Always a Monday midnight by construction. Kept
     in step with the same label on the hero's board card. */
@@ -48,6 +63,21 @@ export default function ArcadePage() {
   const [endsAt, setEndsAt] = useState<number | null>(null);
   const [wallet, setWallet] = useState("");
   const [posted, setPosted] = useState<string | null>(null);
+  /** What became of the share image. `label` replaces the button's own,
+      which is why the clipboard path costs the card no height at all.
+      `note` and `line` are alternatives and never both at once. `note` is a
+      sentence, for the paths where a button's worth of words is not enough —
+      the download path that did get the text onto the clipboard, and the one
+      case where nothing could be drawn. `line` is the text itself, printed
+      only where the clipboard took neither the image nor the text, and it
+      replaces the sentence rather than following it: the overlay that clips
+      this card has room for one row below the buttons at phone width, not
+      two (see `.arc-paste` in site.css). */
+  const [shared, setShared] = useState<{ label: string; note?: string; line?: string } | null>(null);
+  /** True from the press until the image has been handed over. Drawing it
+      waits on the fonts and the mark, which on a cold cache is long enough
+      to be worth saying. */
+  const [drawing, setDrawing] = useState(false);
   /** Whether the browser granted pointer lock. Aiming differs if it did not. */
   const [locked, setLocked] = useState(true);
   /** False only if building the `World` threw — no WebGL context, a driver
@@ -88,7 +118,7 @@ export default function ArcadePage() {
     const r = el.getBoundingClientRect();
     cv.style.width = `${r.width}px`;
     cv.style.height = `${Math.max(340, r.width * 0.58)}px`;
-    gameRef.current?.resize();
+    gameRef.current?.resize(cv.clientWidth, cv.clientHeight);
   }, []);
 
   useEffect(() => {
@@ -112,22 +142,29 @@ export default function ArcadePage() {
     if (!cv || !stocks || gameRef.current) return;
     fit();
     /*
-     * A missing WebGL context throws out of `new T.WebGLRenderer` — no
-     * WebGL, a driver blocklist, an Android WebView, too many live contexts
-     * already open. This effect is where that throw would otherwise land:
-     * React sends an effect's throw to the nearest error boundary, and there
-     * is no `error.tsx` under this route, so the default boundary would
-     * replace the whole page — leaderboard included. Catching it here and
-     * falling back to a line of text is what keeps the board standing.
+     * A missing WebGL context throws out of `new T.WebGLRenderer`, inside
+     * `makeSurface` — no WebGL, a driver blocklist, an Android WebView, too
+     * many live contexts already open. This effect is where that throw
+     * would otherwise land: React sends an effect's throw to the nearest
+     * error boundary, and there is no `error.tsx` under this route, so the
+     * default boundary would replace the whole page — leaderboard included.
+     * Catching it here and falling back to a line of text is what keeps the
+     * board standing.
      */
     let g: World;
     try {
-      g = new World(cv, stocks, setS);
+      g = new World(makeSurface(cv), stocks, setS);
     } catch {
       setWebgl(false);
       return;
     }
     gameRef.current = g;
+    // `fit()` above already gave the canvas its real CSS box; hand World
+    // those same measurements now that it exists, rather than the 960×560
+    // default it builds with — the one resize a fresh World used to do
+    // itself, reading `canvas.clientWidth` at the end of its own
+    // constructor.
+    g.resize(cv.clientWidth, cv.clientHeight);
     /*
      * A handle on the running game.
      *
@@ -147,6 +184,7 @@ export default function ArcadePage() {
     if (!cv || !g || !stocks?.length) return;
     fit();
     setPosted(null);
+    setShared(null);
     setLocked(true);
     // Audio can only start from a gesture, and this is one.
     sfxRef.current ??= new Sfx();
@@ -176,6 +214,99 @@ export default function ArcadePage() {
   };
 
   /*
+   * The round, as an image worth posting.
+   *
+   * Nothing leaves the browser: `drawShare` paints a 1200×675 canvas here
+   * and the result is handed straight to the player. The spec's Failure
+   * table pins what happens when the clipboard says no — the image
+   * downloads instead, it does not error — so both paths below actually
+   * finish, and the one case where neither can (a browser that will not
+   * encode a canvas) says so rather than leaving a dead button.
+   */
+  const share = async () => {
+    if (!s) return;
+    const run = runOf(s);
+    const line = shareText(run);
+    setDrawing(true);
+    setShared(null);
+    /*
+     * The image as a promise, not an awaited blob.
+     *
+     * `ClipboardItem` accepts a `Promise<Blob>` precisely so the write can
+     * be issued inside the click's own transient activation: Safari refuses
+     * a clipboard write that only begins after an `await`, and drawing has
+     * to wait for `document.fonts` and the mark. The no-op `.catch` below
+     * is not the error handling — the `catch` block is — it only marks the
+     * rejection handled, since the clipboard branch can throw before
+     * anything awaits this.
+     */
+    const png = (async () => {
+      const cv = document.createElement("canvas");
+      await drawShare(cv, run);
+      const blob = await new Promise<Blob | null>((r) => cv.toBlob(r, "image/png"));
+      if (!blob) throw new Error("this browser would not encode the canvas");
+      return blob;
+    })();
+    png.catch(() => {});
+    try {
+      // Not every browser that has a clipboard has an image on it, and an
+      // insecure context has none at all. Fall through to the download
+      // rather than call into undefined.
+      if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
+        throw new Error("this browser has no clipboard image support");
+      }
+      // The text goes in the same item as the image, which is what makes it
+      // "prefilled": one paste into a post puts both there.
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "image/png": png,
+          "text/plain": new Blob([line], { type: "text/plain" }),
+        }),
+      ]);
+      setShared({ label: "Copied" });
+    } catch {
+      const blob = await png.then(
+        (b) => b,
+        () => null,
+      );
+      if (!blob) {
+        setShared({ label: "Share", note: "This browser would not draw that card." });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `sherwood-${run.points}.png`;
+        // In the document and straight back out: an anchor that is actually
+        // in the tree when it is clicked is the form that has always worked
+        // everywhere, and it costs one node for one tick.
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // Long enough for the download to have started, and not a leak for
+        // the rest of the session.
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        /*
+         * The line still has to be handed over somehow, and text on the
+         * clipboard is more widely allowed than an image — a browser that
+         * refuses `write` may still honour `writeText`. Only when that is
+         * refused too is the line printed on the card for the player to
+         * select, and then it is printed instead of the sentence rather than
+         * under it: this is the path with the least room left, so the row it
+         * costs has to be the text and not a description of the text.
+         */
+        try {
+          await navigator.clipboard.writeText(line);
+          setShared({ label: "Saved", note: "In your downloads. The line to paste is copied." });
+        } catch {
+          setShared({ label: "Saved", line });
+        }
+      }
+    } finally {
+      setDrawing(false);
+    }
+  };
+
+  /*
    * Believe the browser, not the request.
    *
    * requestPointerLock can be refused, or silently never take effect, and the
@@ -193,6 +324,55 @@ export default function ArcadePage() {
     };
     document.addEventListener("pointerlockchange", sync);
     return () => document.removeEventListener("pointerlockchange", sync);
+  }, []);
+
+  /*
+   * Sidestep: A and D, or the left/right arrow keys — the answer to an
+   * incoming arrow on desktop. Both keys are tracked in one `Set` rather
+   * than each handler setting the game's direction on its own, so letting
+   * go of one while the other is still held keeps moving the right way
+   * instead of stopping dead. `World.setStrafe` itself is what actually
+   * gates this to a live round (see its own doc comment), so this effect
+   * does not have to.
+   */
+  useEffect(() => {
+    const left = new Set(["a", "arrowleft"]);
+    const right = new Set(["d", "arrowright"]);
+    const held = new Set<string>();
+    const apply = () => {
+      let l = false;
+      let r = false;
+      for (const k of held) {
+        if (left.has(k)) l = true;
+        if (right.has(k)) r = true;
+      }
+      gameRef.current?.setStrafe(l === r ? 0 : l ? -1 : 1);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (!left.has(k) && !right.has(k)) return;
+      held.add(k);
+      apply();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      held.delete(e.key.toLowerCase());
+      apply();
+    };
+    // A window that loses focus mid-hold (alt-tab, a devtools click) never
+    // delivers the matching keyup — without this, the sidestep can be left
+    // pinned to one side for the rest of the round.
+    const onBlur = () => {
+      held.clear();
+      apply();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
   }, []);
 
   useEffect(
@@ -214,6 +394,28 @@ export default function ArcadePage() {
    * left open on a phone in a pocket. `World.setActive` only starts or stops
    * the render loop — `runLoop` is idempotent and `stop()` remains the one
    * real teardown, called only on unmount above.
+   *
+   * The decision this carries, ruled and written down rather than left
+   * implicit, because it has been an open question since this phase's
+   * pre-flight scan: **the pause stays, and it pauses a live round.**
+   *
+   * Scrolling the stage out of view freezes the round clock along with
+   * everything else, so a sixty-second round can be held open for as long
+   * as someone likes. That cannot inflate a score. `runLoop` resets
+   * `this.last` to `performance.now()` the moment it resumes, so the first
+   * frame back is an ordinary `dt` and not the whole gap — and `dt` is
+   * capped at 0.05 besides. Nothing accrues while it is stopped: no clock,
+   * no spawns, no arrows, no hostile fire.
+   *
+   * So the trade is between someone holding a round open and someone
+   * forfeiting a round because they scrolled down to look at the board.
+   * The second is a worse outcome, and it is the far likelier one on a
+   * phone, where the board sits directly under the stage. Holding a round
+   * open buys nothing: the clock is frozen, so there is no extra time to
+   * shoot in.
+   *
+   * It now freezes the ending too — the last arrow hangs mid-flight until
+   * the stage comes back. Same trade, same answer.
    */
   useEffect(() => {
     const el = holder.current;
@@ -424,7 +626,19 @@ export default function ArcadePage() {
                     <>
                       <h1 className="display arc-card-title">{s.points.toLocaleString()}</h1>
                       <p className="arc-card-rules">
-                        {s.hits} hits from {s.shots} shots
+                        {s.hits} hits from {s.shots} shots · {accuracyPct(s.hits, s.shots)}% accuracy
+                      </p>
+                      {/*
+                        The rest of the round's own story — Phase 1 and 2's
+                        snapshot already carried every one of these; this is
+                        the first place any of them is shown. Best ticker
+                        only appears once one actually exists (a round with
+                        zero hits never sets it — see `bestSymbol`'s own doc
+                        comment on `Snapshot`).
+                      */}
+                      <p className="arc-card-rules">
+                        Longest streak {s.streak} · best ring {ringName(s.bestRing)}
+                        {s.bestSymbol && <> · best ticker {s.bestSymbol}</>}
                       </p>
                       {posted && <p className="arc-posted">{posted}</p>}
                     </>
@@ -434,7 +648,7 @@ export default function ArcadePage() {
                       <p className="arc-card-rules">
                         Move to look, click to loose, hold right to raise the scope. Green
                         butts are shares up today and worth points. Red ones are down on
-                        the day, and they shoot back — three arrows and you are finished.
+                        the day, and they shoot back — six arrows and you are finished.
                       </p>
                     </>
                   )}
@@ -467,11 +681,59 @@ export default function ArcadePage() {
                     </div>
                   )}
 
-                  <button className="btn btn-primary btn-lg" onClick={play}>
-                    {s?.over ? "Again" : "Draw the bow"}
-                  </button>
+                  {/*
+                    Again and Share on one row. The card already stands
+                    taller than the fold at 900×600 and is read by scrolling
+                    there, so the share control goes where it costs no height
+                    at all rather than under the button, where it would cost
+                    another button's height and a gap.
+                  */}
+                  <div className="arc-actions">
+                    <button className="btn btn-primary btn-lg" onClick={play}>
+                      {s?.over ? "Again" : "Draw the bow"}
+                    </button>
+                    {s?.over && (
+                      <button className="btn btn-lg ghost" onClick={() => void share()} disabled={drawing}>
+                        {drawing ? "Drawing…" : (shared?.label ?? "Share")}
+                      </button>
+                    )}
+                  </div>
+                  {/*
+                    Only where there is still something for the player to do:
+                    the clipboard path says "Copied" on the button itself and
+                    sets neither of these, so the common case leaves the card
+                    exactly the height it was before this control existed.
+                  */}
+                  {shared?.note && (
+                    <p className="arc-share" aria-live="polite">
+                      {shared.note}
+                    </p>
+                  )}
+                  {/*
+                    The line to paste, where the clipboard would take neither
+                    the image nor the text. One row: a caption beside the
+                    field rather than over it, and the line itself scrolling
+                    sideways rather than wrapping, because what clips this
+                    card is the overlay's own client box, and at 375×812
+                    that leaves 43px under the button row — see `.arc-paste`
+                    in site.css for the measurements. `tabIndex` because the
+                    field scrolls, and a scrollable box that cannot be focused
+                    cannot be read from a keyboard; `user-select: all` in the
+                    stylesheet is what still puts the whole line on the
+                    clipboard from one click, however little of it shows.
+                  */}
+                  {shared?.line && (
+                    <p className="arc-paste" aria-live="polite">
+                      <span className="lab arc-paste-tag">Paste</span>
+                      <span className="arc-share-line" tabIndex={0}>
+                        {shared.line}
+                      </span>
+                    </p>
+                  )}
                   <p className="arc-controls mono">
-                    <span className="ctl-mouse">HOLD TO DRAW · RELEASE TO LOOSE · RIGHT-CLICK FOR THE SCOPE</span>
+                    <span className="ctl-mouse">
+                      HOLD TO DRAW · RELEASE TO LOOSE · RIGHT-CLICK FOR THE SCOPE · A/D TO SIDESTEP
+                    </span>
                     <span className="ctl-touch">TAP TO FIRE · DRAG TO AIM</span>
                   </p>
                 </div>

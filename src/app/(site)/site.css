@@ -420,6 +420,80 @@
 .site .arc-card-title { margin: 0; font-size: clamp(24px, 3.4vw, 32px); }
 .site .arc-card-rules { margin: 0; color: var(--moss); font-size: 14px; line-height: 1.5; max-width: 42ch; }
 
+/* The results card's two actions, side by side.
+   A row rather than a second button below: the card already stands taller
+   than the fold at 900×600 and is read by scrolling there, so a share
+   control that added another button's height and a gap would have made a
+   known problem worse. One button or two, this row is the same height. */
+.site .arc-actions { display: flex; gap: var(--sp-3); width: 100%; }
+.site .arc-actions .btn-lg { flex: 1; min-width: 0; }
+
+/* What became of the image, on the paths where the button's own label is not
+   the whole story. The clipboard path sets no note at all, so the card is
+   exactly as tall as it was before this control existed. */
+.site .arc-share { margin: 0; color: var(--moss); font-size: 12.5px; line-height: 1.5; max-width: 42ch; }
+
+/* The line to paste, on the one path that has to print it: the clipboard
+   refused the image and then refused the text too.
+
+   One row, and the caption beside the field rather than above it, because
+   the box that clips this card is the overlay and not the viewport. At
+   375x812 the overlay's client box is 340px tall and the results card
+   already stands 323px before anything is printed here, so 43px is left
+   between the bottom of the button row and the overlay's bottom edge, and
+   the card's own 6px gap takes the first of it. A sentence on its own line
+   above a block that wrapped the line over three cost 97px, so the text sat
+   53px below that edge — reachable, but only by dragging inside a container
+   whose scrollbar nobody would think to look for. This row costs 29px and
+   ends 8px above the edge. The sentence the download path prints is dropped
+   on this path rather than shortened: there is room for one row here, and
+   the row has to be the text.
+
+   (39px, not 29, wherever the platform gives the box a scrollbar that takes
+   space rather than floating over it — which is desktop, where the card has
+   the room for it.)
+
+   `contain: inline-size` is load-bearing, and is what pays for the nowrap.
+   A nowrap box's intrinsic width is the whole line; .arc-overlay's grid
+   track is auto-sized and .arc-card is `width: min(480px, 100%)` measured
+   against that track, so the line's width feeds straight back into the
+   card's. Measured at 375px without containment: the card 480px and this
+   row 722px, both wider than the phone they are on. With it, 351px and
+   325px. The wrapped block this replaces measured 351px here too, which is
+   why nothing needed containment before.
+
+   `user-select: all` is what keeps the whole line copyable however little of
+   it is on screen: one click or tap selects every character, not the visible
+   ones. The sideways scroll is only for reading it, and page.tsx puts
+   tabindex on the field so a keyboard can do that too. */
+.site .arc-paste {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  text-align: left;
+}
+.site .arc-paste-tag { flex: none; }
+.site .arc-share-line {
+  flex: 1 1 0%;
+  min-width: 0;
+  contain: inline-size;
+  padding: 5px 8px;
+  border-radius: var(--r-ctl);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--hair-w);
+  font-family: var(--mono-site);
+  font-size: 11.5px;
+  color: var(--moon);
+  white-space: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  user-select: all;
+}
+
 /* Today's targets, as chips: a ticker and its day move, the same green/red
    rule the hero's pins use. */
 .site .arc-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
@@ -534,10 +608,14 @@
 
   /* The card at phone width: less padding and smaller type, nothing wider
      than the viewport so the page never gains a sideways scrollbar — and
-     tight enough top to bottom that it sits inside the stage's own height
-     without needing the overlay's scroll as anything but a safety net.
-     align-content: start now lives on the unconditional base rule above, so
-     it does not need repeating here. */
+     as tight top to bottom as it can be made, because at 375 the stage is
+     only about 340px tall and the card does not quite fit inside it. The
+     overflow is small (single figures with nothing printed, tens of pixels
+     once a share result is) and what hangs below is the controls line, not
+     a control; the overlay's own scroll covers it. Alignment is not set
+     here: `safe center` on the unconditional base rule above is what keeps
+     the card's top edge reachable in that band, and repeating or
+     overriding it here is what this comment exists to stop. */
   .site .arc-overlay { padding: var(--sp-3); }
   .site .arc-card { padding: var(--sp-4) var(--sp-3); gap: 6px; }
   .site .arc-card-title { font-size: 21px; }

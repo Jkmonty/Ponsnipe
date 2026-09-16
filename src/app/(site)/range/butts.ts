@@ -2,6 +2,42 @@ import * as T from "three";
 import type { Stock } from "./world";
 import { rand } from "./rand";
 
+/**
+ * The four ways a target can hold itself up, chosen once when it rises
+ * (`pickBehaviour`) and read every frame after by `stepButt`, switched on
+ * `b.behaviour`:
+ *
+ * - `stand`: rises and stays, as every butt used to.
+ * - `drift`: tracks sideways along its rank, bouncing back at the edge —
+ *   the motion every butt had unconditionally before this type existed.
+ * - `peek`: rises for `PEEK_WINDOW` seconds and drops, whether hit or not.
+ * - `swing`: hangs from a branch and swings through a shallow, bounded arc.
+ */
+export type Behaviour = "stand" | "drift" | "peek" | "swing";
+
+/**
+ * The two ranks a target can rise in, replacing `LANES` as what decides a
+ * butt's own depth (see the comment on `LANES` below for why). `z` is where
+ * it stands, `faceScale` how large its face is drawn and hit-tested against,
+ * `bonus` the multiplier `resolveButtHit` applies on top of the existing
+ * ring multiplier — a far hit is smaller to land and worth twice as much.
+ */
+export type Rank = "near" | "far";
+
+export const RANKS: Record<Rank, { z: number; faceScale: number; bonus: number }> = {
+  near: { z: -22, faceScale: 1, bonus: 1 },
+  far: { z: -40, faceScale: 0.5, bonus: 2 },
+};
+
+/** How long a `peek` stays fully up before it drops on its own — hit or not. */
+export const PEEK_WINDOW = 1.8;
+
+/** How far a `swing` travels either side of the branch it hangs from. */
+export const SWING_AMPLITUDE = 4.5;
+
+/** How fast a `swing` sweeps through its arc, in radians per second. */
+export const SWING_SPEED = 1.6;
+
 export interface Butt {
   group: T.Group;
   stock: Stock;
@@ -9,13 +45,42 @@ export interface Butt {
   /** The disc that gets shot. Raycasting against the whole group would let a
       post or a leg count as a hit. */
   face: T.Mesh;
-  lane: number;
+  /** The rim ring, exposed so `world.ts` can brighten its own emissive glow
+      during a hostile wind-up (see `winding`/`windUp` below) without
+      reaching into `group.children` by position. */
+  rim: T.Mesh;
+  /** Which rank (near or far) the butt rose in — decides its depth, face
+      size and the score bonus `resolveButtHit` applies. Replaces `lane` as
+      what `stepButt` reads to place a butt's own z. */
+  rank: Rank;
+  /** Chosen once at spawn by `pickBehaviour`; read every frame by `stepButt`
+      to decide how (or whether) the butt moves sideways. */
+  behaviour: Behaviour;
   x: number;
+  /** The x a `swing` hangs from and swings around — its spawn position,
+      untouched afterward, so the arc always stays centred on the branch. */
+  originX: number;
   vx: number;
+  /** Elapsed time a `swing` has been swinging, feeding its own sine — kept
+      separate from any other timer so pausing or resuming other behaviours
+      never perturbs its phase. */
+  swingT: number;
   out: number;
   rising: boolean;
   dwell: number;
   cooldown: number;
+  /**
+   * Whether a hostile butt is currently in the visible wind-up before it
+   * looses a shot — the face turning to the player and the rim's glow
+   * rising over `TELL_MS` (see `world.ts`, which owns firing and so owns
+   * advancing this and `windUp` too; this file only carries the fields,
+   * the same split `stepButt`'s own doc comment below describes for
+   * firing itself). Always false for a non-hostile butt.
+   */
+  winding: boolean;
+  /** Seconds elapsed in the current wind-up, 0 up to `TELL_MS / 1000`. Reset
+      to 0 both when a wind-up starts and once it fires. */
+  windUp: number;
   dead: number;
   /**
    * Progress through the recoil that plays when the face is struck: 0 right
@@ -25,7 +90,15 @@ export interface Butt {
   rock: number;
 }
 
-/** Where the three rows of cover sit, in world units away from the camera. */
+/**
+ * Where the three rows of hedge cover sit, in world units away from the
+ * camera — `scene.ts` still plants a hedge at each of these, and the
+ * existing ballistics tests still fire a hostile arrow from each one, so
+ * this stays as it was. It no longer decides where a *target* rises,
+ * though: that is `RANKS` now, two positions (near/far) rather than three,
+ * deliberately widened past this array's own middle value so the choice
+ * between a safe near shot and a smaller, better-paying far one is real.
+ */
 export const LANES = [-12, -25, -38];
 /** How near an arrow has to pass to count. Generous: this is an arcade. */
 export const HIT_RADIUS = 2.6;
@@ -83,6 +156,30 @@ export function ringOf(distanceFromCentre: number, faceRadius: number): number {
 }
 
 /**
+ * The traditional archery name for a ring `ringOf` returned — the same five
+ * names its own inline comments already use, said out loud for the Phase 3
+ * results card ("best ring: Gold"). `bestRing`'s own doc comment on
+ * `Snapshot` is the source for what 0 means: nothing struck yet, so there is
+ * no ring to name.
+ */
+export function ringName(ring: number): string {
+  switch (ring) {
+    case 1:
+      return "Gold";
+    case 2:
+      return "Red";
+    case 3:
+      return "Blue";
+    case 4:
+      return "Black";
+    case 5:
+      return "White";
+    default:
+      return "—";
+  }
+}
+
+/**
  * The gold is worth three of the outside. This multiplies on top of the
  * existing scoring (base points, distance bonus, combo) — it does not
  * replace any of it.
@@ -121,6 +218,13 @@ export interface ButtHitInput {
   streakBefore: number;
   /** The best (lowest-numbered) ring struck so far this round; 0 = none yet. */
   bestRingBefore: number;
+  /**
+   * The rank's own score bonus (`RANKS[rank].bonus`) — multiplies on top of
+   * `ringMultiplier`, it does not replace it. Optional and defaulting to 1
+   * (a near-rank hit) so every call site and test that predates ranks keeps
+   * scoring exactly as it always did.
+   */
+  rankBonus?: number;
 }
 
 export interface ButtHitResult {
@@ -133,13 +237,21 @@ export interface ButtHitResult {
    *
    * Every credited hit destroys its target, green or red alike — a butt
    * left standing after being credited is exactly the exploit this field
-   * exists to prevent: `world.ts` re-arms `arrowTarget` from the butt's own
+   * exists to prevent: `stepButt` re-arms `arrowTarget` from the butt's own
    * `dead`/`out` state every frame, so a live butt that survives a scored
    * hit can be scored again, and again, off a single standing target for
    * as long as it stays up — an uncapped combo multiplying every one of
    * those hits. `onArrowHit` reads this field rather than deciding
    * destruction itself, and this file's own tests exercise it directly, so
    * the two cannot silently drift apart again.
+   *
+   * Destruction is what makes that safe, and it is the whole of what makes
+   * it safe: `onArrowHit` does not consult `isTargetable` before crediting
+   * a hit. It credits whatever face the raycast in `stepArrows` handed it,
+   * and that raycast reads `face.userData.arrowTarget`. So the flag being
+   * honest on every frame, including the frames a struck butt spends
+   * falling, is load-bearing rather than tidy. It was not, once — see
+   * `stepButt`'s death branch, which used to return before re-arming it.
    */
   destroyButt: boolean;
 }
@@ -153,10 +265,11 @@ export interface ButtHitResult {
  */
 export function resolveButtHit(input: ButtHitInput): ButtHitResult {
   const multiplier = ringMultiplier(input.ring);
+  const rankBonus = input.rankBonus ?? 1;
   const combo = comboAfter(true, input.comboBefore);
   const streak = streakAfter(true, input.comboBefore, input.streakBefore);
   const gained = Math.round(
-    (input.hostile ? input.basePoints * 1.6 : input.basePoints) * (1 + combo * 0.08) * multiplier,
+    (input.hostile ? input.basePoints * 1.6 : input.basePoints) * (1 + combo * 0.08) * multiplier * rankBonus,
   );
   const bestRing = input.bestRingBefore === 0 || input.ring < input.bestRingBefore ? input.ring : input.bestRingBefore;
   return { gained, combo, streak, bestRing, destroyButt: true };
@@ -164,17 +277,127 @@ export function resolveButtHit(input: ButtHitInput): ButtHitResult {
 
 /**
  * Whether a butt is currently something an arrow can be steered toward or
- * credited for hitting — the exact condition `world.ts` re-arms
- * `arrowTarget` from every frame. Exported so both `world.ts` and this
- * file's own tests read the one predicate, rather than the test keeping a
- * hand-copied version of it that could silently stop matching the real one.
+ * credited for hitting — the exact condition `stepButt` re-arms
+ * `face.userData.arrowTarget` from, on every frame and on every path
+ * through it, the death branch included. Exported so `world.ts`, this file
+ * and its tests all read the one predicate rather than keeping hand-copied
+ * versions that could quietly stop matching.
+ *
+ * `dead === 0`, not `dead <= 0`: `dead` counts a fall down from
+ * `DEATH_FALL_TIME` and goes negative on the last frame before `world.ts`
+ * takes the butt out of the scene, so `<=` called a corpse a live target
+ * again on exactly that frame. Only a butt that has never been struck is
+ * one.
  */
 export function isTargetable(b: Butt): boolean {
-  return b.dead <= 0 && b.out > 0.15;
+  return b.dead === 0 && b.out > 0.15;
+}
+
+/**
+ * The behaviours a target may be given, per wave — conservative at the
+ * start of a round (every target simply stands) so the first stretch
+ * teaches the game before anything moves or shoots back, widening to all
+ * four by wave 2 so the late-round storm actually has all four in it. Waves
+ * do not exist as a system yet (that is Task 4's job); this file only
+ * cares about the plain number `pickBehaviour` is handed, and clamps
+ * anything past wave 2 to the wave-2 pool rather than assuming more waves
+ * will ever exist.
+ */
+const BEHAVIOURS_BY_WAVE: Behaviour[][] = [
+  ["stand"],
+  ["stand", "drift", "peek"],
+  ["stand", "drift", "peek", "swing"],
+];
+
+/**
+ * Choose a behaviour for a target about to rise. `rng` defaults to
+ * `Math.random` but is a parameter so a test can pin it and assert exactly
+ * which behaviour a given draw returns, rather than only ever observing
+ * behaviour selection through an unseeded, untestable die roll.
+ */
+export function pickBehaviour(wave: number, rng: () => number = Math.random): Behaviour {
+  const pool = BEHAVIOURS_BY_WAVE[Math.min(Math.max(0, Math.floor(wave)), BEHAVIOURS_BY_WAVE.length - 1)];
+  return pool[Math.floor(rng() * pool.length)];
 }
 
 /** How long a destroyed butt takes to fall before it leaves the scene. */
 const DEATH_FALL_TIME = 0.6;
+
+/**
+ * One frame of a butt's own motion: move sideways if its behaviour calls for
+ * it, rise out of cover, dwell once fully up, and — once struck — fall away
+ * and out (`retire`).
+ * Pulled out of `world.ts`'s per-frame loop unchanged in behaviour, the same
+ * move `resolveButtHit` and `isTargetable` already made: this is deferred
+ * twice before now because nothing forced the issue, and this phase adds
+ * four more behaviours to exactly this loop.
+ *
+ * `world.ts` still owns what a live, risen, hostile butt does *to the
+ * world* — loosing an arrow needs the scene and the arrow list, neither of
+ * which a butt's own motion has any business touching — so firing stays in
+ * `world.ts`'s loop, called after this for whichever butts this leaves
+ * live.
+ */
+export function stepButt(b: Butt, dt: number, bounds = 34): void {
+  if (b.dead > 0) {
+    // Retire: falling away after being struck, on its way out of the scene
+    // once `world.ts`'s own filter sees `dead` run out.
+    b.dead -= dt;
+    b.group.position.y -= dt * 9;
+    b.group.rotation.z += dt * 5;
+    // The same re-arming the live path does at the bottom of this function,
+    // and the reason it is repeated here rather than left to fall through:
+    // this branch returns, so for the whole 0.6s of the fall the flag kept
+    // whatever it last said — `true` — while `isTargetable` said false. A
+    // destroyed butt stayed a scoring target the entire way down, because
+    // `stepArrows` raycasts the flag and nothing reads the predicate. That
+    // is the one case where the two could disagree, and it was the only
+    // case that mattered.
+    b.face.userData.arrowTarget = isTargetable(b);
+    return;
+  }
+
+  // Lateral motion, switched on the behaviour chosen when the butt rose.
+  // `stand` and `peek` hold their spawn x; only `drift` and `swing` move,
+  // each its own way.
+  if (b.behaviour === "drift") {
+    // Paces along its rank, bouncing back at the edge rather than
+    // wandering off it.
+    b.x += b.vx * dt;
+    if (b.x < -bounds || b.x > bounds) b.vx *= -1;
+  } else if (b.behaviour === "swing") {
+    // A shallow arc around the branch it spawned under — `originX` never
+    // moves, so however long a swing hangs there it can never drift past
+    // its own `SWING_AMPLITUDE`, the property "stays inside its arc" tests.
+    b.swingT += dt;
+    b.x = b.originX + Math.sin(b.swingT * SWING_SPEED) * SWING_AMPLITUDE;
+  }
+
+  // Rise, and dwell once fully up before sinking back into cover on its
+  // own. This is also what retires a `peek`: `makeButt` pins its `dwell` to
+  // `PEEK_WINDOW` rather than the usual random spread, so it ducks on
+  // exactly this same timer — the same one that fires whether or not the
+  // butt was ever hit, since a credited hit takes the `dead > 0` branch
+  // above instead and never reaches here again.
+  if (b.rising) {
+    b.out = Math.min(1, b.out + dt * 2.4);
+    if (b.out >= 1) {
+      b.dwell -= dt;
+      if (b.dwell <= 0) b.rising = false;
+    }
+  } else {
+    b.out = Math.max(0, b.out - dt * 2.4);
+  }
+  // Rises from behind the hedge rather than fading in.
+  b.group.position.set(b.x, -9 + b.out * 9, RANKS[b.rank].z);
+  // Only a butt that is actually up and not already falling is something a
+  // flying arrow should be steered toward or able to hit. `onArrowHit` does
+  // *not* check this predicate itself — it credits whatever face the
+  // raycast handed it — so this flag is the only thing standing between a
+  // butt and being scored, and it has to be re-armed on every path through
+  // this function, not only this one. The death branch above does the same.
+  b.face.userData.arrowTarget = isTargetable(b);
+}
 
 /**
  * Apply a credited hit's lifecycle decision to the butt it struck — pulled
@@ -286,20 +509,26 @@ export function tickerLabel(text: string, colour: string): T.Texture {
 }
 
 /**
- * A butt raised at a decided stock, lane and x. The caller has already
- * decided which stock is up, which lane it rises in and where along that
- * lane it sits; this builds the group and the rest of the state that goes
- * with it.
+ * A butt raised at a decided stock, rank, x and behaviour. The caller has
+ * already decided which stock is up, which rank it rises in, where along
+ * that rank it sits and how it will behave; this builds the group and the
+ * rest of the state that goes with it. `behaviour` defaults to `stand` —
+ * the same thing every butt did before this type existed — so a call site
+ * that does not care yet (a test building a plain target, say) still gets
+ * the old, simplest motion.
  */
-export function makeButt(stock: Stock, lane: number, x: number): Butt {
+export function makeButt(stock: Stock, rank: Rank, x: number, behaviour: Behaviour = "stand"): Butt {
   const hostile = stock.changePct < 0;
-  const z = LANES[lane];
+  const { z, faceScale } = RANKS[rank];
   const group = new T.Group();
 
   const ringColour = ringColourFor(hostile);
-  // The butt: a straw roundel on a post, facing the shooter.
+  // The butt: a straw roundel on a post, facing the shooter. The far rank's
+  // face is drawn (and later hit-tested — see `onArrowHit` in world.ts,
+  // which scores against this same `faceScale`) at half the near rank's
+  // size, so a far shot is genuinely smaller to land, not just worth more.
   const face = new T.Mesh(
-    new T.CircleGeometry(FACE_RADIUS, 22),
+    new T.CircleGeometry(FACE_RADIUS * faceScale, 22),
     // Unlit: a target you cannot read is not a target, and the range is
     // lit for dusk. Both sides, so one that spawns turned slightly away is
     // still something to shoot rather than an invisible edge.
@@ -320,7 +549,9 @@ export function makeButt(stock: Stock, lane: number, x: number): Butt {
   group.add(face);
 
   const rim = new T.Mesh(
-    new T.TorusGeometry(3.45, 0.24, 6, 24),
+    // Scaled the same as the face, so a far rim doesn't sit proud of a
+    // face half its own size.
+    new T.TorusGeometry(3.45 * faceScale, 0.24 * faceScale, 6, 24),
     new T.MeshLambertMaterial({
       color: new T.Color(ringColour),
       // Emissive only for the hostile rim: self-lit red does not take the
@@ -357,9 +588,13 @@ export function makeButt(stock: Stock, lane: number, x: number): Butt {
     stock,
     hostile,
     face,
-    lane,
+    rim,
+    rank,
+    behaviour,
     x,
+    originX: x,
     vx: (Math.random() < 0.5 ? 1 : -1) * rand(1.6, 4.2),
+    swingT: 0,
     out: 0,
     rising: true,
     /*
@@ -369,9 +604,15 @@ export function makeButt(stock: Stock, lane: number, x: number): Butt {
      * 0.4-1.1s, so most of them sank back into cover without ever loosing —
      * which is why the reds seemed harmless. They now stand long enough to
      * shoot, and shoot soon enough to matter.
+     *
+     * A `peek` overrides this to a fixed `PEEK_WINDOW` instead: "rises for
+     * 1.8 seconds and drops" means exactly that duration, not the usual
+     * random spread.
      */
-    dwell: hostile ? rand(1.3, 2.4) : rand(0.5, 1.2),
+    dwell: behaviour === "peek" ? PEEK_WINDOW : hostile ? rand(1.3, 2.4) : rand(0.5, 1.2),
     cooldown: hostile ? rand(0.25, 0.6) : rand(0.6, 1.3),
+    winding: false,
+    windUp: 0,
     dead: 0,
     rock: 1,
   };

@@ -19,20 +19,23 @@
 import * as T from "three";
 import { buildWood, disposeWood, stepWood, type Wood } from "./scene";
 import { rand } from "./rand";
+import type { Surface } from "./render";
 import {
-  LANES,
   makeButt,
   ringColourFor,
   ringOf,
   resolveButtHit,
   comboAfter,
   streakAfter,
-  isTargetable,
   applyButtHit,
   disposeButt,
   bestSymbolAfter,
+  stepButt,
+  pickBehaviour,
   FACE_RADIUS,
+  RANKS,
   type Butt,
+  type Rank,
 } from "./butts";
 import {
   makeArrowMesh,
@@ -43,6 +46,7 @@ import {
   ARROW_LIFE,
   type Arrow,
 } from "./arrows";
+import { waveAt, type WaveState } from "./waves";
 
 export interface Stock {
   symbol: string;
@@ -58,14 +62,16 @@ export interface Snapshot {
   shots: number;
   combo: number;
   /** The best combo reached this round, surviving whatever miss ended it.
-      Not shown this phase — carried for Phase 3's results card. */
+      Shown on the Phase 3 results card as "longest streak". */
   streak: number;
   /** The best (lowest-numbered, so 1 is gold) ring struck this round.
-      0 means nothing has been struck yet. Phase 3 only. */
+      0 means nothing has been struck yet — the results card reads this
+      through `ringName` (see butts.ts), which turns 0 into "—". */
   bestRing: number;
   /** The ticker with the highest cumulative points earned this round — the
       running total per symbol, not whichever one happened to hand back a
-      single big hit. Empty until the first hit lands. Phase 3 only. */
+      single big hit. Empty until the first hit lands, which is also when
+      the results card starts showing it (see page.tsx). */
   bestSymbol: string;
   msLeft: number;
   over: boolean;
@@ -77,14 +83,196 @@ export interface Snapshot {
   /** How far the string is drawn back right now, 0..1. 0 whenever not drawing. */
   draw: number;
   /** True while the world is only running to be looked at: no round has
-      started, the clock is frozen, nothing hostile can spawn or fire, and no
-      hit can change points or health. The overlay reads this to know it
-      should still be showing the start screen rather than the HUD. */
+      started, the clock is frozen, nothing can wind up or fire, and no hit
+      can change points or health. Red butts do come up — the menu shows the
+      day as it is — they simply have nothing to shoot with. The overlay
+      reads this to know it should still be showing the start screen rather
+      than the HUD. */
   attract: boolean;
+  /** Which wave is running, 0..2, so the HUD can tighten in the storm.
+      Stays 0 through the whole of attract mode, the same as `msLeft`
+      staying at `ROUND_MS` — the clock that would advance it never runs.
+
+      Nothing reads this yet. The spec added it for a HUD that tightens in
+      wave 2, that HUD has not been built, and `page.tsx` never touches this
+      field at all. Left in place rather than removed — it costs one number
+      a frame and the HUD is still wanted — but it is not wired, and the
+      next reader should not assume it is. (The music does tighten for wave
+      2, off `World`'s own private `wave` in `step`; that is not this
+      field.) */
+  wave: number;
 }
 
 export const ROUND_MS = 60_000;
 const START_LIVES = 3;
+
+/**
+ * The ending, per the spec's own "The ending" section: the round's last
+ * arrow flies at a quarter speed with the camera following it in, or — if
+ * the clock runs out with nothing in the air — the last two seconds of the
+ * round themselves play out at the same quarter speed instead. One scale,
+ * used everywhere `step` would otherwise pass a frame's real `dt` straight
+ * through: arrows, butts, the wood, the popups. See `endingGate`, the one
+ * place that decides when it applies, and `step`'s own comments on the two
+ * things never multiplied by it: the round clock (`msLeft`) and the
+ * ending's own ceiling (`ENDING_MAX_S`), both of which are counts of real
+ * seconds and would mean nothing measured in slowed ones.
+ *
+ * Under reduced motion `endingGate` returns 1 in place of this scale on
+ * the last-arrow branch only, so that ending plays out at full speed with
+ * the camera left where the shot was aimed. The "last two seconds" tail
+ * keeps this scale whatever the setting says: it is time the player is
+ * still shooting in, and both the nock and the pull are fed the scaled
+ * `dt`, so a tail that ran at full speed for one setting and quarter speed
+ * for the other would put a different number of arrows in the air for the
+ * same two real seconds. `endingGate` says why at length.
+ */
+export const SLOW_MOTION_SCALE = 0.25;
+/** The spec's own "last two seconds" — how far out from the round's own end
+    the slow-motion tail starts when nothing is in the air. Real ms, since
+    the clock it is read off never slows down: the tail lasts two real
+    seconds, quarter speed or not. */
+export const FINAL_STRETCH_MS = 2_000;
+/**
+ * The ceiling on the last-arrow ending, in real seconds: once the round has
+ * spent this long following an arrow out, it ends, whatever that arrow is
+ * still doing.
+ *
+ * Five is chosen, not inherited. Measured headlessly against the real
+ * `World`, a last arrow that misses everything and is left to land takes
+ * about 3.1–3.4s fired flat, 5.7–7.7s at 8° of loft, and 8.8–13.4s at the
+ * +0.28 rad the pitch clamp allows; a hit ends sooner still, because the
+ * arrow sticks where it lands. Five sits above every flat miss and every
+ * hit and below the lofted outlier, so it truncates only the case worth
+ * truncating — thirteen seconds watching an arrow the player already knows
+ * has missed — and never becomes the ordinary way a round finishes.
+ *
+ * The arrow's own `life` is deliberately not clamped to match: it is still
+ * flying when the round ends, and the results card comes up over a frozen
+ * scene exactly as it does on every other path, rather than the arrow
+ * winking out in mid-air.
+ *
+ * Those figures are real seconds spent at the quarter speed. Under reduced
+ * motion the ending runs at 1x, so the same flights take a quarter as long
+ * — 0.8s flat and 3.3s at the top of the clamp, measured — and this
+ * ceiling never fires at all. That is the right way round: the cap exists
+ * to cut a long slow-motion tail, and there is no tail to cut.
+ */
+export const ENDING_MAX_S = 5;
+/** How fast the view eases toward the last arrow while it is being followed
+    out — snappy enough to read as the camera turning to watch it land,
+    never an instant snap onto it. */
+const ENDING_FOLLOW_EASE = 3;
+
+/** The arrows the ending freezes: everything that is not the player's own.
+    Module-level so `step` hands `stepArrows` the same function every frame
+    rather than building one sixty times a second. See the call site, which
+    says why the ending freezes them at all. */
+const hostile = (a: Arrow) => !a.mine;
+
+/**
+ * What this exact frame's ending state is, and the one scale everything
+ * else in `step` reads off it — a pure function of the clock and whether a
+ * player's arrow is still flying, in exactly the shape `attractStep` and
+ * `waveAt` already proved out for the rest of the round's rules: no field
+ * of its own, callable from a plain `node --test` case, and the one place
+ * this decision is made rather than re-derived at each call site.
+ *
+ * Two branches slow the frame down, matching the spec's two entry
+ * conditions precisely:
+ *   - the clock has already reached zero and a player arrow is still up —
+ *     the round's last arrow, followed out rather than cut off;
+ *   - the clock has not yet reached zero, is within `FINAL_STRETCH_MS` of
+ *     doing so, and nothing is in the air — the "last two seconds" tail.
+ * A shot fired inside that last-two-seconds window keeps it at normal speed
+ * for as long as it is flying (the second branch's own `!arrowInFlight`):
+ * the wait belongs to the clock hitting zero, not to the two seconds before
+ * it, so firing late does not itself trigger slow motion a second way.
+ *
+ * `timeUp` is `msLeft <= 0` read back out, not re-derived at the call site,
+ * because it is also what `step` uses to decide whether the round may still
+ * finalise this frame (see `step`'s own use of it) — one truth for "is
+ * there any real time left on the clock", not two copies that could drift.
+ */
+export interface EndingState {
+  /** The round clock, ms, as of this frame — not yet clamped to 0. */
+  msLeft: number;
+  /** Whether a player arrow ("mine") is still flying — not yet stuck in
+      anything, not yet expired — the instant this frame begins. */
+  arrowInFlight: boolean;
+  /**
+   * Whether the visitor asked for reduced motion. Required rather than
+   * optional so that every caller has to answer it: the whole reason this
+   * row of the spec's Failure table was missed is that the ending was
+   * written without the flag ever being in front of it.
+   */
+  reducedMotion: boolean;
+}
+
+export interface EndingGates {
+  /** What `dt` is multiplied by everywhere in this frame except the round
+      clock itself. 1 outside either ending condition. */
+  timeScale: number;
+  /** Whether the clock has run out. `step` holds off setting `over` while
+      this is true and a player arrow is still up — for at most
+      `ENDING_MAX_S` real seconds of it, which is `step`'s own ceiling and
+      not this function's — and refuses new spawns, new fire and new hostile
+      shots the whole time it is true. */
+  timeUp: boolean;
+}
+
+export function endingGate(state: EndingState): EndingGates {
+  /*
+   * Reduced motion, from the spec's Failure table. It turns off one of the
+   * two branches below and not the other, and the spec's row has been
+   * amended to say which and why — it was written before the ending had
+   * two branches to tell apart.
+   *
+   * Off is the last-arrow branch. That one is a quarter-speed camera
+   * sweeping across yaw and pitch to follow an arrow down for as long as
+   * `ENDING_MAX_S` allows, which is close to the worst case for the setting
+   * that row exists for. It costs the player nothing to take away, because
+   * no new arrow can be loosed once the clock has gone.
+   *
+   * On for everyone is the "last two seconds" tail. It moves no camera at
+   * all — it is two real seconds of the world itself slowing down — and it
+   * is two seconds the player is still shooting in: `step` feeds the scaled
+   * `dt` to both the nock's refill and the bow's pull, so how far the
+   * string gets inside the window is exactly what this scale decides.
+   * Neutralising it here would hand a full-draw player shots that the same
+   * player without the setting cannot take. A posted score on a board that
+   * pays a prize must not depend on an accessibility setting, in either
+   * direction: extra shots are the same defect as fewer, and the tests hold
+   * the two counts equal rather than pinning either number.
+   *
+   * `timeUp` is untouched on both branches either way, so the round still
+   * refuses new input the moment the clock runs out, still waits for a last
+   * arrow that is already flying, and still ends the instant that arrow
+   * resolves — still under `ENDING_MAX_S`, which is a count of real seconds
+   * however the frame is scaled. Off has to mean off, not broken: the row
+   * ends "the game plays".
+   */
+  const lastArrow = state.reducedMotion ? 1 : SLOW_MOTION_SCALE;
+  if (state.msLeft <= 0) {
+    return { timeScale: state.arrowInFlight ? lastArrow : 1, timeUp: true };
+  }
+  if (state.msLeft <= FINAL_STRETCH_MS && !state.arrowInFlight) {
+    return { timeScale: SLOW_MOTION_SCALE, timeUp: false };
+  }
+  return { timeScale: 1, timeUp: false };
+}
+
+/**
+ * Hits per shot, 0-100 as a whole percent — the results card's own
+ * "accuracy" figure. A round that ended before a single arrow was ever
+ * loosed has 0 shots, not a division by zero: this reads as 0%, never NaN
+ * or Infinity.
+ */
+export function accuracyPct(hits: number, shots: number): number {
+  if (shots <= 0) return 0;
+  return Math.round((hits / shots) * 100);
+}
+
 /** Field of view wide, and narrowed when the scope is up. */
 const FOV_WIDE = 72;
 const FOV_SCOPE = 26;
@@ -105,6 +293,28 @@ const RELEASE_KICK_TIME = 0.2;
 const NOCK_TIME = 0.42;
 /** What a tap on a touchscreen looses at — a solid, deliberate pull with no wait. */
 const TOUCH_DRAW = 0.8;
+
+/**
+ * How long a hostile butt winds up — face turning to the player, rim glow
+ * rising — before it actually looses. Exported so the wind-up-then-loose
+ * regression test in `tests/range.test.ts` can reason about it directly
+ * rather than hard-coding a copy of the number that could silently drift
+ * from the real one.
+ */
+export const TELL_MS = 900;
+
+/** How far either side of centre a sidestep may reach — the full answer to
+    an incoming arrow, not a token nudge (see the escape arithmetic in the
+    task-3 report). */
+const SIDESTEP_MAX = 3;
+/** Units per second while a sidestep direction is held — a full ±3 unit
+    dodge takes exactly `SIDESTEP_MAX / SIDESTEP_SPEED` seconds (a third of
+    a second), which is what the escape arithmetic is measured against. */
+const SIDESTEP_SPEED = 9;
+/** How fast the sidestep eases back to centre once released. Slower than
+    `SIDESTEP_SPEED`: getting back to centre is never itself racing a
+    clock the way getting out of the way is. */
+const SIDESTEP_RETURN_EASE = 6;
 
 /** Below this canvas width the 2048² shadow map halves to 1024² — the same
     breakpoint the site's own CSS treats as "small", and a width where the
@@ -149,10 +359,12 @@ export interface AttractGates {
       attract, and always exactly 0 while attracting. "The clock does not
       run" is precisely this being 0, however large or small `dt` is. */
   clockDt: number;
-  /** Whether a butt may come up hostile this frame, or an already-hostile
-      one may loose a shot. False for the whole of attract mode, so nothing
-      red ever fires — and, since `spawn` reads this too, nothing red even
-      appears. */
+  /** Whether an already-hostile butt may wind up and loose a shot. False
+      for the whole of attract mode, so nothing red ever fires there.
+      `spawn` reads it too, but for a different question — which stocks the
+      pool is drawn from — and red butts DO come up on the menu: with this
+      false they can neither wind up nor shoot, so there is nothing for a
+      colour filter to protect. See `spawn`, which says why. */
   hostileActive: boolean;
   /** Whether a credited hit, on either side, may change points or health
       this frame. False for the whole of attract mode: whatever else might
@@ -187,13 +399,34 @@ const POPUP_RISE = 2.2;
     aspect ratio, since it is a chip sized to fit its label, not a square. */
 const POPUP_SCALE = 1.1;
 
+/**
+ * How far the sun's own intensity is allowed to fall over the course of a
+ * round, out of the base 2.4 `scene.ts` builds it at — small on purpose.
+ * Golden hour was tuned deliberately in Phase 2 against that exact
+ * intensity and the ambient level beside it, and a fix round was needed to
+ * get the two reading right together; this is not a second lighting pass,
+ * only a late-round cue that the light is dying, read against `elapsed /
+ * ROUND_MS` so it lands gradually across the whole round rather than
+ * snapping at a wave boundary. At 0.35 out of 2.4 the drop is under 15%,
+ * enough to feel like dusk deepening, not enough to fight the shadows and
+ * fog `buildWood` already balanced against the brighter number.
+ */
+const LIGHT_DROP = 0.35;
+
 export class World {
-  private renderer: T.WebGLRenderer;
   private scene = new T.Scene();
   private camera: T.PerspectiveCamera;
   private raycaster = new T.Raycaster();
-  private butts: Butt[] = [];
-  private arrows: Arrow[] = [];
+  private _butts: Butt[] = [];
+  private _arrows: Arrow[] = [];
+  /** Which way the sidestep key is currently held: -1 left, 0 neither, 1
+      right. Set by `setStrafe`, which page.tsx calls from keydown/keyup;
+      eased toward in `step` rather than applied directly, so letting go
+      drifts back to centre instead of snapping. */
+  private strafeInput: -1 | 0 | 1 = 0;
+  /** The sidestep's own current offset from centre, -`SIDESTEP_MAX` to
+      +`SIDESTEP_MAX`, written onto `camera.position.x` every frame. */
+  private sideOffset = 0;
   /** Points popups floating up off a struck face — a sprite each, aged out
       and disposed once they finish fading rather than left to accumulate. */
   private popups: { sprite: T.Sprite; age: number }[] = [];
@@ -219,15 +452,47 @@ export class World {
   private pitch = 0;
   /** True from `attract()` until `start()` leaves it. See `AttractGates`. */
   private attracting = false;
+  /**
+   * True once the round clock has run out and a last arrow is still being
+   * followed home (see `endingGate`'s `timeUp`) — from the frame that
+   * happens until that arrow resolves, or `ENDING_MAX_S` real seconds pass
+   * with it still flying, and `over` is finally set either way. Every
+   * input that could begin something new (`look`, `setScoped`, `beginDraw`,
+   * `touchFire`, `fire`, `aimAt`, `setStrafe`) refuses outright while this
+   * is true, the same shape `attracting` already gates them on: nothing new
+   * can begin once time is well and truly up, only the one shot already in
+   * flight gets to finish.
+   */
+  private ending = false;
+  /**
+   * How long the ending above has been running, in real seconds — counted
+   * only while `ending`, never scaled by `SLOW_MOTION_SCALE` (see `step`,
+   * which says why), and compared against `ENDING_MAX_S` to decide when a
+   * last arrow has been followed for long enough. Reset by `start()` along
+   * with the rest of a round's state.
+   */
+  private endingSeconds = 0;
   /** Elapsed seconds since `attract()` began, driving the camera's own drift
       — kept apart from anything else so it does not reset on a resize or a
       snapshot, only on a fresh `attract()`. */
   private attractT = 0;
   /**
-   * Read once at construction. The release kick and the butt's hit-recoil
-   * are the two pieces of camera/model shake this round adds that live
-   * outside CSS (where `prefers-reduced-motion` is handled generically) — so
-   * they are throttled here by hand.
+   * Read once at construction: everything this flag reaches lives outside
+   * CSS, where `prefers-reduced-motion` is handled generically, so each is
+   * throttled here by hand. What it reaches, in full —
+   *   - the release kick and the butt's hit-recoil, the two pieces of
+   *     camera/model shake this round adds (see `runLoop` and `stepRock`);
+   *   - the pollen drifting through the light (`step`);
+   *   - the attract camera's own drift (`driftCamera`);
+   *   - the last-arrow ending's slow motion, through `endingGate`, and the
+   *     camera that would otherwise sweep after that arrow (`step`'s
+   *     `followArrow` call) — together, the spec's "slow motion ... off"
+   *     row. The "last two seconds" tail is deliberately not on this list
+   *     and runs at quarter speed for everyone; `endingGate` says why.
+   * The ending is deliberately listed: it was the one thing here that the
+   * flag did not reach, and that was a Critical rather than a polish item,
+   * because the setting exists for exactly a quarter-speed camera swinging
+   * for five seconds.
    */
   private reducedMotion =
     typeof window !== "undefined" &&
@@ -253,6 +518,23 @@ export class World {
   private bestSymbolPoints = 0;
   msLeft = ROUND_MS;
   over = false;
+  /** The round's current wave, 0..2, read fresh from `waveAt` every frame in
+      `step` rather than advanced by hand — `waveAt` is the one place that
+      owns the pacing curve, this is only where the last answer it gave is
+      kept for `snapshot()`, `spawn()` and the light/music cues to read
+      without each calling `waveAt` again themselves. */
+  private wave: WaveState = waveAt(0);
+  /** The sun's own intensity as `scene.ts` built it, captured once so the
+      round's small late-round dimming (`LIGHT_DROP`) has a fixed number to
+      fall away from rather than compounding off whatever the last frame
+      left it at. */
+  private sunBaseIntensity = 0;
+  /** The wave last handed to `Sfx.setWave`, so the music is only re-cued on
+      an actual wave change rather than every frame — `setWave` schedules a
+      Web Audio ramp, and scheduling one sixty times a second for the same
+      target would still be harmless but is not what "the music tightens
+      for wave 2" means. */
+  private lastMusicWave = -1;
   /** Read it, but set it through setScoped so the view can follow. */
   scoped = false;
   /** Seconds of red flash left after taking an arrow. */
@@ -304,26 +586,24 @@ export class World {
     marker(kill?: boolean): void;
     /** As the string comes back, 0..1. Optional: not every sound bench build has it. */
     creak?(draw: number): void;
+    /** The incoming whistle of a hostile arrow, called every frame one is in
+        flight with its real, current distance to the player — not a fixed
+        sweep timed off when it launched, since a far-rank shot has more
+        ground to close than a near-rank one. See `step`'s call, right after
+        `stepArrows`. */
+    whistle(distance: number): void;
+    /** Cue the music loop's own tightening for wave 2 — one loop's playback
+        rate changing, not a second layer starting. Called once per wave
+        change, not every frame (see `lastMusicWave`). Optional: not every
+        sound bench build has it, and a fake `sfx` in a test need not either. */
+    setWave?(wave: number): void;
   } | null = null;
 
   constructor(
-    private canvas: HTMLCanvasElement,
+    private surface: Surface,
     private stocks: Stock[],
     private onChange: (s: Snapshot) => void,
   ) {
-    this.renderer = new T.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    // Shadows and a filmic curve. The wood is flat-shaded low-poly, which
-    // reads as cardboard under a flat light — the long shadows of a low sun
-    // are what give it depth, and ACES stops the warm sun clipping to white
-    // where it lands.
-    this.renderer.shadowMap.enabled = true;
-    // PCFSoftShadowMap was removed in this three.js version (0.186); it
-    // warned on the console and silently fell back to PCFShadowMap, which
-    // is what this now asks for directly.
-    this.renderer.shadowMap.type = T.PCFShadowMap;
-    this.renderer.toneMapping = T.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
     this.camera = new T.PerspectiveCamera(FOV_WIDE, 1, 0.1, 400);
     // Back from the first hedge, so there is ground between you and the
     // nearest butt and the range reads as a range rather than a wall.
@@ -332,9 +612,79 @@ export class World {
     // proximity check has an Object3D to measure against.
     this.camera.userData.isPlayer = true;
     this.wood = buildWood(this.scene);
+    this.sunBaseIntensity = this.wood.sun.intensity;
     this.tagGround(this.wood.root);
     this.buildBow();
     this.resize();
+  }
+
+  /**
+   * The butts currently on the range. Read-only, and only ever meant for a
+   * test: `world.ts`'s own logic reads and mutates the private list this
+   * wraps, never this getter. Exists so `tests/range.test.ts` can drive a
+   * real `World` end to end (see `attract()`) and check what it actually
+   * did — what came up, and whether any of it ever wound up to shoot —
+   * without a second copy of `World`'s own spawn/retire logic living in the
+   * test file to check it against.
+   */
+  get butts(): readonly Butt[] {
+    return this._butts;
+  }
+
+  /** The arrows currently in flight or stuck, for the same reason and the
+      same test-only use as `butts` above — in particular, the wind-up
+      regression test needs to see that a hostile shot has not appeared in
+      here yet while its butt is still winding up. */
+  get arrows(): readonly Arrow[] {
+    return this._arrows;
+  }
+
+  /** The sidestep's current offset from centre, for the same test-only
+      reason as `butts`/`arrows` — a test driving `setStrafe` needs to see
+      it actually clamp and ease without reaching into `camera.position`
+      itself, which is private. */
+  get sidestep(): number {
+    return this.sideOffset;
+  }
+
+  /** The view's own yaw and pitch, for the same test-only reason as
+      `butts`/`arrows`/`sidestep` — a test driving the last-arrow ending
+      needs to see the camera actually turn to follow it (`followArrow`)
+      without reaching into the private fields it writes. */
+  get facing(): { yaw: number; pitch: number } {
+    return { yaw: this.yaw, pitch: this.pitch };
+  }
+
+  /** How far the string is pulled back right now, 0..1 — the same number
+      `snapshot` already publishes as `draw`, for the same test-only reason
+      as `butts`/`arrows`/`sidestep`/`facing`. A test measuring how many
+      shots a window of the round allows has to let go at a full pull and
+      not a frame before, and the pull is one of the two timers the
+      ending's scaled `dt` reaches. */
+  get pull(): number {
+    return this.draw;
+  }
+
+  /**
+   * A and D, or the left/right arrow keys, held or released — `page.tsx`
+   * calls this from its own keydown/keyup handlers (which track both keys
+   * itself, so releasing one while the other is still down keeps moving the
+   * right way). A no-op while attracting, the same gate `look`, `fire` and
+   * `setScoped` already use, so a key held over the menu cannot pre-load a
+   * dodge the instant Start is pressed — and the same while `ending`, since
+   * the last arrow's cinematic is the camera's own and not the player's to
+   * move under.
+   *
+   * Refusing here is only half of it, and on its own it was the wrong half:
+   * a direction *already* held when the clock ran out kept its value and
+   * kept being applied, and because this line refuses `setStrafe(0)` too,
+   * releasing the key could not stop it. `step` clears `strafeInput`
+   * itself for the duration of the ending — see the line beside where it
+   * sets `ending` — which is what actually makes the sentence above true.
+   */
+  setStrafe(dir: -1 | 0 | 1) {
+    if (this.attracting || this.ending) return;
+    this.strafeInput = dir;
   }
 
   /**
@@ -370,6 +720,7 @@ export class World {
       hurt: Math.max(0, Math.min(1, this.hurt / HURT_TIME)),
       draw: this.draw,
       attract: this.attracting,
+      wave: this.wave.wave,
     };
   }
 
@@ -486,41 +837,141 @@ export class World {
   }
 
   /**
-   * Raise one butt. `hostileActive` is `attractStep`'s own gate: while it is
-   * false (the whole of attract mode) a hostile pick is refused outright,
-   * not merely biased against — even on an all-red day, when `up` is empty,
-   * attract simply raises nothing rather than a red butt that (per the same
-   * gate, read again in `step`) could never be allowed to fire anyway.
+   * How much of an even 50/50 near/far draw is shifted toward the near
+   * rank — the reviewer's call Task 2 deferred to this task, since the
+   * split is pacing and pacing is this task's whole subject. The far rank
+   * is half the size to hit and worth double, so an even draw handed out
+   * the better-paying shot as often as the easy one; weighting it down to
+   * roughly a third to two-fifths of spawns (0.38 here) keeps a far target
+   * feeling like the one worth reaching for rather than the default. Kept
+   * flat across all three waves — the spec's own pacing table varies how
+   * many butts are up and how many are red, never the rank split, and nothing
+   * in the brief asks this to tighten with the storm the way those two do.
+   *
+   * `Math.random() < NEAR_CHANCE` (not `>= NEAR_CHANCE` picking near) is
+   * deliberate: the existing wind-up regression tests in
+   * tests/range.test.ts pin `Math.random` to exactly 0 and rely on that
+   * landing on the near rank (see the "near rank, x = -30" comment there) —
+   * this keeps that true for any `NEAR_CHANCE` above 0, so retuning the
+   * split does not also have to touch those tests.
    */
-  private spawn(hostileActive: boolean) {
+  private static readonly NEAR_CHANCE = 0.62;
+
+  /**
+   * Raise one butt. `hostileActive` is `attractStep`'s own gate, and it
+   * splits this function in two. While it is false — the whole of attract
+   * mode — the pool is simply the day, every ticker in it, because a butt
+   * raised then can never wind up or loose an arrow (the same gate, read
+   * again in `step`) and so its colour is only what the day looks like.
+   * While it is true, the round's own rules apply: the hostile headcount is
+   * capped, the draw is biased, and `wave` — the current pacing band, see
+   * `waves.ts` — decides both, along with the behaviour pool a fresh butt
+   * may rise with.
+   */
+  private spawn(hostileActive: boolean, wave: WaveState) {
     if (!this.stocks.length) return;
-    /*
-     * Half the range should be shooting back.
-     *
-     * Hostility is real: a butt is red because the share is down today. But
-     * on a green day that left almost nothing firing, and the game stopped
-     * being a game. So the draw is biased — still a real ticker that really
-     * is down, just picked for more often than chance would.
-     */
     const down = this.stocks.filter((x) => x.changePct < 0);
     const up = this.stocks.filter((x) => x.changePct >= 0);
+    /*
+     * A real market-wide selloff — every tracked ticker down on the day —
+     * leaves nothing green to fall back on. This is deliberately distinct
+     * from `up.length === 0` used loosely elsewhere: it is checked here,
+     * once, and named, rather than left as an implicit consequence of an
+     * unfiltered fallback nobody had to reason about.
+     */
+    const allRedDay = down.length > 0 && up.length === 0;
+    /*
+     * Half the range should be shooting back — but never past `wave`'s own
+     * cap on how many reds may be up at once. `Math.round` rather than
+     * `Math.floor`/`Math.ceil`: it is the same rounding `waveAt`'s own doc
+     * comment promises and the pacing test asserts, so wave 0's 3 * 0.2
+     * lands on the "at most one" the spec states in words, not on zero.
+     *
+     * `Math.max(1, ...)` is the floor under that rounding, and it matters
+     * when the share is *low*, not high: a `maxUp * hostileShare` below 0.5
+     * rounds to zero, which would leave a wave that is meant to have reds
+     * in it with none at all. It does not bind on anything that ships —
+     * wave 0 rounds to 1, wave 1 to 2, wave 2 to 5 — so it is a guard on
+     * the three numbers in `waves.ts` being retuned, not a rule any wave
+     * currently reaches.
+     *
+     * On an all-red day that cap is deliberately set aside in favour of
+     * `wave.maxUp` itself — every slot the wave allows, not just its
+     * hostile share of them. The alternative, holding the normal cap, was
+     * considered and rejected: with no green stock anywhere, honouring
+     * "at most one red in wave 0" would mean at most one *target* on the
+     * whole range, since every remaining ticker is red by definition — a
+     * nearly empty wood on exactly the day the game is most topical. A
+     * broad selloff is real data, not a bug to paper over, so the range
+     * stays full and reads as what it is: today, everything is red. This
+     * is the one place `hostileShare`'s own "at most one" promise is
+     * knowingly not what ships — tests/range.test.ts covers the normal
+     * case live ("the wave 0 hostile cap holds live...") and this
+     * deliberate exception separately ("an all-red day bends the wave 0
+     * hostile cap on purpose...").
+     */
+    const activeHostileUp = this._butts.filter((b) => b.dead === 0 && b.hostile).length;
+    const hostileCap = allRedDay ? wave.maxUp : Math.max(1, Math.round(wave.maxUp * wave.hostileShare));
+    const hostileRoom = activeHostileUp < hostileCap;
+    /*
+     * Hostility is real: a butt is red because the share is down today. But
+     * on a green day that left almost nothing firing, and the game stopped
+     * being a game. So the draw is biased above `wave.hostileShare` itself —
+     * still a real ticker that really is down, just picked for more often
+     * than chance would — and then capped by `hostileRoom` above so the bias
+     * cannot push a wave past its own allowance (or, on an all-red day, past
+     * the deliberately raised one).
+     */
     let pool: Stock[];
     if (!hostileActive) {
-      if (!up.length) return;
-      pool = up;
+      /*
+       * Attract mode draws from the whole day, red tickers included.
+       *
+       * It used to take `up` only, and return without raising anything when
+       * there was no `up` — so on a market-wide selloff, which is a real
+       * day and the day this game is most topical, the menu behind the card
+       * was an empty wood. That is the first thing a visitor sees.
+       *
+       * The green filter was protecting nothing here. `hostileActive` is
+       * false for the whole of attract mode and `step` reads the same gate
+       * before any wind-up or shot, so a red butt raised here can never
+       * loose an arrow; there is no score and no health to take either. The
+       * red rim is only what the day looks like. The wave cap above still
+       * applies, because it is `maxUp` doing that work, not this filter.
+       *
+       * This is the only `this.stocks` in `spawn`, and it is deliberately
+       * not the one Task 4 removed. That one was an unfiltered fallback on
+       * the *round's* path, reached when the hostile cap had nothing green
+       * left to offer, and it bypassed the cap entirely. This branch is
+       * never reached while a round is running: `hostileActive` is false
+       * only during attract, where there is no cap to bypass because there
+       * is nothing to be capped.
+       */
+      pool = this.stocks;
     } else {
-      const wantHostile = down.length > 0 && (up.length === 0 || Math.random() < 0.45);
-      pool = wantHostile ? down : up.length ? up : this.stocks;
+      const wantHostile =
+        hostileRoom && down.length > 0 && (up.length === 0 || Math.random() < wave.hostileShare * 1.4);
+      // No `up.length ? up : this.stocks` fallback here any more: `pool`
+      // is `down` exactly when `wantHostile` says so, and `wantHostile`
+      // already accounts for the all-red day via `hostileCap` above. If
+      // `wantHostile` is false there either the cap (raised or not) has
+      // been reached — nothing should spawn — or a green stock exists and
+      // belongs in `pool` instead.
+      if (!wantHostile && !up.length) return;
+      pool = wantHostile ? down : up;
     }
     const stock = pool[Math.floor(Math.random() * pool.length)];
-    const lane = Math.floor(Math.random() * LANES.length);
+    const rank: Rank = Math.random() < World.NEAR_CHANCE ? "near" : "far";
     const x = rand(-30, 30);
-    const butt = makeButt(stock, lane, x);
+    const behaviour = pickBehaviour(wave.wave);
+    const butt = makeButt(stock, rank, x, behaviour);
     // stepArrows steers the player's own shots toward whatever carries this
-    // flag, and raycasts every arrow's flight against it.
+    // flag, and raycasts every arrow's flight against it. This is only the
+    // first value: `stepButt` rewrites it from `isTargetable` on every
+    // frame thereafter, including the frames a struck butt spends falling.
     butt.face.userData.arrowTarget = true;
     this.scene.add(butt.group);
-    this.butts.push(butt);
+    this._butts.push(butt);
   }
 
   /**
@@ -535,8 +986,16 @@ export class World {
    * the canvas's own pointer handler never fires and this is unreachable
    * rather than merely harmless. If the overlay's `pointer-events` is ever
    * loosened, gate this too.
+   *
+   * `ending` is a different case from attract mode's own overlay-covers-
+   * the-canvas argument above: the results card has not appeared yet while
+   * the last arrow is being followed out (`over` is still false), so the
+   * canvas is still live and still receiving pointer events. This is
+   * gated on it explicitly rather than leaning on an overlay that is not
+   * there yet.
    */
   aimAt(fx: number, fy: number) {
+    if (this.ending) return;
     const x = Math.max(0, Math.min(1, fx));
     const y = Math.max(0, Math.min(1, fy));
     const dx = x - this.cursor.x;
@@ -572,8 +1031,9 @@ export class World {
   setScoped(on: boolean) {
     // No scope while attracting: raising it would swing the drifting view
     // to wherever the cursor happens to be, which is exactly the kind of
-    // input attract mode must not answer.
-    if (this.attracting) return;
+    // input attract mode must not answer. Nor while `ending`: the view is
+    // the camera's own to follow the last arrow with, not the scope's.
+    if (this.attracting || this.ending) return;
     if (this.scoped === on) return;
     this.scoped = on;
     if (this.pointerAiming) {
@@ -609,23 +1069,182 @@ export class World {
   /** Look, from a locked pointer's relative movement in pixels. */
   look(dx: number, dy: number) {
     // The drifting attract camera owns yaw/pitch on its own; a visitor
-    // moving the mouse over the menu must not be able to steer it.
-    if (this.attracting) return;
+    // moving the mouse over the menu must not be able to steer it. Once
+    // `ending`, `followArrow` owns them the same way — a mouse still
+    // moving as the clock runs out must not fight the camera watching the
+    // last arrow land.
+    if (this.attracting || this.ending) return;
     this.aim.set(0, 0);
     const k = this.scoped ? 0.0009 : 0.0022;
     this.turn(-dx * k, -dy * k);
   }
 
-  private step(dt: number) {
+  /**
+   * One frame of the round: the clock, hostile spawns and fire, arrow and
+   * butt motion, and whatever a hit resolves to — everything `runLoop`
+   * drives sixty times a second via `requestAnimationFrame`. Not private:
+   * `runLoop` still calls it the same way, but this is also the one thing
+   * `tests/range.test.ts`'s acceptance test needs to drive a real round
+   * without a real render loop, which needs a browser this test runner does
+   * not have. Calling this by hand does not skip anything a frame normally
+   * does — it just skips waiting for the browser to schedule it.
+   */
+  step(dt: number) {
     if (this.over) return;
     const gate = attractStep({ attracting: this.attracting }, dt);
+
+    /*
+     * The clock, first and on its own — real time, never scaled.
+     *
+     * This has to happen before `endingGate` is even asked anything: the
+     * ending's own two conditions (see `endingGate`) are both read off
+     * `msLeft`, so the clock has to reflect this frame's real elapsed time
+     * before the rest of the frame can decide whether to slow down for it.
+     * Scaling this line instead of everything below it would be the whole
+     * feature reduced to one bug — a round that reads "60 seconds" and
+     * posts to a paid weekly board would quietly run longer than that every
+     * time the ending triggered. `gate.clockDt` is `dt` outside attract mode
+     * and 0 during it, same as always; nothing about slow motion changes
+     * what stops the clock running at all.
+     */
+    this.msLeft -= gate.clockDt * 1000;
+    /*
+     * The round's pacing, read fresh every frame from the one pure function
+     * that owns it (see `waves.ts`) rather than advanced by hand — during
+     * attract mode `gate.clockDt` is 0, so `msLeft` never moves off
+     * `ROUND_MS` and this stays at wave 0 the whole time, same as the clock
+     * itself not running. Clamped to 0..ROUND_MS before either `waveAt` or
+     * the light fraction below reads it, since `msLeft` can sit briefly
+     * negative before `endingGate`'s own clamp (below) catches it for good.
+     */
+    const elapsedMs = Math.max(0, Math.min(ROUND_MS, ROUND_MS - this.msLeft));
+    this.wave = waveAt(elapsedMs);
+    /*
+     * The light drops a little through the round — a small, deliberate
+     * fraction of `LIGHT_DROP` out of the sun's own base intensity, not a
+     * second lighting pass. See `LIGHT_DROP`'s own comment for why this
+     * stays small.
+     */
+    this.wood.sun.intensity = this.sunBaseIntensity - (elapsedMs / ROUND_MS) * LIGHT_DROP;
+    /*
+     * The music tightens for wave 2 — cued once per wave change, not every
+     * frame, so `Sfx.setWave` only ever schedules one ramp per transition
+     * (see `lastMusicWave`'s own comment).
+     */
+    if (this.wave.wave !== this.lastMusicWave) {
+      this.lastMusicWave = this.wave.wave;
+      this.sfx?.setWave?.(this.wave.wave);
+    }
+
+    if (this.lives <= 0) {
+      // Death by hits ends the round outright, same as it always has — the
+      // slow-motion ending is the clock's alone (see the spec's "The
+      // ending" and its two entry conditions, both keyed to time running
+      // out), not this one.
+      this.msLeft = Math.max(0, this.msLeft);
+      this.ending = false;
+      this.over = true;
+      this.renderedFinalFrame = false;
+      this.sfx?.horn();
+      this.onChange(this.snapshot());
+      return;
+    }
+
+    /*
+     * The ending: one gate, one scale, read once and used everywhere below
+     * that would otherwise take this frame's real `dt` — arrows, butts, the
+     * wood, the popups. See `endingGate`'s own doc comment for the two
+     * conditions it covers.
+     */
+    const arrowInFlight = this._arrows.some((a) => a.mine && a.stuck === 0);
+    const endGate = endingGate({ msLeft: this.msLeft, arrowInFlight, reducedMotion: this.reducedMotion });
+    this.ending = endGate.timeUp;
+    /*
+     * Let go of any direction still held at the buzzer.
+     *
+     * `setStrafe` refuses while `ending`, which stopped a new direction
+     * being taken and did nothing about one already held — `strafeInput`
+     * kept its value and the block below kept applying it, walking the
+     * camera to the clamp under a cinematic that is not the player's to
+     * aim. Worse, `setStrafe(0)` is refused on the same line, so letting
+     * the key go could not stop it either: the only way out was here.
+     * Cleared every frame of the ending rather than only on its first,
+     * which is the same thing while nothing can set it, and does not
+     * depend on catching the transition.
+     */
+    if (this.ending) this.strafeInput = 0;
+    const dtScaled = dt * endGate.timeScale;
+
+    if (endGate.timeUp) {
+      this.msLeft = Math.max(0, this.msLeft);
+      if (!arrowInFlight) {
+        // Time is up and there is nothing left to follow out — end now,
+        // exactly as a round without a last-arrow cinematic always has.
+        this.ending = false;
+        this.over = true;
+        this.renderedFinalFrame = false;
+        this.sfx?.horn();
+        this.onChange(this.snapshot());
+        return;
+      }
+      /*
+       * Else: the clock has run out but the last arrow is still up, so this
+       * frame belongs to the ending. Count it — in raw, unscaled `dt`,
+       * which is deliberate and not a line the time-scale pass above
+       * missed. `ENDING_MAX_S` is a ceiling in *real* seconds, and a
+       * counter fed `dtScaled` would stretch by 4x along with everything
+       * else the quarter speed touches and so cap nothing at all (under
+       * reduced motion `dtScaled` is `dt`, and this is then the same
+       * number — the ceiling means real seconds either way, which is the
+       * point of counting it unscaled). This and `msLeft` above are the
+       * only two places in `step` where raw `dt` is the right answer.
+       */
+      this.endingSeconds += dt;
+      /*
+       * Keep stepping — at `dtScaled`'s own speed — instead of returning.
+       * What the ending refuses, in full:
+       *   - no new spawn and no new wind-up or hostile shot may begin (see
+       *     the spawn block and the wind-up/loose block below);
+       *   - hostile arrows already in the air are frozen outright (see the
+       *     `stepArrows` call, which says why);
+       *   - every input that could start something new refuses on this
+       *     same flag (`look`, `setScoped`, `beginDraw`, `touchFire`,
+       *     `fire`, `aimAt`, `setStrafe`), and a sidestep already held is
+       *     let go of above, since `setStrafe` refusing cannot release it.
+       * What still runs: the player's own arrow, the butts and the popups
+       * unconditionally, plus two more that are the visitor's to switch
+       * off — the wood (`stepWood`, a dozen lines below) and the camera
+       * following that arrow home (the `followArrow` call, further down
+       * still), both of which reduced motion skips.
+       */
+    }
+
     // The pollen is the one piece of ambient motion `reducedMotion` did not
     // already reach (the release kick and hit recoil were gated on it from
     // the start) — frozen on the same flag rather than only while attracting,
     // since a drifting particle field is exactly the kind of motion that
     // setting exists to stop.
-    if (!this.reducedMotion) stepWood(this.wood, dt);
-    if (this.hurt > 0) this.hurt = Math.max(0, this.hurt - dt);
+    if (!this.reducedMotion) stepWood(this.wood, dtScaled);
+    if (this.hurt > 0) this.hurt = Math.max(0, this.hurt - dtScaled);
+
+    /*
+     * Sidestep: a held direction moves at a constant `SIDESTEP_SPEED`
+     * toward the clamp, so a full ±3 unit dodge takes exactly
+     * `SIDESTEP_MAX / SIDESTEP_SPEED` seconds every time — the number the
+     * escape arithmetic is measured against. Releasing eases back to
+     * centre instead, on `SIDESTEP_RETURN_EASE`, since the way back is
+     * never itself racing a clock the way getting out of the way is.
+     */
+    if (this.strafeInput !== 0) {
+      this.sideOffset = Math.max(
+        -SIDESTEP_MAX,
+        Math.min(SIDESTEP_MAX, this.sideOffset + this.strafeInput * SIDESTEP_SPEED * dtScaled),
+      );
+    } else if (this.sideOffset !== 0) {
+      this.sideOffset += (0 - this.sideOffset) * Math.min(1, dtScaled * SIDESTEP_RETURN_EASE);
+      if (Math.abs(this.sideOffset) < 0.001) this.sideOffset = 0;
+    }
+    this.camera.position.x = this.sideOffset;
 
     /*
      * Nocking the next arrow.
@@ -634,7 +1253,7 @@ export class World {
      * gone at the start of it and back on the string by the end, which is the
      * only thing telling you the shot registered when it misses everything.
      */
-    if (this.drawn < 1) this.drawn = Math.min(1, this.drawn + dt / NOCK_TIME);
+    if (this.drawn < 1) this.drawn = Math.min(1, this.drawn + dtScaled / NOCK_TIME);
 
     /*
      * Holding the draw.
@@ -645,11 +1264,11 @@ export class World {
      * the deliberate pull that makes a full draw something you wait for.
      */
     if (this.drawing) {
-      this.heldSeconds += dt;
-      this.draw = Math.min(1, this.draw + dt / DRAW_TIME);
+      this.heldSeconds += dtScaled;
+      this.draw = Math.min(1, this.draw + dtScaled / DRAW_TIME);
       this.sfx?.creak?.(this.draw);
     }
-    if (this.kick > 0) this.kick = Math.max(0, this.kick - dt / RELEASE_KICK_TIME);
+    if (this.kick > 0) this.kick = Math.max(0, this.kick - dtScaled / RELEASE_KICK_TIME);
 
     if (this.bow) {
       this.bow.visible = !this.scoped;
@@ -665,73 +1284,65 @@ export class World {
         this.nock.position.set(0.12, -0.2, -1.05 + this.draw * 0.16);
       }
     }
-    this.msLeft -= gate.clockDt * 1000;
-    if (this.msLeft <= 0 || this.lives <= 0) {
-      this.msLeft = Math.max(0, this.msLeft);
-      this.over = true;
-      // A fresh idle period starts here — one more real frame renders (the
-      // butt still falling, the last flinch settling), and `runLoop` stops
-      // rendering after it until the next `start()`.
-      this.renderedFinalFrame = false;
-      this.sfx?.horn();
-      this.onChange(this.snapshot());
-      return;
-    }
 
-    this.spawnIn -= dt;
-    if (this.spawnIn <= 0) {
-      /*
-       * Butts come up in volleys, not one at a time.
-       *
-       * Singles meant the range was almost always empty and there was never a
-       * choice to make: shoot the one thing that is up. Two or three at once —
-       * a red and a green together, or two reds on different lanes — is where
-       * the decision is, because the red one is shooting at you while you
-       * line up the green one that is worth more.
-       */
-      const progress = 1 - this.msLeft / ROUND_MS;
-      const volley = 1 + (Math.random() < 0.35 + progress * 0.4 ? 1 : 0) + (Math.random() < progress * 0.45 ? 1 : 0);
-      for (let i = 0; i < volley; i++) this.spawn(gate.hostileActive);
-      this.spawnIn = rand(0.5, 1.2) * (1 - progress * 0.45);
-    }
-
-    for (const b of this.butts) {
-      if (b.dead > 0) {
-        b.dead -= dt;
-        b.group.position.y -= dt * 9;
-        b.group.rotation.z += dt * 5;
-        // The recoil from the hit that killed it plays on top of the fall
-        // rather than being skipped for it — a destroyed butt still
-        // flinches before it goes over.
-        this.stepRock(b, dt);
-        continue;
-      }
-      b.x += b.vx * dt;
-      if (b.x < -34 || b.x > 34) b.vx *= -1;
-
-      if (b.rising) {
-        b.out = Math.min(1, b.out + dt * 2.4);
-        if (b.out >= 1) {
-          b.dwell -= dt;
-          if (b.dwell <= 0) b.rising = false;
+    if (!this.ending) {
+      this.spawnIn -= dtScaled;
+      if (this.spawnIn <= 0) {
+        /*
+         * Butts come up in volleys, not one at a time.
+         *
+         * Singles meant the range was almost always empty and there was never a
+         * choice to make: shoot the one thing that is up. Two or three at once —
+         * a red and a green together, or two reds on different lanes — is where
+         * the decision is, because the red one is shooting at you while you
+         * line up the green one that is worth more. The volley itself grows
+         * with the wave, same as it always scaled with the round's own
+         * progress before waves existed, but is capped so it can never push
+         * the range past `wave.maxUp` butts up at once.
+         */
+        const activeUp = this._butts.filter((b) => b.dead === 0).length;
+        const room = Math.max(0, this.wave.maxUp - activeUp);
+        if (room > 0) {
+          const volley = Math.min(
+            room,
+            1 + (Math.random() < 0.35 + this.wave.wave * 0.2 ? 1 : 0) + (Math.random() < this.wave.wave * 0.25 ? 1 : 0),
+          );
+          for (let i = 0; i < volley; i++) this.spawn(gate.hostileActive, this.wave);
         }
-      } else {
-        b.out = Math.max(0, b.out - dt * 2.4);
+        this.spawnIn = rand(this.wave.spawnEvery * 0.75, this.wave.spawnEvery * 1.25);
       }
-      // Rises from behind the hedge rather than fading in.
-      b.group.position.set(b.x, -9 + b.out * 9, LANES[b.lane]);
-      this.stepRock(b, dt);
-      // Only a butt that is actually up and not already falling is
-      // something a flying arrow should be steered toward or able to hit —
-      // the same predicate `onArrowHit` reads before crediting a hit, so the
-      // two cannot silently disagree about what is a live target.
-      b.face.userData.arrowTarget = isTargetable(b);
+    }
 
-      if (b.hostile && b.out > 0.6 && gate.hostileActive) {
-        b.cooldown -= dt;
-        if (b.cooldown <= 0) {
-          b.cooldown = rand(0.7, 1.3);
-          this.arrows.push(looseEnemyArrow(this.scene, b, this.camera.position));
+    for (const b of this._butts) {
+      // Captured before `stepButt` mutates `dead`, so a butt that was
+      // already falling this frame cannot also loose a shot on the very
+      // frame it dies — the same thing the old inline `continue` did.
+      const wasFalling = b.dead > 0;
+      stepButt(b, dtScaled);
+      // The recoil from the hit that killed it plays on top of the fall
+      // rather than being skipped for it — a destroyed butt still flinches
+      // before it goes over.
+      this.stepRock(b, dtScaled);
+      if (wasFalling) continue;
+
+      // No new hostile shot may begin once `ending` — see `step`'s own
+      // comment on why the wait for a last arrow refuses everything new.
+      if (!this.ending && b.hostile && b.out > 0.6 && gate.hostileActive) {
+        if (b.winding) {
+          this.stepWindup(b, dtScaled);
+          if (b.windUp >= TELL_MS / 1000) {
+            b.winding = false;
+            b.windUp = 0;
+            this.setTellGlow(b, 0);
+            b.cooldown = rand(0.7, 1.3);
+            this._arrows.push(looseEnemyArrow(this.scene, b, this.camera.position));
+          }
+        } else {
+          b.cooldown -= dtScaled;
+          if (b.cooldown <= 0) {
+            b.winding = true;
+            b.windUp = 0;
+          }
         }
       }
     }
@@ -740,14 +1351,14 @@ export class World {
      * scene. Kept as one pass rather than two overlapping filters, which is
      * what this was and which left some of them in the world for ever.
      */
-    this.butts = this.butts.filter((b) => {
+    this._butts = this._butts.filter((b) => {
       if (b.dead >= 0) return true;
       this.scene.remove(b.group);
       disposeButt(b);
       return false;
     });
     // A butt that has fully ducked has done its job and can go.
-    this.butts = this.butts.filter((b) => {
+    this._butts = this._butts.filter((b) => {
       if (b.dead > 0 || b.rising || b.out > 0.01) return true;
       this.scene.remove(b.group);
       disposeButt(b);
@@ -763,8 +1374,138 @@ export class World {
      * have to be kept in sync by hand — which is exactly how the segment
      * test below would have ended up covering only one of them.
      */
-    stepArrows(this.arrows, dt, this.scene, (a, hit, point) => this.onArrowHit(a, hit, point, gate.consequencesActive));
-    this.stepPopups(dt);
+    stepArrows(
+      this._arrows,
+      dtScaled,
+      this.scene,
+      (a, hit, point) => this.onArrowHit(a, hit, point, gate.consequencesActive),
+      // The ending freezes everything hostile that is already in the air.
+      //
+      // The rule one block up — no new hostile shot may begin once `ending`
+      // — stopped the next arrow and did nothing about the one already
+      // loosed, which kept flying at `dtScaled` and kept costing 18 health,
+      // the combo and 250 points on arrival. The player cannot answer it:
+      // `setStrafe` refuses for the whole ending, so the dodge is attempted
+      // and refused every frame, and the camera is downrange on their own
+      // last arrow, so they cannot see the incoming one either. Asking for
+      // a dodge that is disabled, against a shot that is off screen, on a
+      // board that pays a prize, is not difficulty.
+      //
+      // Freezing rather than re-enabling the sidestep is the deliberate
+      // half: the sidestep would move the view under a camera that is not
+      // the player's to aim, and the rule this extends is the one already
+      // in force beside it. It also takes out the sub-case where that
+      // arrow killed — `lives <= 0` cut the ending short with the player's
+      // own last arrow still flying, and whatever it was about to score
+      // was never credited.
+      this.ending ? hostile : undefined,
+    );
+    this.stepPopups(dtScaled);
+
+    /*
+     * The incoming whistle: driven by whichever hostile arrow is nearest
+     * the player right now, not a timer started when it was loosed — a shot
+     * fired from the far rank has more air to close than one from the near
+     * rank, so only the real distance says how urgent it is. Only arrows
+     * still actually flying count (`a.stuck === 0`); one that has already
+     * landed has nothing left to warn about. During the ending that
+     * distance stops changing, because the arrow it is measured from is
+     * frozen — the whistle holds its pitch along with the thing making it,
+     * which is the same freeze and not a separate rule.
+     */
+    let nearestHostile = Infinity;
+    for (const a of this._arrows) {
+      if (a.mine || a.stuck > 0) continue;
+      nearestHostile = Math.min(nearestHostile, a.mesh.position.distanceTo(this.camera.position));
+    }
+    if (nearestHostile < Infinity) this.sfx?.whistle(nearestHostile);
+
+    if (this.ending) {
+      // Follow the last arrow's current position, freshly moved by
+      // `stepArrows` above, rather than where it was at the top of this
+      // frame — "the camera following it in", per the spec.
+      const followed = this._arrows.find((a) => a.mine && a.stuck === 0);
+      if (followed && this.endingSeconds < ENDING_MAX_S) {
+        // Reduced motion takes the camera out of it, not the wait: the
+        // round still runs until this arrow resolves, the view simply
+        // stays where the shot was aimed instead of sweeping yaw and pitch
+        // across to follow it down. `endingGate` has already taken the slow
+        // motion out for the same flag, so the two together are the spec's
+        // "slow motion ... off" row — a quarter-speed camera swinging for
+        // up to five seconds being close to the worst case for the setting
+        // that row exists for.
+        if (!this.reducedMotion) this.followArrow(followed, dtScaled);
+      } else {
+        /*
+         * Either that arrow just resolved this frame — stuck in something,
+         * or expired — or it is still flying and the ending has hit its own
+         * ceiling (see `ENDING_MAX_S`, and the count kept above). Both
+         * finish the round here, with that last hit (or miss) already
+         * reflected in this same frame's score and health. A capped ending
+         * leaves the arrow exactly as it is, still in the air with its
+         * `life` untouched: the scene freezes under the results card, the
+         * same as it does on every other path out of a round.
+         */
+        this.ending = false;
+        this.over = true;
+        this.renderedFinalFrame = false;
+        this.sfx?.horn();
+        this.onChange(this.snapshot());
+      }
+    }
+  }
+
+  /**
+   * While the round's last arrow is being followed out, ease the view
+   * toward it — the same yaw/pitch fields `driftCamera` owns during attract,
+   * written directly rather than through `turn()`'s clamped deltas, since a
+   * cinematic follow is not the same motion as a player's own aim and
+   * should not be limited by the same bounds. `runLoop` applies whatever
+   * `yaw`/`pitch` hold to the camera every frame regardless of who last
+   * wrote them, so this needs nothing else to take effect.
+   */
+  private followArrow(a: Arrow, dt: number) {
+    const dir = a.mesh.position.clone().sub(this.camera.position);
+    if (dir.lengthSq() < 1e-6) return;
+    dir.normalize();
+    // Same convention `aimFromCursor` uses to turn a world-space direction
+    // into yaw/pitch: this is deliberately not `turn()`'s clamped delta,
+    // since the arrow may fly outside the range a player's own look ever
+    // reaches (in particular, well below level as it drops toward a butt).
+    const targetYaw = Math.atan2(-dir.x, -dir.z);
+    const targetPitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+    const ease = Math.min(1, dt * ENDING_FOLLOW_EASE);
+    this.yaw += (targetYaw - this.yaw) * ease;
+    this.pitch += (targetPitch - this.pitch) * ease;
+  }
+
+  /**
+   * One frame of a hostile butt's wind-up: the rim's glow climbing toward
+   * its peak and the whole butt turning to square up on the player, both
+   * over the same `TELL_MS` the actual shot waits on — pulled out of `step`
+   * only because the block there was already deep enough that a third
+   * concern (visuals) inline would have buried the firing decision it sits
+   * beside.
+   */
+  private stepWindup(b: Butt, dt: number) {
+    b.windUp = Math.min(TELL_MS / 1000, b.windUp + dt);
+    const t = b.windUp / (TELL_MS / 1000);
+    this.setTellGlow(b, t);
+    const toPlayer = this.camera.position.clone().sub(b.group.position);
+    const targetYaw = Math.atan2(toPlayer.x, toPlayer.z);
+    b.group.rotation.y += (targetYaw - b.group.rotation.y) * Math.min(1, dt * 6);
+  }
+
+  /**
+   * The rim's own emissive intensity, from its steady resting glow up to a
+   * bright peak at `t = 1` — self-lit, so (per the spec's one rule that
+   * cannot bend) it still reads as red at the far rank's 40 units, the same
+   * reason `HOSTILE_RIM` is emissive at all rather than a reflective colour
+   * riding the warm sun. `t = 0` is also what a shot that just fired resets
+   * to, so the glow does not stay at its peak between shots.
+   */
+  private setTellGlow(b: Butt, t: number) {
+    (b.rim.material as T.MeshLambertMaterial).emissiveIntensity = 0.4 + t * 1.4;
   }
 
   /**
@@ -884,14 +1625,17 @@ export class World {
    */
   private onArrowHit(a: Arrow, hit: T.Object3D, point: T.Vector3 | undefined, consequencesActive: boolean) {
     // `attractStep`'s own gate, consulted here rather than re-derived: no
-    // credited hit may change points or health while attracting. In
-    // practice no arrow should exist to reach this at all — input refuses
-    // to fire and a hostile butt cannot spawn or loose one — but this is
-    // the one place score and health actually move, so it holds the line
-    // even if an arrow got here some other way.
+    // credited hit may change points or health while attracting. What keeps
+    // arrows away from here is that gate and not the pool — attract mode
+    // raises red butts as freely as green ones, since a butt's colour is
+    // only what the day looks like (see `spawn`) — so the guarantee is that
+    // nothing may wind up or loose while the gate is false and every input
+    // that could fire refuses. This is the one place score and health
+    // actually move, so it holds the line anyway, whatever arrow reached it
+    // and however.
     if (!consequencesActive) return;
     if (a.mine) {
-      const b = this.butts.find((x) => x.face === hit);
+      const b = this._butts.find((x) => x.face === hit);
       if (!b) {
         // Landed in the dirt, or flew clean past everything: a miss, same
         // as the old instant hitscan's miss. The streak already reached is
@@ -918,7 +1662,12 @@ export class World {
       // something other than the most generous ring.
       const centre = b.face.getWorldPosition(new T.Vector3());
       const distanceFromCentre = point ? point.distanceTo(centre) : 0;
-      const ring = ringOf(distanceFromCentre, FACE_RADIUS);
+      // The far rank's face is drawn at half size (`makeButt`) — scoring it
+      // against the unscaled `FACE_RADIUS` would judge a hit against a
+      // roundel bigger than the one actually on screen, so the same
+      // `faceScale` that shrank the geometry shrinks the ring boundaries
+      // here too.
+      const ring = ringOf(distanceFromCentre, FACE_RADIUS * RANKS[b.rank].faceScale);
 
       const move = Math.abs(b.stock.changePct);
       const basePoints = Math.round(40 + move * 60);
@@ -929,6 +1678,10 @@ export class World {
         comboBefore: this.combo,
         streakBefore: this.streak,
         bestRingBefore: this.bestRing,
+        // On top of the existing ring multiplier, not instead of it — a far
+        // hit already had to be smaller to land; this is what makes it also
+        // worth double.
+        rankBonus: RANKS[b.rank].bonus,
       });
 
       this.hits += 1;
@@ -987,6 +1740,9 @@ export class World {
      * just cannot all land at once.
      */
     if (this.hurt > 0) return;
+    // 18 off a bar of 100, so six arrows finish a round. That is the number
+    // the menu card states in words and the death-path test measures; the
+    // spec said three for three phases and never described the game.
     this.health = Math.max(0, this.health - 18);
     this.combo = 0;
     this.points = Math.max(0, this.points - 250);
@@ -1001,10 +1757,13 @@ export class World {
    *
    * Gated on the nock being completely full, not just past the rate-of-fire
    * threshold `fire` itself uses — you cannot begin a new draw while the
-   * last arrow is still on its way back onto the string.
+   * last arrow is still on its way back onto the string. Also refused
+   * outright once `ending`: `releaseDraw` and `cancelDraw` need no gate of
+   * their own, since neither can ever fire if a draw was never allowed to
+   * begin.
    */
   beginDraw(): void {
-    if (this.over || this.attracting || this.drawing || !nockReady(this.drawn)) return;
+    if (this.over || this.attracting || this.ending || this.drawing || !nockReady(this.drawn)) return;
     this.drawing = true;
     this.draw = 0;
     this.heldSeconds = 0;
@@ -1062,7 +1821,7 @@ export class World {
    * through `fire`'s old, looser one.
    */
   touchFire(): boolean {
-    if (this.attracting || !nockReady(this.drawn)) return false;
+    if (this.attracting || this.ending || !nockReady(this.drawn)) return false;
     return this.fire(TOUCH_DRAW, true);
   }
 
@@ -1071,9 +1830,12 @@ export class World {
    *
    * The single place a shot is actually loosed — `releaseDraw` and
    * `touchFire` both end up here rather than each flying their own arrow.
+   * Gated on `ending` the same as everything else that could begin
+   * something new: the round's last arrow does not get a second one
+   * chasing it, however this call arrived.
    */
   fire(draw = 1, touch = false, heldSeconds = 0): boolean {
-    if (this.over || this.attracting) return false;
+    if (this.over || this.attracting || this.ending) return false;
     /*
      * One arrow at a time.
      *
@@ -1140,14 +1902,28 @@ export class World {
     mesh.position.copy(from);
     mesh.lookAt(from.clone().add(vel));
     this.scene.add(mesh);
-    this.arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5), touch });
+    this._arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5), touch });
     return true;
   }
 
-  resize() {
-    const w = this.canvas.clientWidth || 960;
-    const h = this.canvas.clientHeight || 560;
-    this.renderer.setSize(w, h, false);
+  /**
+   * `World` no longer holds a canvas to measure itself — `page.tsx` does,
+   * and passes the CSS box it just gave the canvas straight through. The
+   * defaults are only for a `World` nobody has resized yet (a fresh one in
+   * a test, say): the same 960×560 fallback the old canvas-reading version
+   * fell back to before its first real layout.
+   *
+   * A default parameter alone only catches `undefined` — the old code read
+   * `canvas.clientWidth || 960`, which also caught `0` (a real value a
+   * layout-less canvas actually reports). `||` here restores that: a zero
+   * or missing dimension both mean "no real size yet", not "a zero-sized
+   * stage" — do not tidy this back to a bare default, it would silently let
+   * `camera.aspect` and `surface.setSize` see a `0`/`NaN` again.
+   */
+  resize(w?: number, h?: number) {
+    w ||= 960;
+    h ||= 560;
+    this.surface.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
 
@@ -1236,7 +2012,7 @@ export class World {
       // that will not change again until the next `start()`.
       const idle = this.over && !this.attracting;
       if (!idle || !this.renderedFinalFrame) {
-        this.renderer.render(this.scene, this.camera);
+        this.surface.render(this.scene, this.camera);
         if (idle) this.renderedFinalFrame = true;
       }
       since += dt;
@@ -1276,8 +2052,9 @@ export class World {
    * rising and settling, the camera drifting on its own — and, via
    * `attracting`, every input that could shoot or score refusing outright
    * (see `look`, `fire`, `beginDraw`, `touchFire`, `setScoped`) and `step`
-   * itself skipping the clock, hostile spawns and fire, and any hit's
-   * consequences (see `attractStep`). This is what runs from the moment the
+   * itself skipping the clock, every wind-up and shot, and any hit's
+   * consequences (see `attractStep`). Butts of both colours rise — the
+   * menu is the day as it is — and none of them can do anything. This is what runs from the moment the
    * page mounts, so the range is alive under the menu rather than a black
    * box waiting for Start.
    */
@@ -1311,9 +2088,14 @@ export class World {
     this.bestSymbolPoints = 0;
     this.msLeft = ROUND_MS;
     this.over = false;
+    this.ending = false;
+    this.endingSeconds = 0;
     this.hurt = 0;
     this.mark = 0;
     this.markKill = false;
+    this.wave = waveAt(0);
+    this.wood.sun.intensity = this.sunBaseIntensity;
+    this.lastMusicWave = -1;
     this.drawn = 1;
     this.draw = 0;
     this.drawing = false;
@@ -1322,6 +2104,9 @@ export class World {
     this.spawnIn = 0.5;
     this.yaw = 0;
     this.pitch = 0;
+    this.strafeInput = 0;
+    this.sideOffset = 0;
+    this.camera.position.x = 0;
     this.onChange(this.snapshot());
     this.runLoop();
   }
@@ -1338,17 +2123,17 @@ export class World {
     // do so — free their textures now rather than leaking them.
     for (const p of this.popups) this.disposePopup(p);
     this.popups = [];
-    for (const a of this.arrows) {
+    for (const a of this._arrows) {
       this.scene.remove(a.mesh);
       a.mesh.geometry.dispose();
       (Array.isArray(a.mesh.material) ? a.mesh.material : [a.mesh.material]).forEach((m) => m.dispose());
     }
-    this.arrows = [];
-    for (const b of this.butts) {
+    this._arrows = [];
+    for (const b of this._butts) {
       this.scene.remove(b.group);
       disposeButt(b);
     }
-    this.butts = [];
+    this._butts = [];
   }
 
   /**
@@ -1363,6 +2148,6 @@ export class World {
     cancelAnimationFrame(this.raf);
     this.clearRound();
     disposeWood(this.wood);
-    this.renderer.dispose();
+    this.surface.dispose();
   }
 }

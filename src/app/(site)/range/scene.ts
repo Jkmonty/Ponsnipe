@@ -28,6 +28,49 @@ export interface Wood {
     the sun rather than through the fill. */
 export const SUN_ANGLE_DEG = 13;
 
+/*
+ * The wood's own colours, named and exported.
+ *
+ * They were inline literals until `share.ts` needed them. The results
+ * image paints the range as a flat backdrop and has to look like the game,
+ * so it takes nine values from this file: the four sky stops, the fog, the
+ * sun, and the three fixed albedos it sampled the lit silhouettes against.
+ * Hand-copying them meant a retune here would break the share image with
+ * nothing to notice — so they are exported instead, and `range.test.ts`
+ * asserts that what `share.ts` uses is what this file says.
+ *
+ * The sky stops are *not* screen colours. The sky's fragment shader writes
+ * `gl_FragColor` directly, so they never pass through tone mapping or the
+ * sRGB transform (see `sky()`, which says so at more length). Read them as
+ * that shader's inputs, never as a swatch.
+ */
+
+/** The sky shader's four stops, overhead down to the horizon. */
+export const SKY_TOP = 0x16243a;
+export const SKY_MID = 0x6b4a3a;
+export const SKY_HOT = 0xe08a3c;
+export const SKY_HORIZON = 0xf4b35a;
+
+/** The fog, warm because a low sun's haze is. */
+export const FOG_COLOUR = 0xd8a367;
+/** The sun's own light. */
+export const SUN_COLOUR = 0xffd9a0;
+
+/*
+ * The three fixed albedos of the shapes the range reads as in silhouette.
+ * Albedos, not screen colours: under a 13° sun each of these composites to
+ * very nearly black, which is exactly why the wood reads as dark shapes
+ * against an orange band.
+ */
+/** The ground plane. */
+export const GROUND_ALBEDO = 0x2f5a3c;
+/** The oak canopy — the one fixed green in the wood. The conifers in
+    `tree()` randomise their own hue and lightness around the same green
+    instead, so there is no single hex for those. */
+export const OAK_LEAF_ALBEDO = 0x2c5233;
+/** A palisade stake. */
+export const PALISADE_ALBEDO = 0x4a3a28;
+
 /**
  * The wood, built once.
  *
@@ -42,7 +85,7 @@ export function buildWood(scene: T.Scene): Wood {
   // 35–180: close enough that the near rank (the firing line, the first
   // hedge) stays clean, far enough out that the far rank picks up real
   // haze rather than the fog only ever reaching the castle beyond it.
-  scene.fog = new T.Fog(0xd8a367, 35, 180);
+  scene.fog = new T.Fog(FOG_COLOUR, 35, 180);
   root.add(sky());
 
   // Cool and dim: this is what makes a low sun read as low. A bright, warm
@@ -58,7 +101,7 @@ export function buildWood(scene: T.Scene): Wood {
   // brief's own figure.
   root.add(new T.AmbientLight(0x6a7f9a, 0.65));
 
-  const sun = new T.DirectionalLight(0xffd9a0, 2.4);
+  const sun = new T.DirectionalLight(SUN_COLOUR, 2.4);
   const elevation = (SUN_ANGLE_DEG * Math.PI) / 180;
   // Low, and to the right: +x is screen-right for the camera's default
   // orientation (looking down -z), so this is a low sun over the shooter's
@@ -92,7 +135,7 @@ export function buildWood(scene: T.Scene): Wood {
   g.computeVertexNormals();
   const ground = new T.Mesh(
     g,
-    new T.MeshLambertMaterial({ color: 0x2f5a3c, flatShading: true }),
+    new T.MeshLambertMaterial({ color: GROUND_ALBEDO, flatShading: true }),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -176,10 +219,10 @@ function sky(): T.Mesh {
   const geo = new T.SphereGeometry(380, 24, 16);
   const mat = new T.ShaderMaterial({
     uniforms: {
-      top: { value: new T.Color(0x16243a) },
-      mid: { value: new T.Color(0x6b4a3a) },
-      hot: { value: new T.Color(0xe08a3c) },
-      horizon: { value: new T.Color(0xf4b35a) },
+      top: { value: new T.Color(SKY_TOP) },
+      mid: { value: new T.Color(SKY_MID) },
+      hot: { value: new T.Color(SKY_HOT) },
+      horizon: { value: new T.Color(SKY_HORIZON) },
     },
     vertexShader: `
       varying vec3 vDir;
@@ -312,7 +355,7 @@ export function stepWood(wood: Wood, dt: number): void {
  */
 function oak(root: T.Group, x: number, z: number) {
   const bark = new T.MeshLambertMaterial({ color: 0x4a3826, flatShading: true });
-  const leaf = new T.MeshLambertMaterial({ color: 0x2c5233, flatShading: true });
+  const leaf = new T.MeshLambertMaterial({ color: OAK_LEAF_ALBEDO, flatShading: true });
   const trunk = new T.Mesh(new T.CylinderGeometry(1.6, 2.8, 11, 7), bark);
   trunk.position.set(x, 5.5, z);
   trunk.castShadow = true;
@@ -362,7 +405,7 @@ function tower(root: T.Group, x: number, z: number) {
 
 /** A run of sharpened stakes along the far edge, closing the range in. */
 function palisade(root: T.Group, z: number) {
-  const mat = new T.MeshLambertMaterial({ color: 0x4a3a28, flatShading: true });
+  const mat = new T.MeshLambertMaterial({ color: PALISADE_ALBEDO, flatShading: true });
   for (let x = -70; x < 70; x += 1.9) {
     const h = rand(5.5, 7);
     const post = new T.Mesh(new T.CylinderGeometry(0.45, 0.55, h, 5), mat);
