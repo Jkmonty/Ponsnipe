@@ -325,9 +325,12 @@ export function makeButt(stock: Stock, lane: number, x: number): Butt {
       color: new T.Color(ringColour),
       // Emissive only for the hostile rim: self-lit red does not take the
       // sun's warm tint the way a reflective colour would, so it still
-      // reads as red rather than orange from a distance.
+      // reads as red rather than orange from a distance. 1.1 ran five to
+      // ten times brighter than anything else in the scene and read as a
+      // glowing ring rather than a target that happens to be red; 0.4 is
+      // enough to hold its colour without blowing out.
       emissive: hostile ? new T.Color(HOSTILE_RIM) : 0x000000,
-      emissiveIntensity: hostile ? 1.1 : 0,
+      emissiveIntensity: hostile ? 0.4 : 0,
       flatShading: true,
     }),
   );

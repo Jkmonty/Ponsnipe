@@ -17,7 +17,7 @@
  * Three.js only lives on this route, so the terminal's bundle never sees it.
  */
 import * as T from "three";
-import { buildWood, disposeWood, type Wood } from "./scene";
+import { buildWood, disposeWood, stepWood, type Wood } from "./scene";
 import { rand } from "./rand";
 import {
   LANES,
@@ -256,7 +256,10 @@ export class World {
     // are what give it depth, and ACES stops the warm sun clipping to white
     // where it lands.
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = T.PCFSoftShadowMap;
+    // PCFSoftShadowMap was removed in this three.js version (0.186); it
+    // warned on the console and silently fell back to PCFShadowMap, which
+    // is what this now asks for directly.
+    this.renderer.shadowMap.type = T.PCFShadowMap;
     this.renderer.toneMapping = T.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.camera = new T.PerspectiveCamera(FOV_WIDE, 1, 0.1, 400);
@@ -525,6 +528,7 @@ export class World {
 
   private step(dt: number) {
     if (this.over) return;
+    stepWood(this.wood, dt);
     if (this.hurt > 0) this.hurt = Math.max(0, this.hurt - dt);
 
     /*

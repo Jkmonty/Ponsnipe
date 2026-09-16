@@ -18,8 +18,15 @@ export interface Wood {
 
 /** The sun's elevation above the horizon, in degrees. Low: this is golden
     hour, not noon, and everything about the shadows and the sky reads off
-    this one number. */
-export const SUN_ANGLE_DEG = 8;
+    this one number.
+
+    Was 8: at 8° the N·L term on flat ground is sin(8°) ≈ 0.139, so the
+    ground receives almost nothing no matter how bright the sun is or how
+    much ambient is stacked on top — ambient lifts lit and shadowed ground
+    by the same flat amount, so it cannot restore the contrast a low N·L
+    erases. 13° puts sin(13°) ≈ 0.225 on the ground — lighting it through
+    the sun rather than through the fill. */
+export const SUN_ANGLE_DEG = 13;
 
 /**
  * The wood, built once.
@@ -32,7 +39,10 @@ export const SUN_ANGLE_DEG = 8;
 export function buildWood(scene: T.Scene): Wood {
   const root = new T.Group();
 
-  scene.fog = new T.Fog(0xd8a367, 45, 190);
+  // 35–180: close enough that the near rank (the firing line, the first
+  // hedge) stays clean, far enough out that the far rank picks up real
+  // haze rather than the fog only ever reaching the castle beyond it.
+  scene.fog = new T.Fog(0xd8a367, 35, 180);
   root.add(sky());
 
   // Cool and dim: this is what makes a low sun read as low. A bright, warm
@@ -40,14 +50,13 @@ export function buildWood(scene: T.Scene): Wood {
   // — the shadowed side of a trunk should read as sky-lit blue, not as the
   // same green the sunlit side is.
   //
-  // The brief's own figure is 0.55; at 0.55 the ground plane (lit almost
-  // edge-on by an 8-degree sun, N·L ≈ sin(8°) ≈ 0.14) measured well under
-  // rgb(10,10,10) at the firing line — checked with actual pixel reads off
-  // the canvas, not by eye. Raising it to 1.0 keeps the same cool-blue,
-  // low-sun read (verified against the reds-stay-red check below) while
-  // making the ground and the shadows on it legible rather than a flat
-  // black plane.
-  root.add(new T.AmbientLight(0x6a7f9a, 1.0));
+  // Ambient is the wrong lever for "the ground is too dark": it adds the
+  // same flat term to lit and shadowed ground alike, so raising it lifts
+  // the floor without restoring any contrast between them — brighter and
+  // flatter, the opposite of what shadows need. The real fix for a dim
+  // ground is the sun's own angle (see SUN_ANGLE_DEG); this stays at the
+  // brief's own figure.
+  root.add(new T.AmbientLight(0x6a7f9a, 0.65));
 
   const sun = new T.DirectionalLight(0xffd9a0, 2.4);
   const elevation = (SUN_ANGLE_DEG * Math.PI) / 180;
@@ -177,14 +186,20 @@ function sky(): T.Mesh {
       uniform vec3 hot;
       uniform vec3 horizon;
       void main() {
+        // h is sin(elevation): the old stops (mid-to-top starting at
+        // h=0.5, i.e. 30 degrees up) put the blue above where the camera's
+        // 72-degree FOV and pitch clamp ever look — roughly 36 degrees at
+        // rest, 52 at full up-look — so it never appeared in play and the
+        // orange band filled the whole dome instead. Compressed so the top
+        // is fully reached by h=0.6 (about 37 degrees), inside that band.
         float h = vDir.y;
         vec3 col;
-        if (h > 0.5) {
-          col = mix(mid, top, smoothstep(0.5, 1.0, h));
-        } else if (h > 0.12) {
-          col = mix(hot, mid, smoothstep(0.12, 0.5, h));
+        if (h > 0.25) {
+          col = mix(mid, top, smoothstep(0.25, 0.6, h));
+        } else if (h > 0.05) {
+          col = mix(hot, mid, smoothstep(0.05, 0.25, h));
         } else {
-          col = mix(horizon, hot, smoothstep(-0.05, 0.12, h));
+          col = mix(horizon, hot, smoothstep(-0.05, 0.05, h));
         }
         gl_FragColor = vec4(col, 1.0);
       }
@@ -200,24 +215,40 @@ function sky(): T.Mesh {
   return mesh;
 }
 
+/** The per-mote state `stepWood` reads and writes each simulation tick,
+    stashed on the `Points` object's own `userData` under this key so
+    `stepWood` can find it by traversal without `Wood`'s own shape (just
+    `root` and `sun`) having to carry it. */
+const MOTES_KEY = "motes";
+
+interface MotesState {
+  posAttr: T.BufferAttribute;
+  baseY: Float32Array;
+  speed: Float32Array;
+  span: number;
+  floor: number;
+  t: number;
+}
+
 /**
  * Pollen drifting through the sun's beam.
  *
  * One `Points` cloud, one buffer: the positions are written back into the
- * same `Float32Array` every frame (via `onBeforeRender`, which three.js
- * calls immediately before drawing this object — so the motes update
- * without `world.ts`'s loop needing to know they exist) rather than the
- * cloud being rebuilt or new sprites being allocated per frame.
+ * same `Float32Array` in place by `stepWood`, driven by the game's own
+ * simulation `dt` — not wall-clock time, which would keep drifting through
+ * a pause (attract mode, most obviously) since nothing would be stepping
+ * the rest of the world either.
  */
 function motes(root: T.Group) {
   const COUNT = 260;
   const SPAN = 12; // the height of the slab the pollen loops within
+  const FLOOR = 1.5;
   const positions = new Float32Array(COUNT * 3);
   const baseY = new Float32Array(COUNT);
   const speed = new Float32Array(COUNT);
   for (let i = 0; i < COUNT; i++) {
     positions[i * 3] = rand(-55, 55);
-    positions[i * 3 + 1] = rand(1.5, 1.5 + SPAN);
+    positions[i * 3 + 1] = rand(FLOOR, FLOOR + SPAN);
     positions[i * 3 + 2] = rand(-60, 15);
     baseY[i] = positions[i * 3 + 1];
     speed[i] = rand(0.2, 0.55);
@@ -237,16 +268,30 @@ function motes(root: T.Group) {
   // The slab sits above the whole range, not just whatever the frustum
   // currently contains, so it must never be culled against a stale box.
   points.frustumCulled = false;
-  const start = performance.now();
-  points.onBeforeRender = () => {
-    const t = (performance.now() - start) / 1000;
-    for (let i = 0; i < COUNT; i++) {
-      const y = 1.5 + (((baseY[i] - 1.5 + t * speed[i]) % SPAN) + SPAN) % SPAN;
+  const state: MotesState = { posAttr, baseY, speed, span: SPAN, floor: FLOOR, t: 0 };
+  points.userData[MOTES_KEY] = state;
+  root.add(points);
+}
+
+/**
+ * Advance whatever in `wood` has per-frame state — currently just the
+ * pollen — by one simulation tick. `world.ts`'s `step(dt)` calls this
+ * alongside everything else it advances, so the motes freeze exactly when
+ * the round does (paused, game-over, or simply not yet started) instead of
+ * drifting on regardless.
+ */
+export function stepWood(wood: Wood, dt: number): void {
+  wood.root.traverse((o) => {
+    const state = o.userData[MOTES_KEY] as MotesState | undefined;
+    if (!state) return;
+    state.t += dt;
+    const { posAttr, baseY, speed, span, floor } = state;
+    for (let i = 0; i < baseY.length; i++) {
+      const y = floor + (((baseY[i] - floor + state.t * speed[i]) % span) + span) % span;
       posAttr.setY(i, y);
     }
     posAttr.needsUpdate = true;
-  };
-  root.add(points);
+  });
 }
 
 /**
@@ -391,6 +436,7 @@ function tree(root: T.Group, x: number, z: number) {
     new T.MeshLambertMaterial({ color: 0x3b2b1d, flatShading: true }),
   );
   trunk.position.set(x, h / 2, z);
+  trunk.castShadow = true;
   root.add(trunk);
   // Two or three cones stacked, which is the whole vocabulary of a low-poly
   // conifer and reads correctly from any angle.
