@@ -63,6 +63,22 @@ const WHISTLE_INTERVAL = 0.035;
  * instead of starting most of the way up the register already. */
 const WHISTLE_MAX_DISTANCE = 45;
 
+/** Distance, in world units, at or beyond which `tell()` sits at its quietest
+ * — the same reach as `WHISTLE_MAX_DISTANCE`, reused rather than reinvented,
+ * since a wind-up starting at the far rank has exactly as much ground
+ * between it and the player as an arrow loosed from there does. */
+const TELL_MAX_DISTANCE = WHISTLE_MAX_DISTANCE;
+/** `tell()`'s loudest, right on top of the player — well under `MARKERS`'
+ * own quietest layer (0.1 or more at every gain in kit.ts), so the tell a
+ * wind-up gives off can never be mistaken for the confirmation a hit gives
+ * back. */
+const TELL_LEVEL_NEAR = 0.09;
+/** `tell()`'s quietest, at or beyond `TELL_MAX_DISTANCE` — still audible
+ * against the wind bed (`WIND_LEVEL` 0.035) rather than sitting exactly on
+ * top of it, since a far wind-up is still a threat worth hearing, just the
+ * quietest one on the range. */
+const TELL_LEVEL_FAR = 0.045;
+
 /** The wind's steady-state level, and how long it takes to reach or leave it.
  * Deliberately under every effect's quietest layer (the thunk and miss noise
  * bursts sit around 0.1) so it can never read as a sound in its own right. */
@@ -269,25 +285,34 @@ export class Sfx {
   }
 
   /**
-   * An envelope on the shared bus.
+   * An envelope, on the shared bus by default.
    *
    * The attack is short but never zero: a gain that jumps straight to full is
    * a click, and a click is the other great tell of fake audio.
+   *
+   * `dest` defaults to `this.bus` — every existing caller gets exactly the
+   * routing it always had — and is otherwise the one seam a caller can use
+   * to route a sound somewhere other than straight to the bus. `tell()`
+   * (below) is the only caller that ever passes one: a `StereoPannerNode`
+   * sitting between this envelope and the bus, so that one sound can carry a
+   * direction without every other sound in the file paying for a panner it
+   * does not need.
    */
-  private env(at: number, peak: number, attack: number, decay: number): GainNode | null {
-    if (!this.ctx || !this.bus || this.muted) return null;
+  private env(at: number, peak: number, attack: number, decay: number, dest: AudioNode | null = this.bus): GainNode | null {
+    if (!this.ctx || !dest || this.muted) return null;
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
     g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), at + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, at + attack + decay);
-    g.connect(this.bus);
+    g.connect(dest);
     return g;
   }
 
   /**
    * Filtered noise. `to` slides the filter over the life of the sound, which
    * is what makes a burst read as something physical losing energy rather than
-   * as a hiss somebody switched off.
+   * as a hiss somebody switched off. `dest` is `env`'s own seam, threaded
+   * through unchanged.
    */
   private noise(
     at: number,
@@ -297,6 +322,7 @@ export class Sfx {
     to = from,
     type: BiquadFilterType = "bandpass",
     q = 1,
+    dest: AudioNode | null = this.bus,
   ) {
     if (!this.ctx || this.muted) return;
     const len = Math.max(16, Math.floor(this.ctx.sampleRate * dur));
@@ -310,13 +336,15 @@ export class Sfx {
     f.Q.value = q;
     f.frequency.setValueAtTime(from, at);
     f.frequency.exponentialRampToValueAtTime(Math.max(40, to), at + dur);
-    const g = this.env(at, peak, 0.004, dur);
+    const g = this.env(at, peak, 0.004, dur, dest);
     if (!g) return;
     src.connect(f).connect(g);
     src.start(at);
     src.stop(at + dur + 0.02);
   }
 
+  /** A tone. `dest` is `env`'s own seam, threaded through unchanged — see its
+      own comment for what it is for. */
   private tone(
     at: number,
     from: number,
@@ -325,13 +353,14 @@ export class Sfx {
     peak: number,
     type: OscillatorType = "sine",
     attack = 0.006,
+    dest: AudioNode | null = this.bus,
   ) {
     if (!this.ctx || this.muted) return;
     const o = this.ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(from, at);
     o.frequency.exponentialRampToValueAtTime(Math.max(20, to), at + dur);
-    const g = this.env(at, peak, attack, dur);
+    const g = this.env(at, peak, attack, dur, dest);
     if (!g) return;
     o.connect(g);
     o.start(at);
@@ -398,6 +427,46 @@ export class Sfx {
     const freq = 480 + near * 1500; // a low pass-by out at range, climbing toward a shriek as it closes
     const level = 0.05 + near * 0.1; // always under the marker, loudest right as it arrives
     this.tone(t, freq, freq * 1.08, 0.08, level, "sine", 0.004);
+  }
+
+  /**
+   * A hostile butt's wind-up starting — the visual tell's audible half (see
+   * `World.step`'s firing block, which calls this once per wind-up and never
+   * once per frame the way `whistle` above is called: this announces a
+   * moment beginning, not a continuously changing distance).
+   *
+   * Built the same shape `whistle` already is — the same `near` fraction of
+   * `distance` against a `MAX_DISTANCE`, driving how loud it is — but
+   * everything about its character is deliberately unlike every other sound
+   * in the set, so it cannot be mistaken for one of them: two short rising
+   * triangle notes, cooler and quieter than `marker`'s bright confirmation,
+   * with no continuous sweep to read as `whistle`'s incoming arrow and no
+   * low sawtooth thump to read as `hurt`'s impact. It should sound like a
+   * threat clearing its throat, not like feedback on anything the player
+   * just did.
+   *
+   * `pan`, -1 hard left to +1 hard right, carries the butt's bearing so an
+   * off-screen wind-up says which way to look and not only that one is
+   * coming. Routed through a `StereoPannerNode` sitting between this sound's
+   * own envelope and the bus — the one sound in this file that needs one,
+   * which is why `tone`'s `dest` seam exists at all rather than every call
+   * site being wired to the bus directly. Falls back to the plain bus (no
+   * panning, still audible) if `StereoPannerNode` is not available, the same
+   * "degrade, do not go silent" rule every other sound in this file follows.
+   */
+  tell(distance: number, pan: number) {
+    if (!this.ctx || !this.bus || this.muted) return;
+    const t = this.t;
+    const near = 1 - Math.max(0, Math.min(1, distance / TELL_MAX_DISTANCE));
+    const level = TELL_LEVEL_FAR + near * (TELL_LEVEL_NEAR - TELL_LEVEL_FAR);
+    let dest: AudioNode = this.bus;
+    if (typeof StereoPannerNode !== "undefined") {
+      const panner = new StereoPannerNode(this.ctx, { pan: Math.max(-1, Math.min(1, pan)) });
+      panner.connect(this.bus);
+      dest = panner;
+    }
+    this.tone(t, 340, 430, 0.13, level, "triangle", 0.012, dest);
+    this.tone(t + 0.1, 430, 520, 0.15, level * 0.8, "triangle", 0.012, dest);
   }
 
   /** A miss: the shaft going past into the trees. */

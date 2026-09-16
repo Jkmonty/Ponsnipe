@@ -1518,6 +1518,79 @@ test("a hostile butt winds up for the full TELL_MS before it looses, and never d
 });
 
 /*
+ * Bug C ("getting hit from targets i can't see in the distance"): the
+ * wind-up above is purely visual — the rim's glow and the turn toward the
+ * player — and the camera's 36° half field of view against a ±48.7° yaw
+ * clamp and a ±30-unit spawn spread meant a red butt could wind up and
+ * loose entirely outside what the player could see, with nothing to hear
+ * either. `World.step`'s firing block now asks `sfx.tell(distance, pan)`
+ * exactly on the transition into a wind-up (`cooldown` running out and
+ * `winding` being set), which is what this drives against a fake `sfx` the
+ * same way the existing whistle test does, since nothing about the sound
+ * itself is otherwise observable from outside `World`.
+ *
+ * With `Math.random` pinned to 0 several hostile butts wind up over the
+ * course of this run (the wind-up test above notes the same thing), so this
+ * counts every wind-up-start transition across every butt directly off
+ * `winding`, rather than assuming there is only one, and requires the tell
+ * to fire exactly that many times: once per wind-up, never once per frame
+ * of it, and never skipped.
+ */
+test("a hostile butt entering its wind-up asks the sound layer for the tell, once per wind-up and never once per frame", () => {
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0;
+    const w = new World(makeNullSurface(), [{ symbol: "DOWN", changePct: -1 }], () => {});
+    w.start();
+    const calls: { distance: number; pan: number }[] = [];
+    w.sfx = {
+      loose() {},
+      thunk() {},
+      miss() {},
+      hurt() {},
+      chime() {},
+      horn() {},
+      marker() {},
+      whistle() {},
+      tell(distance: number, pan: number) {
+        calls.push({ distance, pan });
+      },
+    };
+    const dt = 1 / 60;
+    const wasWinding = new WeakSet<Butt>();
+    let windUpStarts = 0;
+    for (let i = 0; i < 300; i++) {
+      w.step(dt);
+      for (const b of w.butts) {
+        if (b.winding) {
+          if (!wasWinding.has(b)) {
+            windUpStarts++;
+            wasWinding.add(b);
+          }
+        } else {
+          wasWinding.delete(b);
+        }
+      }
+    }
+    assert.ok(windUpStarts > 0, "at least one hostile butt should have started winding up within five seconds");
+    assert.equal(
+      calls.length,
+      windUpStarts,
+      "the tell must fire exactly once per wind-up — not once per frame of it, and not skipped",
+    );
+    for (const c of calls) {
+      assert.ok(
+        c.distance > 0 && Number.isFinite(c.distance),
+        "the tell's distance must be the winding butt's real distance to the player",
+      );
+      assert.ok(c.pan >= -1 && c.pan <= 1, "the tell's pan must stay within the stereo range, -1 to 1");
+    }
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+/*
  * "Clamped to ±3 units, easing back to centre on release" — driven through
  * the real `World.setStrafe`/`step`, not the private field it moves,
  * because `sidestep` is the one thing this test is allowed to read (see its

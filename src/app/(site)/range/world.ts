@@ -306,6 +306,17 @@ const NOCK_TIME = 0.42;
  */
 export const TELL_MS = 900;
 
+/**
+ * How far off-centre a wind-up's bearing has to be, in radians, before the
+ * audible tell (`sfx.tell`, see below) pans all the way to one side — 60°,
+ * comfortably past the camera's own 36° half field of view, so a threat just
+ * outside the frame already reads as most of the way panned rather than
+ * still near dead centre, and one far around (the yaw clamp allows ±48.7°,
+ * and a butt can spawn further round than that still) simply pins at ±1
+ * rather than needing a second band.
+ */
+const TELL_PAN_MAX_ANGLE = Math.PI / 3;
+
 /** How far either side of centre a sidestep may reach — the full answer to
     an incoming arrow, not a token nudge (see the escape arithmetic in the
     task-3 report). */
@@ -591,6 +602,17 @@ export class World {
         ground to close than a near-rank one. See `step`'s call, right after
         `stepArrows`. */
     whistle(distance: number): void;
+    /** A hostile butt's wind-up starting — the visual tell's audible half.
+        Called once per wind-up, exactly on the frame `cooldown` runs out and
+        `winding` is set (see `step`'s firing block), never once per frame the
+        way `whistle` is: this marks a moment beginning, not a continuously
+        changing distance. `distance` is the butt's real distance to the
+        player at that instant; `pan` is its bearing relative to the current
+        view, -1 hard left to +1 hard right, 0 dead ahead — so a threat
+        outside the frame still says which way to look. Optional for the same
+        reason `setWave` is: not every sound bench build has it, and a fake
+        `sfx` in a test need not either. */
+    tell?(distance: number, pan: number): void;
     /** Cue the music loop's own tightening for wave 2 — one loop's playback
         rate changing, not a second layer starting. Called once per wave
         change, not every frame (see `lastMusicWave`). Optional: not every
@@ -1371,6 +1393,37 @@ export class World {
           if (b.cooldown <= 0) {
             b.winding = true;
             b.windUp = 0;
+            /*
+             * The tell made audible, exactly once per wind-up — on this same
+             * transition and nowhere else, so it cannot fire again on a
+             * later frame of a wind-up already under way. The rim's glow and
+             * the turn toward the player are visual only (`stepWindup`), and
+             * the camera's own 36° half field of view against a yaw clamp of
+             * ±48.7° and a spawn spread of ±30 units meant a red butt could
+             * wind up and loose entirely outside what the player could see,
+             * with nothing at all to hear either — see the spec's amended
+             * "Incoming arrows".
+             *
+             * Distance and bearing are both measured against the view once,
+             * right here, rather than tracked live the way `whistle`'s own
+             * arrow-distance is: this announces a threat starting, not a
+             * continuously changing position, and a wind-up does not move
+             * far enough in 900ms for a stale bearing to mislead anyone.
+             */
+            const dx = b.group.position.x - this.camera.position.x;
+            const dz = b.group.position.z - this.camera.position.z;
+            const distance = Math.hypot(dx, dz);
+            // Same convention `aimFromCursor`/`followArrow` use: the yaw a
+            // direction out of the camera corresponds to, so this can be
+            // compared straight against `this.yaw`, the view's own.
+            const buttYaw = Math.atan2(-dx, -dz);
+            const relative = Math.atan2(Math.sin(buttYaw - this.yaw), Math.cos(buttYaw - this.yaw));
+            // Positive `relative` is to the left of the view (turning right
+            // decreases `yaw`, which is what makes a point dead ahead read
+            // as having moved left) — `StereoPannerNode` wants the opposite
+            // sign, +1 for hard right.
+            const pan = Math.max(-1, Math.min(1, -relative / TELL_PAN_MAX_ANGLE));
+            this.sfx?.tell?.(distance, pan);
           }
         }
       }
