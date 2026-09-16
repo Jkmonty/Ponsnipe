@@ -883,7 +883,9 @@ export class World {
     const behaviour = pickBehaviour(wave.wave);
     const butt = makeButt(stock, rank, x, behaviour);
     // stepArrows steers the player's own shots toward whatever carries this
-    // flag, and raycasts every arrow's flight against it.
+    // flag, and raycasts every arrow's flight against it. This is only the
+    // first value: `stepButt` rewrites it from `isTargetable` on every
+    // frame thereafter, including the frames a struck butt spends falling.
     butt.face.userData.arrowTarget = true;
     this.scene.add(butt.group);
     this._butts.push(butt);

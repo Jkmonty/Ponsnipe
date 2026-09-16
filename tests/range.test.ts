@@ -381,6 +381,63 @@ test("applyButtHit and the real isTargetable are the hit path — a credited hit
   );
 });
 
+/*
+ * The other half of that, and the half that was wrong: `isTargetable` is
+ * not what `onArrowHit` consults. It credits whatever face the raycast in
+ * `stepArrows` handed it, and that raycast reads
+ * `face.userData.arrowTarget`. So the flag is the real gate, and the only
+ * state in which it could disagree with the predicate is a *dead* butt —
+ * `stepButt`'s death branch used to return before re-arming it, leaving a
+ * destroyed butt a scoring target for the whole 0.6s of its fall, on a
+ * board that pays a prize and with the far rank's bonus doubling what a
+ * re-credit is worth.
+ *
+ * So the assertion is the relationship, checked on every frame of the fall
+ * and one frame past the end of it: the flag says exactly what
+ * `isTargetable` says. A butt still up is checked too, so that "they always
+ * agree" cannot be satisfied by a flag that is simply always false.
+ *
+ * Built through the real `makeButt`/`stepButt`, since the flag lives on a
+ * real `face` and re-arming it is `stepButt`'s own job.
+ */
+test("a dead butt's arrowTarget flag says what isTargetable says, on every frame of the fall", () => {
+  const dt = 1 / 60;
+  const b = makeButt({ symbol: "GRN", changePct: 2 }, "near", 0, "stand");
+  b.out = 1;
+  b.rising = true;
+  b.dwell = 10;
+
+  stepButt(b, dt);
+  assert.equal(
+    !!b.face.userData.arrowTarget,
+    isTargetable(b),
+    "a risen, unstruck butt: the flag and the predicate agree, and both say yes",
+  );
+  assert.equal(isTargetable(b), true, "and it really is a target, or the rest of this proves nothing");
+
+  applyButtHit(
+    b,
+    resolveButtHit({ hostile: false, ring: 1, basePoints: 40, comboBefore: 0, streakBefore: 0, bestRingBefore: 0 }),
+  );
+
+  let frames = 0;
+  // One frame past `dead` running out, which is where `world.ts` takes the
+  // butt out of the scene — and where a `dead <= 0` predicate used to call
+  // a corpse a live target again.
+  while (b.dead > 0) {
+    stepButt(b, dt);
+    frames++;
+    assert.equal(
+      !!b.face.userData.arrowTarget,
+      isTargetable(b),
+      `frame ${frames} of the fall: the flag (${b.face.userData.arrowTarget}) and isTargetable (${isTargetable(b)}) disagree`,
+    );
+    assert.equal(isTargetable(b), false, `frame ${frames} of the fall: a struck butt is not a target`);
+  }
+  assert.ok(frames > 1, "the fall should take more than a single frame, or this checked nothing");
+  assert.equal(!!b.face.userData.arrowTarget, false, "and it is not a target once the fall has run out either");
+});
+
 test("bestSymbolAfter tracks the cumulative total per ticker, not the single biggest hit", () => {
   const points = new Map<string, number>();
   let best = bestSymbolAfter(points, { bestSymbol: "", bestSymbolPoints: 0 }, "AAA", 50);

@@ -237,13 +237,21 @@ export interface ButtHitResult {
    *
    * Every credited hit destroys its target, green or red alike — a butt
    * left standing after being credited is exactly the exploit this field
-   * exists to prevent: `world.ts` re-arms `arrowTarget` from the butt's own
+   * exists to prevent: `stepButt` re-arms `arrowTarget` from the butt's own
    * `dead`/`out` state every frame, so a live butt that survives a scored
    * hit can be scored again, and again, off a single standing target for
    * as long as it stays up — an uncapped combo multiplying every one of
    * those hits. `onArrowHit` reads this field rather than deciding
    * destruction itself, and this file's own tests exercise it directly, so
    * the two cannot silently drift apart again.
+   *
+   * Destruction is what makes that safe, and it is the whole of what makes
+   * it safe: `onArrowHit` does not consult `isTargetable` before crediting
+   * a hit. It credits whatever face the raycast in `stepArrows` handed it,
+   * and that raycast reads `face.userData.arrowTarget`. So the flag being
+   * honest on every frame, including the frames a struck butt spends
+   * falling, is load-bearing rather than tidy. It was not, once — see
+   * `stepButt`'s death branch, which used to return before re-arming it.
    */
   destroyButt: boolean;
 }
@@ -269,13 +277,20 @@ export function resolveButtHit(input: ButtHitInput): ButtHitResult {
 
 /**
  * Whether a butt is currently something an arrow can be steered toward or
- * credited for hitting — the exact condition `world.ts` re-arms
- * `arrowTarget` from every frame. Exported so both `world.ts` and this
- * file's own tests read the one predicate, rather than the test keeping a
- * hand-copied version of it that could silently stop matching the real one.
+ * credited for hitting — the exact condition `stepButt` re-arms
+ * `face.userData.arrowTarget` from, on every frame and on every path
+ * through it, the death branch included. Exported so `world.ts`, this file
+ * and its tests all read the one predicate rather than keeping hand-copied
+ * versions that could quietly stop matching.
+ *
+ * `dead === 0`, not `dead <= 0`: `dead` counts a fall down from
+ * `DEATH_FALL_TIME` and goes negative on the last frame before `world.ts`
+ * takes the butt out of the scene, so `<=` called a corpse a live target
+ * again on exactly that frame. Only a butt that has never been struck is
+ * one.
  */
 export function isTargetable(b: Butt): boolean {
-  return b.dead <= 0 && b.out > 0.15;
+  return b.dead === 0 && b.out > 0.15;
 }
 
 /**
@@ -330,6 +345,15 @@ export function stepButt(b: Butt, dt: number, bounds = 34): void {
     b.dead -= dt;
     b.group.position.y -= dt * 9;
     b.group.rotation.z += dt * 5;
+    // The same re-arming the live path does at the bottom of this function,
+    // and the reason it is repeated here rather than left to fall through:
+    // this branch returns, so for the whole 0.6s of the fall the flag kept
+    // whatever it last said — `true` — while `isTargetable` said false. A
+    // destroyed butt stayed a scoring target the entire way down, because
+    // `stepArrows` raycasts the flag and nothing reads the predicate. That
+    // is the one case where the two could disagree, and it was the only
+    // case that mattered.
+    b.face.userData.arrowTarget = isTargetable(b);
     return;
   }
 
@@ -367,9 +391,11 @@ export function stepButt(b: Butt, dt: number, bounds = 34): void {
   // Rises from behind the hedge rather than fading in.
   b.group.position.set(b.x, -9 + b.out * 9, RANKS[b.rank].z);
   // Only a butt that is actually up and not already falling is something a
-  // flying arrow should be steered toward or able to hit — the same
-  // predicate `onArrowHit` reads before crediting a hit, so the two cannot
-  // silently disagree about what is a live target.
+  // flying arrow should be steered toward or able to hit. `onArrowHit` does
+  // *not* check this predicate itself — it credits whatever face the
+  // raycast handed it — so this flag is the only thing standing between a
+  // butt and being scored, and it has to be re-armed on every path through
+  // this function, not only this one. The death branch above does the same.
   b.face.userData.arrowTarget = isTargetable(b);
 }
 
