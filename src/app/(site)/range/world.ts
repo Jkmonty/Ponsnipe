@@ -106,6 +106,13 @@ const NOCK_TIME = 0.42;
 /** What a tap on a touchscreen looses at — a solid, deliberate pull with no wait. */
 const TOUCH_DRAW = 0.8;
 
+/** Below this canvas width the 2048² shadow map halves to 1024² — the same
+    breakpoint the site's own CSS treats as "small", and a width where the
+    map's own resolution was never the thing making a shadow read as sharp.
+    A full-width stage at this size is still doubling the pixel count of a
+    round's worth of shadow-mapped geometry for no visible gain. */
+const SHADOW_DROP_WIDTH = 720;
+
 /**
  * Whether the nock is back far enough to loose another arrow — the single
  * rate-of-fire gate for both the mouse path (`beginDraw`/`releaseDraw`) and
@@ -195,6 +202,16 @@ export class World {
   private wood: Wood;
   private raf = 0;
   private running = false;
+  /**
+   * Once a round ends (`over && !attracting`), `step` and `driftCamera` both
+   * return immediately — nothing in the scene changes again until the next
+   * `start()` or `attract()` — so rendering past the first idle frame draws
+   * an identical image, shadow pass included, sixty times a second for as
+   * long as the result card sits on screen. Set the instant a round ends
+   * (see `step`) and cleared by the next `start()`/`attract()`; `runLoop`
+   * reads it to render exactly one more frame and then stop.
+   */
+  private renderedFinalFrame = false;
   private last = 0;
   private spawnIn = 0.5;
   /** Head turn, in radians. Clamped so you cannot spin round to the trees behind. */
@@ -511,6 +528,13 @@ export class World {
    *
    * The unlocked fallback. Mapped across the same clamped range that `look`
    * moves through, so both ways of aiming can reach exactly the same places.
+   *
+   * Not gated on `attracting` the way `look`, `setScoped` and `fire` are. It
+   * does not need to be: the menu's transparent overlay covers the whole
+   * canvas whenever the card is up, which is the whole of attract mode, so
+   * the canvas's own pointer handler never fires and this is unreachable
+   * rather than merely harmless. If the overlay's `pointer-events` is ever
+   * loosened, gate this too.
    */
   aimAt(fx: number, fy: number) {
     const x = Math.max(0, Math.min(1, fx));
@@ -595,7 +619,12 @@ export class World {
   private step(dt: number) {
     if (this.over) return;
     const gate = attractStep({ attracting: this.attracting }, dt);
-    stepWood(this.wood, dt);
+    // The pollen is the one piece of ambient motion `reducedMotion` did not
+    // already reach (the release kick and hit recoil were gated on it from
+    // the start) — frozen on the same flag rather than only while attracting,
+    // since a drifting particle field is exactly the kind of motion that
+    // setting exists to stop.
+    if (!this.reducedMotion) stepWood(this.wood, dt);
     if (this.hurt > 0) this.hurt = Math.max(0, this.hurt - dt);
 
     /*
@@ -640,6 +669,10 @@ export class World {
     if (this.msLeft <= 0 || this.lives <= 0) {
       this.msLeft = Math.max(0, this.msLeft);
       this.over = true;
+      // A fresh idle period starts here — one more real frame renders (the
+      // butt still falling, the last flinch settling), and `runLoop` stops
+      // rendering after it until the next `start()`.
+      this.renderedFinalFrame = false;
       this.sfx?.horn();
       this.onChange(this.snapshot());
       return;
@@ -1117,6 +1150,24 @@ export class World {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+
+    /*
+     * The 2048² shadow map costs the same second render pass whatever the
+     * canvas ends up drawn at — full price on a narrow phone screen just as
+     * much as on a 1220px desktop stage. Below SHADOW_DROP_WIDTH the map
+     * halves to 1024², which three.js will not pick up on its own: the
+     * shadow render target is allocated once and cached on `shadow.map`, so
+     * changing `mapSize` after that point does nothing until the stale
+     * target is freed and cleared here, letting it be rebuilt at the new
+     * size the next time a shadow pass runs.
+     */
+    const wantSize = w < SHADOW_DROP_WIDTH ? 1024 : 2048;
+    const shadow = this.wood.sun.shadow;
+    if (shadow.mapSize.width !== wantSize) {
+      shadow.mapSize.set(wantSize, wantSize);
+      shadow.map?.dispose();
+      shadow.map = null;
+    }
   }
 
   /**
@@ -1126,9 +1177,14 @@ export class World {
    * through `turn()`'s deltas, and kept well inside the same clamp `turn()`
    * enforces during play (±0.85 yaw, -0.32..0.28 pitch) — so it can never
    * fight that clamp, it just never needs to ask it for anything.
+   *
+   * Off entirely under reduced motion, the same way the release kick and the
+   * hit recoil already were — a camera continuously panning under a menu is
+   * close to the worst case for the people that setting exists for, and this
+   * phase is exactly where the drift was introduced.
    */
   private driftCamera(dt: number) {
-    if (!this.attracting) return;
+    if (!this.attracting || this.reducedMotion) return;
     this.attractT += dt;
     const YAW_PERIOD = 26; // seconds for a full left-right-left sweep
     const PITCH_PERIOD = YAW_PERIOD * 1.7; // out of phase with the yaw, so the two never simply mirror each other
@@ -1173,15 +1229,46 @@ export class World {
       const releaseKick = this.reducedMotion ? 0 : RELEASE_KICK;
       this.camera.rotation.set(this.pitch - this.kick * releaseKick, this.yaw, 0, "YXZ");
 
-      this.renderer.render(this.scene, this.camera);
+      // Once a round is over and nothing is attracting, `step` and
+      // `driftCamera` above both returned without changing a single thing —
+      // so render exactly one more frame (the butt still falling, the last
+      // flinch settling) and then stop spending a shadow pass on an image
+      // that will not change again until the next `start()`.
+      const idle = this.over && !this.attracting;
+      if (!idle || !this.renderedFinalFrame) {
+        this.renderer.render(this.scene, this.camera);
+        if (idle) this.renderedFinalFrame = true;
+      }
       since += dt;
-      if (since >= 0.1 && !this.over) {
+      // The snapshot is entirely constant while attracting (see `attract()`,
+      // which already pushes the one snapshot that state ever needs) — no
+      // reason to re-render the card, the chips and the board ten times a
+      // second for however long a visitor leaves the menu open.
+      if (since >= 0.1 && !this.over && !this.attracting) {
         since = 0;
         this.onChange(this.snapshot());
       }
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
+  }
+
+  /**
+   * Pause or resume the render loop without tearing anything down — used by
+   * an `IntersectionObserver` on the stage (see page.tsx) so a visitor who
+   * has scrolled the canvas out of view, or a menu left open behind another
+   * tab on a phone, is not paying for a full render and a shadow pass on
+   * pixels nobody can see. `runLoop` is idempotent, so bringing the stage
+   * back into view can simply call it again; `stop()` remains the one real
+   * teardown, called only on unmount.
+   */
+  setActive(active: boolean) {
+    if (active) {
+      this.runLoop();
+      return;
+    }
+    this.running = false;
+    cancelAnimationFrame(this.raf);
   }
 
   /**

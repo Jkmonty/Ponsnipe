@@ -382,8 +382,19 @@
    rest of the site's surfaces. */
 /* overflow-y so a card taller than the stage (a lot of chips, a long board)
    can be reached by scrolling the overlay itself rather than being clipped
-   by the stage's own overflow: hidden. */
-.site .arc-overlay { background: transparent; padding: var(--sp-5); overflow-y: auto; }
+   by the stage's own overflow: hidden. But overflow-y alone did not fix
+   that: globals.css's base .arc-overlay is `place-content: center`, and in
+   a centred overflowing scroll container the overflow above the start edge
+   is unreachable because scrollTop cannot go negative. That clipped the top
+   of the card, unscrollably, for every stage between roughly 760px and
+   1000px wide (the stage's own max(340, width*0.58) height falls short of
+   the card's ~540-560px there) — a band nobody had screenshotted, since
+   verification only ever checked 1280px and the mobile preset, and the
+   align-content: start override below used to apply only under the 720px
+   breakpoint. Moved here, to the unconditional base rule, so the card's own
+   top edge is always the scroll container's start edge and is always
+   reachable, at every width. */
+.site .arc-overlay { background: transparent; padding: var(--sp-5); overflow-y: auto; align-content: start; }
 .site .arc-card {
   width: min(480px, 100%);
   display: grid;
@@ -515,12 +526,13 @@
   .site .board { width: 100%; }
   .site .hero-cta .hbtn { width: 100%; }
 
-  /* The card at phone width: pinned to the top of the stage rather than
-     vertically centred, less padding, smaller type, nothing wider than the
-     viewport so the page never gains a sideways scrollbar — and tight
-     enough top to bottom that it sits inside the stage's own height
-     without needing the overlay's scroll as anything but a safety net. */
-  .site .arc-overlay { align-content: start; padding: var(--sp-3); }
+  /* The card at phone width: less padding and smaller type, nothing wider
+     than the viewport so the page never gains a sideways scrollbar — and
+     tight enough top to bottom that it sits inside the stage's own height
+     without needing the overlay's scroll as anything but a safety net.
+     align-content: start now lives on the unconditional base rule above, so
+     it does not need repeating here. */
+  .site .arc-overlay { padding: var(--sp-3); }
   .site .arc-card { padding: var(--sp-4) var(--sp-3); gap: 6px; }
   .site .arc-card-title { font-size: 21px; }
   .site .arc-card-rules { font-size: 12.5px; line-height: 1.4; }

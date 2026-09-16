@@ -50,6 +50,12 @@ export default function ArcadePage() {
   const [posted, setPosted] = useState<string | null>(null);
   /** Whether the browser granted pointer lock. Aiming differs if it did not. */
   const [locked, setLocked] = useState(true);
+  /** False only if building the `World` threw — no WebGL context, a driver
+      blocklist, an Android WebView, too many live contexts. The stage falls
+      back to a line of text and the leaderboard below is untouched; without
+      this the throw would escape the mount effect straight to the route's
+      default error boundary and take the board down with it. */
+  const [webgl, setWebgl] = useState(true);
 
   useEffect(() => {
     void fetch("/api/arcade/targets")
@@ -105,7 +111,22 @@ export default function ArcadePage() {
     const cv = canvasRef.current;
     if (!cv || !stocks || gameRef.current) return;
     fit();
-    const g = new World(cv, stocks, setS);
+    /*
+     * A missing WebGL context throws out of `new T.WebGLRenderer` — no
+     * WebGL, a driver blocklist, an Android WebView, too many live contexts
+     * already open. This effect is where that throw would otherwise land:
+     * React sends an effect's throw to the nearest error boundary, and there
+     * is no `error.tsx` under this route, so the default boundary would
+     * replace the whole page — leaderboard included. Catching it here and
+     * falling back to a line of text is what keeps the board standing.
+     */
+    let g: World;
+    try {
+      g = new World(cv, stocks, setS);
+    } catch {
+      setWebgl(false);
+      return;
+    }
     gameRef.current = g;
     /*
      * A handle on the running game.
@@ -130,6 +151,10 @@ export default function ArcadePage() {
     // Audio can only start from a gesture, and this is one.
     sfxRef.current ??= new Sfx();
     sfxRef.current.resume();
+    // The wind and the drone are a round's ambience, not "the context is
+    // unlocked" — resume() no longer starts them itself (see sfx.ts), so
+    // Start and Again both have to ask for them explicitly.
+    sfxRef.current.roundStart();
     g.sfx = sfxRef.current;
     setScoped(false);
     g.start();
@@ -173,10 +198,32 @@ export default function ArcadePage() {
   useEffect(
     () => () => {
       gameRef.current?.stop();
+      // Without this a disposed World — and its whole scene graph, wood
+      // included — stays reachable from both the ref and window.__arcade
+      // after unmount, which is not what "stop" is supposed to mean.
+      gameRef.current = null;
+      (window as unknown as { __arcade?: World | null }).__arcade = null;
       sfxRef.current?.close();
     },
     [],
   );
+
+  /*
+   * Stop paying for a shadow pass and a full-resolution render on pixels
+   * nobody can see: a visitor reading the board below the stage, or a menu
+   * left open on a phone in a pocket. `World.setActive` only starts or stops
+   * the render loop — `runLoop` is idempotent and `stop()` remains the one
+   * real teardown, called only on unmount above.
+   */
+  useEffect(() => {
+    const el = holder.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([entry]) => gameRef.current?.setActive(entry.isIntersecting), {
+      threshold: 0,
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   /*
    * Flash the hit marker.
@@ -193,9 +240,23 @@ export default function ArcadePage() {
     return () => clearTimeout(id);
   }, [s?.mark, s?.markKill]);
 
+  /*
+   * Fade the wind and the drone out the moment a round ends — not tied to
+   * `posted`, which is about the score POST firing once, not the ambience.
+   * `roundEnd()` no-ops harmlessly if called again on a re-render.
+   */
+  useEffect(() => {
+    if (s?.over) sfxRef.current?.roundEnd();
+  }, [s?.over]);
+
   /* Post the run once, when the round ends. */
   useEffect(() => {
     if (!s?.over || posted) return;
+    // The result card is what this phase actually shipped, and it is dead
+    // until this: while the pointer stays locked, the cursor is hidden and
+    // every click goes to the canvas underneath, not the card's own Again
+    // button. A no-op if nothing was locked in the first place.
+    document.exitPointerLock?.();
     const g = gameRef.current;
     if (!g) return;
     setPosted("sending");
@@ -281,6 +342,23 @@ export default function ArcadePage() {
           of the screen points at nothing.
         */}
         <div className={`arc-stage${locked || scoped ? "" : " arc-free"}`} ref={holder}>
+          {!webgl && (
+            // The spec's own failure table: WebGL missing shows a painted
+            // stage and a line saying so, and the board below is unaffected —
+            // nothing here ever touches gameRef, stocks or the board state.
+            // The canvas underneath is left alone rather than hidden: it is
+            // what gives .arc-stage its height (fit() sizes it in CSS pixels
+            // regardless of whether a context could be attached to it, and
+            // this overlay, like every other one here, is `position:
+            // absolute; inset: 0` and so cannot supply that height itself —
+            // hiding the canvas collapsed the whole stage to nothing).
+            <div className="arc-overlay">
+              <p className="arc-card arc-card-load">
+                This range needs WebGL, which this browser or device is not giving it. The
+                leaderboard below still works.
+              </p>
+            </div>
+          )}
           <canvas
             ref={canvasRef}
             className="arc-canvas"
@@ -333,7 +411,7 @@ export default function ArcadePage() {
             onContextMenu={(e) => e.preventDefault()}
           />
 
-          {(!s || s.over || s.attract) && (
+          {webgl && (!s || s.over || s.attract) && (
             <div className="arc-overlay">
               {!stocks ? (
                 <p className="arc-card arc-card-load">loading targets…</p>

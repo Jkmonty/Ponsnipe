@@ -109,7 +109,15 @@ export class Sfx {
    */
   picks: Picks = loadPicks();
 
-  /** Call from a click. Safe to call repeatedly. */
+  /**
+   * Unlock the context. Call from a click. Safe to call repeatedly.
+   *
+   * This means only "the AudioContext exists and is running" — it used to
+   * also start the wind and the drone (via `roundStart()`), which meant the
+   * tuning bench's own `engine()`, calling this on every single button
+   * press, started a permanent ambience bed on its first click. Starting a
+   * round is now something a caller asks for explicitly (see `roundStart`).
+   */
   resume() {
     try {
       this.ctx ??= new (window.AudioContext ||
@@ -121,10 +129,19 @@ export class Sfx {
       }
       if (this.ctx.state === "suspended") void this.ctx.resume();
       this.load();
-      this.roundStart();
     } catch {
-      // No audio is survivable; the game is not about the sound.
+      // No audio is survivable; the game is not about the sound — but leave
+      // nothing half-built behind: an orphaned `bus` pointing into a context
+      // that failed to fully come up would look truthy to the next call in
+      // here, which would then try to reuse a node from a dead context and
+      // have every `connect()` after that throw.
+      try {
+        void this.ctx?.close();
+      } catch {
+        /* already gone, or never really up */
+      }
       this.ctx = null;
+      this.bus = null;
     }
   }
 
@@ -359,10 +376,10 @@ export class Sfx {
    */
   horn() {
     if (!this.ctx) return;
-    // The horn is the game's one call site for "the round just ended" — the
-    // wind and the music loop under it end here too, rather than needing a
-    // second signal wired in from world.ts or the page.
-    this.roundEnd();
+    // Just a sound now — it used to also call `roundEnd()`, which is why the
+    // sound bench's own "End of round" button happened to be the one way to
+    // stop the wind bed the bench's every other button started. `roundEnd()`
+    // is page.tsx's call now (the `s.over` effect), same as `roundStart()`.
     const t = this.t;
     for (const [when, f] of [
       [0, 196],
@@ -379,18 +396,23 @@ export class Sfx {
     }
   }
 
-  /** Start the wind and the music loop. Called from `resume()`, so every
-   * Start or Again press runs this — idempotent, since both halves no-op if
-   * already running, which matters because the tuning bench calls `resume()`
-   * on every button press. */
-  private roundStart() {
+  /**
+   * Start the wind and the music loop. Called explicitly from `play()` in
+   * page.tsx on Start and Again alike — idempotent, since both halves no-op
+   * if already running. Not called from `resume()` any more: the tuning
+   * bench calls `resume()` on every single button press, and a round is a
+   * different thing from "the context is unlocked".
+   */
+  roundStart() {
     this.roundActive = true;
     this.windStart();
     this.musicStart();
   }
 
-  /** The other half of `roundStart`, run from `horn()`. */
-  private roundEnd() {
+  /** The other half of `roundStart`, called explicitly from page.tsx's
+   * `s.over` effect rather than from `horn()` — a sound and "the round just
+   * ended" are two different signals that used to be bundled into one call. */
+  roundEnd() {
     this.roundActive = false;
     this.windEnd();
     this.musicEnd();
@@ -465,18 +487,36 @@ export class Sfx {
    * AudioContext at all.
    */
   private buildLoop(sampleRate: number): Promise<AudioBuffer> {
-    const octx = new OfflineAudioContext(1, Math.round(LOOP_SECONDS * sampleRate), sampleRate);
-    for (const [freq, gain] of DRONE_PARTIALS) {
-      const o = octx.createOscillator();
-      o.type = "sine";
-      o.frequency.value = freq;
-      const g = octx.createGain();
-      g.gain.value = gain * 0.22; // headroom for the stack; the real level comes from LOOP_LEVEL on playback
-      o.connect(g).connect(octx.destination);
-      o.start(0);
-      o.stop(LOOP_SECONDS);
+    /*
+     * `new OfflineAudioContext` and everything below it is synchronous, and
+     * this used to run unguarded inside `resume()`'s own try/catch (via
+     * `resume → roundStart → musicStart → buildLoop`) — so an old WebKit
+     * that only exposes `webkitOfflineAudioContext`, or a build that rejects
+     * a 48kHz offline rate, silenced every other sound in the game along
+     * with the drone. `roundStart()` is no longer nested inside `resume()`
+     * (see above), but this still must not throw synchronously out of here:
+     * the caller is `musicStart`, which only ever attaches a `.catch` to
+     * what this function *returns* — a throw before it returns anything
+     * walks straight past that `.catch` and out into whatever called
+     * `musicStart` instead. A rejected promise is what "fail quietly, one
+     * sound short" actually looks like from this function's own signature.
+     */
+    try {
+      const octx = new OfflineAudioContext(1, Math.round(LOOP_SECONDS * sampleRate), sampleRate);
+      for (const [freq, gain] of DRONE_PARTIALS) {
+        const o = octx.createOscillator();
+        o.type = "sine";
+        o.frequency.value = freq;
+        const g = octx.createGain();
+        g.gain.value = gain * 0.22; // headroom for the stack; the real level comes from LOOP_LEVEL on playback
+        o.connect(g).connect(octx.destination);
+        o.start(0);
+        o.stop(LOOP_SECONDS);
+      }
+      return octx.startRendering();
+    } catch (e) {
+      return Promise.reject(e instanceof Error ? e : new Error(String(e)));
     }
-    return octx.startRendering();
   }
 
   /** Start the music loop once it has rendered. A no-op if one is already
@@ -538,6 +578,12 @@ export class Sfx {
     this.wind = null;
     this.music = null;
     this.roundActive = false;
+    // Not reachable today — nothing closes an Sfx and then resumes the same
+    // instance — but a fresh context's clock starts near zero, and a stale
+    // `lastCreak` left over from the old one would throttle the creak off
+    // for good. The same trap the -Infinity default exists to avoid at
+    // construction, reset here so it still doesn't apply after a close.
+    this.lastCreak = -Infinity;
     try {
       void this.ctx?.close();
     } catch {

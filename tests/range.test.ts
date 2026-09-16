@@ -504,10 +504,16 @@ test("the frozen clock holds for whatever dt a frame hands it, not just a typica
  * simulated frame, folded into a tiny stand-in for the round state it
  * gates. Attracting for ten seconds' worth of frames must leave the clock,
  * the score, the health and a hostile's own cooldown exactly where they
- * started; leaving attract must let all four move. This is the shape of
- * the regression a gate wired up wrong (or forgotten at one call site)
- * would actually produce — a value that quietly kept moving, or one that
- * quietly never could.
+ * started; leaving attract must let all four move.
+ *
+ * What this proves is that `attractStep`'s own decision is right — nothing
+ * more. It folds the gate into a hand-written stand-in rather than calling
+ * `step()` itself (which needs a real WebGL canvas this runner does not
+ * have), so it cannot catch `attractStep` being wired up wrong, or forgotten
+ * at a call site, inside the real `world.ts` — a reimplementation of the
+ * gating can never notice that the real wiring drifted from it. That call
+ * site is verified by review for now; a headless harness that drives the
+ * real `step()` end to end is Phase 3's work, not this one's.
  */
 test("driving a simulated round through attractStep leaves the clock, score, health and a hostile's cooldown untouched while attracting, and lets a real round move all four", () => {
   function simulate(attracting: boolean, frames: number) {

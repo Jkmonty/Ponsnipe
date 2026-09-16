@@ -162,6 +162,15 @@ export function disposeWood(wood: Wood): void {
  * per-pixel rather than a texture. It ignores fog (`fog: false`) and scene
  * lighting entirely: it is the backdrop the fog and the sun's haze sit in
  * front of, not an object the sun lights.
+ *
+ * The fragment shader below writes `gl_FragColor` directly rather than going
+ * through three.js's usual material output, so it never passes through
+ * ACES tone mapping or the sRGB transform the rest of the scene's colours
+ * do on their way to the screen. That means the four hex uniforms just below
+ * are not the colours that actually land on screen — only this shader's own
+ * inputs to a mix that the renderer then leaves alone. The look was tuned
+ * and approved by eye at the screen colours it actually produces, so leave
+ * it as is; just don't read the hex values themselves as a swatch.
  */
 function sky(): T.Mesh {
   const geo = new T.SphereGeometry(380, 24, 16);
