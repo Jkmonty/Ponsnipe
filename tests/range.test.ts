@@ -640,6 +640,14 @@ test("the nock gate is one full pull for a tap and a click alike, not the old ha
  * — that `spawn` itself was handed the gate — is no longer a defect either:
  * the colour of a butt on the menu has no effect on the clock, the score,
  * the health or the danger, and those are all still checked here.
+ *
+ * What that swap did cost, and what the last assertion below puts back, is
+ * the only line that required anything to be raised at all. Counting red
+ * butts implied a wood with butts in it; counting wind-ups and hostile
+ * arrows and finding none does not. Every assertion here would have been
+ * satisfied by an attract mode that raised nothing — which is the exact
+ * bug the change was fixing — and this test is built to stand on its own
+ * rather than lean on the all-red one that also covers it.
  */
 test("attract mode cannot advance the clock, score, or let anything shoot", () => {
   const w = new World(makeNullSurface(), [
@@ -648,10 +656,12 @@ test("attract mode cannot advance the clock, score, or let anything shoot", () =
   ], () => {});
   w.attract();
   const before = { points: w.points, health: w.health, msLeft: w.msLeft };
+  const raised = new Set<unknown>();
   let windingUp = 0;
   let hostileArrows = 0;
   for (let i = 0; i < 600; i++) {
     w.step(1 / 60);
+    for (const b of w.butts) raised.add(b);
     windingUp += w.butts.filter((b) => b.winding).length;
     hostileArrows += w.arrows.filter((a) => !a.mine).length;
   }
@@ -660,6 +670,10 @@ test("attract mode cannot advance the clock, score, or let anything shoot", () =
   assert.equal(w.msLeft, before.msLeft);
   assert.equal(windingUp, 0, "no butt may so much as begin a wind-up while the menu is up");
   assert.equal(hostileArrows, 0, "and none may ever loose an arrow");
+  assert.ok(
+    raised.size > 0,
+    "the menu's wood has to fill — an attract mode that raised nothing would pass every assertion above it",
+  );
 });
 
 /*
