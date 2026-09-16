@@ -96,7 +96,18 @@ bow, arcs under gravity, and takes time to arrive.
   the speeds a player would see, which was written while the desktop hold let
   them pick a point on the curve; that decision was reversed, so the curve is
   now a mapping with a single input). Gravity 9.8 m/s², so a shot at the far
-  rank drops about a metre over its flight and has to be aimed a little high.
+  rank passes 7.3 to 9.1 units under what it was aimed at, and one at the near
+  rank 3.6 to 5.4 — not the "about a metre" the spec previously estimated,
+  which was written from the outside and is out by something like an order of
+  magnitude, partly because the butts' real spawn positions (`x = rand(-30,
+  30)`) put a far-rank face 60 to 67 units away rather than the 40 the
+  geometry section quotes. Nor does the player aim high for it: `fire`
+  raycasts the aim, measures the range to whatever is under the reticle, and
+  launches at the elevation that lands the arrow there — about 5° of holdover
+  at the near rank and 7° at the far. The drop is exactly as real as it was;
+  the arrow simply now goes where the reticle says it goes, and the lead a
+  moving target needs is unchanged. The same solver (`ballisticElevation`)
+  aims the hostiles' arrows.
 - Both your arrows and theirs run through one integrator in `arrows.ts`, with
   a flag for whose they are.
 - An arrow that hits sticks in what it hit and fades over three seconds. One

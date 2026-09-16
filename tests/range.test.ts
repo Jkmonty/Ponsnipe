@@ -30,6 +30,7 @@ import {
   PEEK_WINDOW,
   SWING_AMPLITUDE,
   type Behaviour,
+  type Butt,
 } from "../src/app/(site)/range/butts";
 import {
   nockReady,
@@ -575,6 +576,137 @@ test("looseEnemyArrow's elevation is clamped rather than NaN when the range is b
   assert.ok(Number.isFinite(arrow.vel.y), "vel.y must not be NaN");
   assert.ok(Number.isFinite(arrow.vel.z), "vel.z must not be NaN");
   assert.ok(arrow.vel.y > 0, "the best available shot at an out-of-range target is still the steepest one, not level");
+});
+
+/*
+ * The other half of the same arithmetic: the player's own shot.
+ *
+ * `looseEnemyArrow` was launching flat down its aim line and scoring zero
+ * hits, because gravity drops an arrow out from under a straight line to the
+ * target; the test above is what pinned its fix. `World.fire` had exactly the
+ * same defect and never got the fix — it built a ray down the centre of the
+ * view, threw the ray away, and sent the arrow off along the direction alone.
+ * A shot the reticle said was dead centre landed metres low at the near rank
+ * and further still at the far one, which is the whole of "hits aren't
+ * registering": the arrows were real, the reticle was lying about where they
+ * went.
+ *
+ * Stated as a relationship and never as a transcribed hit rate: a shot aimed
+ * dead centre at a face connects with *that* face. Both ranks, and a spread
+ * of spawn positions rather than one lucky butt — `x` is `rand(-30, 30)`, so
+ * the horizontal range to a near-rank butt runs from 42 to over 51 units and
+ * a far-rank one from 60 to 67, and the elevation each of those needs is a
+ * different number.
+ *
+ * Why it aims at hostile butts: the filter has to leave a standing target
+ * that is still standing when the arrow lands, or a duck mid-flight gets
+ * blamed on the ballistics. A green butt dwells `rand(0.5, 1.2)`s once fully
+ * up, which is less than the ~1.3s an arrow needs to cross the far rank — it
+ * would start sinking under a perfectly aimed shot. A hostile one dwells
+ * `rand(1.3, 2.4)`s, so filtering to `dwell > 1.6` leaves room for the
+ * longest flight here with time to spare. Nothing else about the butt being
+ * hostile touches this: it shoots back, and being shot at moves health, not
+ * where our own arrow goes.
+ *
+ * Why it waits for a butt standing alone: a second butt up at the same time
+ * can be the one the arrow legitimately meets — a near-rank face between the
+ * eye and a far-rank one, or a same-rank neighbour whose face overlaps this
+ * one's — and a shot stopped by something genuinely in the way is not a
+ * ballistics failure. One target on the range removes the question entirely.
+ * Wave 0 spawns every 1.2-2.0s against the 0.42s a butt takes to rise, so
+ * the first one up is alone for long enough to shoot; a trial where a second
+ * arrives first is abandoned rather than scored.
+ *
+ * The assertion is on the target butt's own `dead`, not on the round's hit
+ * count: `dead > 0` is the struck butt falling away, so this pins the arrow
+ * to the face it was aimed at rather than to any face, and it is the same
+ * state the player sees as a target dropping when hit.
+ */
+test("a dead-centre shot connects: aimed at a standing butt's face, the arrow lands in that face — both ranks, right across the spread of spawn positions", () => {
+  const dt = 1 / 60;
+  // Every stock down, so every butt that rises is hostile and dwells long
+  // enough to still be there when the arrow arrives — see above.
+  const stocks = [{ symbol: "DN", changePct: -1 }];
+  // `look`'s own unscoped sensitivity, which is the only way in to yaw and
+  // pitch from outside the class. Deltas are measured off `facing`, so this
+  // lands on exactly the angle wanted rather than accumulating.
+  const LOOK_K = 0.0022;
+
+  const shoot = (rank: "near" | "far") => {
+    const w = new World(makeNullSurface(), stocks, () => {});
+    w.start();
+    let target: Butt | undefined;
+    for (let f = 0; f < 600; f++) {
+      w.step(dt);
+      if (w.butts.length > 1) return null;
+      const b = w.butts[0];
+      if (b && b.rank === rank && b.behaviour === "stand" && b.out >= 1 && b.dead === 0 && b.dwell > 1.6) {
+        target = b;
+        break;
+      }
+    }
+    if (!target) return null;
+
+    // Aim the way the camera does: straight at the face's world position,
+    // reticle dead centre (`look` re-centres `aim` itself).
+    const face = target.face.getWorldPosition(new T.Vector3());
+    const d = face.clone().sub(w.eye);
+    const yaw = Math.atan2(-d.x, -d.z);
+    const pitch = Math.asin(d.y / d.length());
+    w.look(-(yaw - w.facing.yaw) / LOOK_K, -(pitch - w.facing.pitch) / LOOK_K);
+    // A clamped view is not a dead-centre shot, and would make a miss below
+    // mean something other than what this test is about.
+    assert.ok(
+      Math.abs(w.facing.yaw - yaw) < 1e-6 && Math.abs(w.facing.pitch - pitch) < 1e-6,
+      "the view has to actually reach the face, or the shot below was never aimed at it",
+    );
+
+    assert.ok(w.fire(), "the nock is full at the start of a round, so the shot has to loose");
+    const arrow = w.arrows[w.arrows.length - 1];
+    for (let g = 0; g < 600 && arrow.stuck === 0 && w.arrows.includes(arrow); g++) w.step(dt);
+    const struck = target.dead > 0;
+
+    // The other half of what the player reported — "targets need to drop when
+    // hit" — measured on the same shot rather than argued about. `stepButt`'s
+    // death branch has always done this; there was simply never a hit to set
+    // it off, which is why it was invisible. A third of a second of the fall
+    // is enough to see it without running into `world.ts`'s own filter
+    // retiring the butt at `DEATH_FALL_TIME`.
+    const heldAt = target.group.position.y;
+    const facedAt = target.group.rotation.z;
+    for (let g = 0; g < 20; g++) w.step(dt);
+    const fell = heldAt - target.group.position.y;
+    const turned = Math.abs(target.group.rotation.z - facedAt);
+
+    w.stop();
+    return { x: +target.x.toFixed(1), range: +Math.hypot(d.x, d.z).toFixed(1), struck, fell, turned };
+  };
+
+  for (const rank of ["near", "far"] as const) {
+    const shots = [];
+    for (let i = 0; i < 300 && shots.length < 20; i++) {
+      const r = shoot(rank);
+      if (r) shots.push(r);
+    }
+    assert.ok(shots.length >= 20, `${rank} rank: not enough standing butts came up alone to say anything about the ballistics`);
+    const xs = shots.map((s) => s.x);
+    assert.ok(
+      Math.min(...xs) < -8 && Math.max(...xs) > 8,
+      `${rank} rank: the butts shot at have to be spread across the range, not clustered where one elevation happens to work (saw x from ${Math.min(...xs)} to ${Math.max(...xs)})`,
+    );
+    const missed = shots.filter((s) => !s.struck).map((s) => ({ x: s.x, range: s.range }));
+    assert.deepEqual(
+      missed,
+      [],
+      `${rank} rank: a shot aimed dead centre at a standing face must land in it, at every range that face can stand at`,
+    );
+    const stoodThere = shots.filter((s) => s.fell < 2 || s.turned < 1);
+    assert.equal(
+      stoodThere.length,
+      0,
+      `${rank} rank: a struck butt has to visibly fall away and turn as it goes; the drop was always there, and a hit landing is what finally makes it something anyone sees`,
+    );
+  }
 });
 
 /*
