@@ -1650,6 +1650,9 @@ export class World {
      * just cannot all land at once.
      */
     if (this.hurt > 0) return;
+    // 18 off a bar of 100, so six arrows finish a round. That is the number
+    // the menu card states in words and the death-path test measures; the
+    // spec said three for three phases and never described the game.
     this.health = Math.max(0, this.health - 18);
     this.combo = 0;
     this.points = Math.max(0, this.points - 250);

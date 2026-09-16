@@ -21,7 +21,7 @@ These came out of the brainstorm and are not open.
 |---|---|
 | Platforms | Desktop and phone both |
 | Scope this round | Feel, danger, ending and look, all four |
-| Round shape | Unchanged: 60 seconds, three arrows taken ends it |
+| Round shape | Unchanged: 60 seconds, six arrows taken ends it (the spec previously said three; the game has always had 100 health at 18 a hit, which is six, and the code is what ships) |
 | Light | Golden hour: low sun, long shadows, warm haze |
 | Desktop shot | Hold to draw, release to loose; draw sets power |
 | Phone shot | Tap to fire at a fixed draw; drag to aim |

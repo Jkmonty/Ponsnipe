@@ -626,7 +626,7 @@ export default function ArcadePage() {
                       <p className="arc-card-rules">
                         Move to look, click to loose, hold right to raise the scope. Green
                         butts are shares up today and worth points. Red ones are down on
-                        the day, and they shoot back — three arrows and you are finished.
+                        the day, and they shoot back — six arrows and you are finished.
                       </p>
                     </>
                   )}
