@@ -1622,11 +1622,14 @@ export class World {
    */
   private onArrowHit(a: Arrow, hit: T.Object3D, point: T.Vector3 | undefined, consequencesActive: boolean) {
     // `attractStep`'s own gate, consulted here rather than re-derived: no
-    // credited hit may change points or health while attracting. In
-    // practice no arrow should exist to reach this at all — input refuses
-    // to fire and a hostile butt cannot spawn or loose one — but this is
-    // the one place score and health actually move, so it holds the line
-    // even if an arrow got here some other way.
+    // credited hit may change points or health while attracting. What keeps
+    // arrows away from here is that gate and not the pool — attract mode
+    // raises red butts as freely as green ones, since a butt's colour is
+    // only what the day looks like (see `spawn`) — so the guarantee is that
+    // nothing may wind up or loose while the gate is false and every input
+    // that could fire refuses. This is the one place score and health
+    // actually move, so it holds the line anyway, whatever arrow reached it
+    // and however.
     if (!consequencesActive) return;
     if (a.mine) {
       const b = this._butts.find((x) => x.face === hit);

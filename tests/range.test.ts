@@ -81,13 +81,14 @@ globalThis.requestAnimationFrame ??= (() => 0) as typeof requestAnimationFrame;
 globalThis.cancelAnimationFrame ??= (() => {}) as typeof cancelAnimationFrame;
 
 /*
- * Attract mode spawns real (non-hostile) butts too — the wood is alive
- * before Start, not just green afterward — and building one bakes its
- * ticker onto a canvas texture (`tickerLabel` in butts.ts), which needs a
- * working `document.createElement("canvas")`. This is bare 2D context
- * plumbing so that real drawing can run without throwing; it decides
- * nothing the game decides, the same way the rAF stand-in above only
- * stands in for the browser's scheduler, not for `step` itself.
+ * Attract mode spawns real butts, red and green alike — the wood is alive
+ * before Start and draws from the whole day, not the green half of it —
+ * and building one bakes its ticker onto a canvas texture (`tickerLabel`
+ * in butts.ts), which needs a working `document.createElement("canvas")`.
+ * This is bare 2D context plumbing so that real drawing can run without
+ * throwing; it decides nothing the game decides, the same way the rAF
+ * stand-in above only stands in for the browser's scheduler, not for
+ * `step` itself.
  */
 if (typeof document === "undefined") {
   const context2d = {
