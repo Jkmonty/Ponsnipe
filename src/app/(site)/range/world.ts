@@ -46,6 +46,7 @@ import {
   ARROW_LIFE,
   type Arrow,
 } from "./arrows";
+import { waveAt, type WaveState } from "./waves";
 
 export interface Stock {
   symbol: string;
@@ -84,6 +85,10 @@ export interface Snapshot {
       hit can change points or health. The overlay reads this to know it
       should still be showing the start screen rather than the HUD. */
   attract: boolean;
+  /** Which wave is running, 0..2, so the HUD can tighten in the storm.
+      Stays 0 through the whole of attract mode, the same as `msLeft`
+      staying at `ROUND_MS` — the clock that would advance it never runs. */
+  wave: number;
 }
 
 export const ROUND_MS = 60_000;
@@ -212,6 +217,20 @@ const POPUP_RISE = 2.2;
     aspect ratio, since it is a chip sized to fit its label, not a square. */
 const POPUP_SCALE = 1.1;
 
+/**
+ * How far the sun's own intensity is allowed to fall over the course of a
+ * round, out of the base 2.4 `scene.ts` builds it at — small on purpose.
+ * Golden hour was tuned deliberately in Phase 2 against that exact
+ * intensity and the ambient level beside it, and a fix round was needed to
+ * get the two reading right together; this is not a second lighting pass,
+ * only a late-round cue that the light is dying, read against `elapsed /
+ * ROUND_MS` so it lands gradually across the whole round rather than
+ * snapping at a wave boundary. At 0.35 out of 2.4 the drop is under 15%,
+ * enough to feel like dusk deepening, not enough to fight the shadows and
+ * fog `buildWood` already balanced against the brighter number.
+ */
+const LIGHT_DROP = 0.35;
+
 export class World {
   private scene = new T.Scene();
   private camera: T.PerspectiveCamera;
@@ -285,6 +304,23 @@ export class World {
   private bestSymbolPoints = 0;
   msLeft = ROUND_MS;
   over = false;
+  /** The round's current wave, 0..2, read fresh from `waveAt` every frame in
+      `step` rather than advanced by hand — `waveAt` is the one place that
+      owns the pacing curve, this is only where the last answer it gave is
+      kept for `snapshot()`, `spawn()` and the light/music cues to read
+      without each calling `waveAt` again themselves. */
+  private wave: WaveState = waveAt(0);
+  /** The sun's own intensity as `scene.ts` built it, captured once so the
+      round's small late-round dimming (`LIGHT_DROP`) has a fixed number to
+      fall away from rather than compounding off whatever the last frame
+      left it at. */
+  private sunBaseIntensity = 0;
+  /** The wave last handed to `Sfx.setWave`, so the music is only re-cued on
+      an actual wave change rather than every frame — `setWave` schedules a
+      Web Audio ramp, and scheduling one sixty times a second for the same
+      target would still be harmless but is not what "the music tightens
+      for wave 2" means. */
+  private lastMusicWave = -1;
   /** Read it, but set it through setScoped so the view can follow. */
   scoped = false;
   /** Seconds of red flash left after taking an arrow. */
@@ -342,6 +378,11 @@ export class World {
         ground to close than a near-rank one. See `step`'s call, right after
         `stepArrows`. */
     whistle(distance: number): void;
+    /** Cue the music loop's own tightening for wave 2 — one loop's playback
+        rate changing, not a second layer starting. Called once per wave
+        change, not every frame (see `lastMusicWave`). Optional: not every
+        sound bench build has it, and a fake `sfx` in a test need not either. */
+    setWave?(wave: number): void;
   } | null = null;
 
   constructor(
@@ -357,6 +398,7 @@ export class World {
     // proximity check has an Object3D to measure against.
     this.camera.userData.isPlayer = true;
     this.wood = buildWood(this.scene);
+    this.sunBaseIntensity = this.wood.sun.intensity;
     this.tagGround(this.wood.root);
     this.buildBow();
     this.resize();
@@ -437,6 +479,7 @@ export class World {
       hurt: Math.max(0, Math.min(1, this.hurt / HURT_TIME)),
       draw: this.draw,
       attract: this.attracting,
+      wave: this.wave.wave,
     };
   }
 
@@ -553,21 +596,57 @@ export class World {
   }
 
   /**
+   * How much of an even 50/50 near/far draw is shifted toward the near
+   * rank — the reviewer's call Task 2 deferred to this task, since the
+   * split is pacing and pacing is this task's whole subject. The far rank
+   * is half the size to hit and worth double, so an even draw handed out
+   * the better-paying shot as often as the easy one; weighting it down to
+   * roughly a third to two-fifths of spawns (0.38 here) keeps a far target
+   * feeling like the one worth reaching for rather than the default. Kept
+   * flat across all three waves — the spec's own pacing table varies how
+   * many butts are up and how many are red, never the rank split, and nothing
+   * in the brief asks this to tighten with the storm the way those two do.
+   *
+   * `Math.random() < NEAR_CHANCE` (not `>= NEAR_CHANCE` picking near) is
+   * deliberate: the existing wind-up regression tests in
+   * tests/range.test.ts pin `Math.random` to exactly 0 and rely on that
+   * landing on the near rank (see the "near rank, x = -30" comment there) —
+   * this keeps that true for any `NEAR_CHANCE` above 0, so retuning the
+   * split does not also have to touch those tests.
+   */
+  private static readonly NEAR_CHANCE = 0.62;
+
+  /**
    * Raise one butt. `hostileActive` is `attractStep`'s own gate: while it is
    * false (the whole of attract mode) a hostile pick is refused outright,
    * not merely biased against — even on an all-red day, when `up` is empty,
    * attract simply raises nothing rather than a red butt that (per the same
    * gate, read again in `step`) could never be allowed to fire anyway.
+   * `wave` is the round's current pacing band (see `waves.ts`): it caps how
+   * many reds may already be up, biases the draw toward one more, and picks
+   * the behaviour pool a fresh butt may rise with.
    */
-  private spawn(hostileActive: boolean) {
+  private spawn(hostileActive: boolean, wave: WaveState) {
     if (!this.stocks.length) return;
     /*
-     * Half the range should be shooting back.
-     *
+     * Half the range should be shooting back — but never past `wave`'s own
+     * cap on how many reds may be up at once. `Math.round` rather than
+     * `Math.floor`/`Math.ceil`: it is the same rounding `waveAt`'s own doc
+     * comment promises and the pacing test asserts, so wave 0's 3 * 0.2
+     * lands on the "at most one" the spec states in words, not on zero.
+     * `Math.max(1, ...)` only matters once `hostileShare` is high enough
+     * that rounding could otherwise floor a real allowance to nothing.
+     */
+    const activeHostileUp = this._butts.filter((b) => b.dead === 0 && b.hostile).length;
+    const hostileCap = Math.max(1, Math.round(wave.maxUp * wave.hostileShare));
+    const hostileRoom = activeHostileUp < hostileCap;
+    /*
      * Hostility is real: a butt is red because the share is down today. But
      * on a green day that left almost nothing firing, and the game stopped
-     * being a game. So the draw is biased — still a real ticker that really
-     * is down, just picked for more often than chance would.
+     * being a game. So the draw is biased above `wave.hostileShare` itself —
+     * still a real ticker that really is down, just picked for more often
+     * than chance would — and then capped by `hostileRoom` above so the bias
+     * cannot push a wave past its own allowance.
      */
     const down = this.stocks.filter((x) => x.changePct < 0);
     const up = this.stocks.filter((x) => x.changePct >= 0);
@@ -576,19 +655,14 @@ export class World {
       if (!up.length) return;
       pool = up;
     } else {
-      const wantHostile = down.length > 0 && (up.length === 0 || Math.random() < 0.45);
+      const wantHostile =
+        hostileRoom && down.length > 0 && (up.length === 0 || Math.random() < wave.hostileShare * 1.4);
       pool = wantHostile ? down : up.length ? up : this.stocks;
     }
     const stock = pool[Math.floor(Math.random() * pool.length)];
-    // Near or far, an even draw between the two — nothing in the spec
-    // weights one rank over the other, only the widened gap and size
-    // difference between them (see `RANKS` in butts.ts).
-    const rank: Rank = Math.random() < 0.5 ? "near" : "far";
+    const rank: Rank = Math.random() < World.NEAR_CHANCE ? "near" : "far";
     const x = rand(-30, 30);
-    // Waves are not a system yet (that is Task 4's job): this always passes
-    // 0, which keeps every spawn `stand` for now via `pickBehaviour`'s own
-    // wave-0 pool. Task 4 wires the round's real wave into this parameter.
-    const behaviour = pickBehaviour(0);
+    const behaviour = pickBehaviour(wave.wave);
     const butt = makeButt(stock, rank, x, behaviour);
     // stepArrows steers the player's own shots toward whatever carries this
     // flag, and raycasts every arrow's flight against it.
@@ -769,6 +843,34 @@ export class World {
       }
     }
     this.msLeft -= gate.clockDt * 1000;
+    /*
+     * The round's pacing, read fresh every frame from the one pure function
+     * that owns it (see `waves.ts`) rather than advanced by hand — during
+     * attract mode `gate.clockDt` is 0, so `msLeft` never moves off
+     * `ROUND_MS` and this stays at wave 0 the whole time, same as the clock
+     * itself not running. Clamped to 0..ROUND_MS before either `waveAt` or
+     * the light fraction below reads it, since `msLeft` can sit briefly
+     * negative on the very frame the round ends, before the clamp a few
+     * lines down catches it for good.
+     */
+    const elapsedMs = Math.max(0, Math.min(ROUND_MS, ROUND_MS - this.msLeft));
+    this.wave = waveAt(elapsedMs);
+    /*
+     * The light drops a little through the round — a small, deliberate
+     * fraction of `LIGHT_DROP` out of the sun's own base intensity, not a
+     * second lighting pass. See `LIGHT_DROP`'s own comment for why this
+     * stays small.
+     */
+    this.wood.sun.intensity = this.sunBaseIntensity - (elapsedMs / ROUND_MS) * LIGHT_DROP;
+    /*
+     * The music tightens for wave 2 — cued once per wave change, not every
+     * frame, so `Sfx.setWave` only ever schedules one ramp per transition
+     * (see `lastMusicWave`'s own comment).
+     */
+    if (this.wave.wave !== this.lastMusicWave) {
+      this.lastMusicWave = this.wave.wave;
+      this.sfx?.setWave?.(this.wave.wave);
+    }
     if (this.msLeft <= 0 || this.lives <= 0) {
       this.msLeft = Math.max(0, this.msLeft);
       this.over = true;
@@ -790,12 +892,21 @@ export class World {
        * choice to make: shoot the one thing that is up. Two or three at once —
        * a red and a green together, or two reds on different lanes — is where
        * the decision is, because the red one is shooting at you while you
-       * line up the green one that is worth more.
+       * line up the green one that is worth more. The volley itself grows
+       * with the wave, same as it always scaled with the round's own
+       * progress before waves existed, but is capped so it can never push
+       * the range past `wave.maxUp` butts up at once.
        */
-      const progress = 1 - this.msLeft / ROUND_MS;
-      const volley = 1 + (Math.random() < 0.35 + progress * 0.4 ? 1 : 0) + (Math.random() < progress * 0.45 ? 1 : 0);
-      for (let i = 0; i < volley; i++) this.spawn(gate.hostileActive);
-      this.spawnIn = rand(0.5, 1.2) * (1 - progress * 0.45);
+      const activeUp = this._butts.filter((b) => b.dead === 0).length;
+      const room = Math.max(0, this.wave.maxUp - activeUp);
+      if (room > 0) {
+        const volley = Math.min(
+          room,
+          1 + (Math.random() < 0.35 + this.wave.wave * 0.2 ? 1 : 0) + (Math.random() < this.wave.wave * 0.25 ? 1 : 0),
+        );
+        for (let i = 0; i < volley; i++) this.spawn(gate.hostileActive, this.wave);
+      }
+      this.spawnIn = rand(this.wave.spawnEvery * 0.75, this.wave.spawnEvery * 1.25);
     }
 
     for (const b of this._butts) {
@@ -1475,6 +1586,9 @@ export class World {
     this.hurt = 0;
     this.mark = 0;
     this.markKill = false;
+    this.wave = waveAt(0);
+    this.wood.sun.intensity = this.sunBaseIntensity;
+    this.lastMusicWave = -1;
     this.drawn = 1;
     this.draw = 0;
     this.drawing = false;

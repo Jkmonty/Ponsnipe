@@ -33,6 +33,8 @@ import {
 } from "../src/app/(site)/range/butts";
 import { nockReady, World, TELL_MS } from "../src/app/(site)/range/world";
 import { makeNullSurface } from "../src/app/(site)/range/render";
+import { waveAt } from "../src/app/(site)/range/waves";
+import { musicRateForWave } from "../src/app/(site)/range/sfx";
 
 /*
  * `World.attract()` starts its render loop the same way a browser round
@@ -916,4 +918,117 @@ test("the incoming whistle is driven by the arrow's real distance, falling as it
   } finally {
     Math.random = originalRandom;
   }
+});
+
+/*
+ * Task 4: the round's pacing, `waveAt(elapsedMs)`, at the six moments the
+ * brief names — 0, 19s and 21s either side of the wave 0/1 seam, 44s and 46s
+ * either side of the wave 1/2 seam, and 59s deep in the storm. `waveAt` is
+ * specified as a pure function of elapsed time with no state of its own, so
+ * every one of these is a fresh, independent call rather than a sequence
+ * that has to be stepped through — the whole point of the seam is that a
+ * test can ask about second 46 without living through the 46 seconds before
+ * it.
+ */
+test("waveAt reports the three bands at the spec's own boundaries", () => {
+  assert.equal(waveAt(0).wave, 0, "the round opens in wave 0");
+  assert.equal(waveAt(19_000).wave, 0, "19s is still inside the 0-20s band");
+  assert.equal(waveAt(21_000).wave, 1, "21s has crossed into the 20-45s band");
+  assert.equal(waveAt(44_000).wave, 1, "44s is still inside the 20-45s band");
+  assert.equal(waveAt(46_000).wave, 2, "46s has crossed into the 45-60s band");
+  assert.equal(waveAt(59_000).wave, 2, "59s is deep in the storm");
+});
+
+/*
+ * The literal numbers matter less than the shape: a retune that nudges
+ * `maxUp` from 9 to 8, say, should not fail this suite, but a retune that
+ * silently inverts the curve — wave 2 calmer than wave 0 — must. So this
+ * asserts the *relationships* `waveAt`'s own doc comment promises (`maxUp`
+ * and `hostileShare` rising band over band, `spawnEvery` falling) rather
+ * than pinning today's exact literals, using the same six moments as the
+ * boundary test above so both tests are reasoning about the same bands.
+ */
+test("maxUp and hostileShare climb band over band while spawnEvery falls", () => {
+  const w0 = waveAt(0);
+  const w1 = waveAt(21_000);
+  const w2 = waveAt(46_000);
+
+  assert.ok(w0.maxUp < w1.maxUp, `maxUp should rise from wave 0 (${w0.maxUp}) to wave 1 (${w1.maxUp})`);
+  assert.ok(w1.maxUp < w2.maxUp, `maxUp should rise from wave 1 (${w1.maxUp}) to wave 2 (${w2.maxUp})`);
+
+  assert.ok(
+    w0.hostileShare < w1.hostileShare,
+    `hostileShare should rise from wave 0 (${w0.hostileShare}) to wave 1 (${w1.hostileShare})`,
+  );
+  assert.ok(
+    w1.hostileShare < w2.hostileShare,
+    `hostileShare should rise from wave 1 (${w1.hostileShare}) to wave 2 (${w2.hostileShare})`,
+  );
+
+  assert.ok(
+    w0.spawnEvery > w1.spawnEvery,
+    `spawnEvery should fall from wave 0 (${w0.spawnEvery}) to wave 1 (${w1.spawnEvery})`,
+  );
+  assert.ok(
+    w1.spawnEvery > w2.spawnEvery,
+    `spawnEvery should fall from wave 1 (${w1.spawnEvery}) to wave 2 (${w2.spawnEvery})`,
+  );
+
+  // Wave 0 must still hold to the spec's own "at most one" red: rounding
+  // maxUp * hostileShare to the nearest whole target — the same arithmetic
+  // world.ts's hostile cap uses — must land on exactly one, not zero (no red
+  // at all, too calm) and not two (no longer "at most one").
+  assert.equal(
+    Math.round(w0.maxUp * w0.hostileShare),
+    1,
+    "wave 0's maxUp and hostileShare together should cap at exactly one red up at once",
+  );
+});
+
+/*
+ * `waveAt` is documented as stateless — no clock of its own, nothing
+ * mutated between calls — which is what makes the two tests above valid as
+ * independent, any-order assertions rather than a sequence that has to be
+ * replayed in order. Proven directly: calling it out of order, and calling
+ * it on the same instant twice in a row, must both answer identically to
+ * calling it once, in order.
+ */
+test("waveAt is a pure function of elapsed time, not a stepped clock", () => {
+  const outOfOrder = waveAt(46_000);
+  const again = waveAt(21_000);
+  assert.deepEqual(outOfOrder, waveAt(46_000), "asking about 46s twice, with an unrelated call between, must agree");
+  assert.deepEqual(again, waveAt(21_000), "asking about 21s after 46s must match asking about 21s cold");
+  assert.deepEqual(waveAt(0), waveAt(0), "the same instant always answers the same way");
+});
+
+/*
+ * The music tightening `World.step` cues via `Sfx.setWave` (sfx.ts) — no one
+ * on this project can hear whether it actually sounds tighter, so this
+ * checks the number the tightening is built from instead, the same way
+ * `sfx.ts`'s own doc comment on `musicRateForWave` says to: wave 2 must play
+ * measurably faster than waves 0 and 1, and the concrete, arithmetic
+ * consequences of that — the loop's root partial rising in pitch and the
+ * whole 8-second buffer being read in less real time — are worked out here
+ * rather than only asserted as "higher".
+ */
+test("the music loop's playback rate tightens only in wave 2, and by a measurable margin", () => {
+  assert.equal(musicRateForWave(0), musicRateForWave(1), "waves 0 and 1 should share the same, untightened rate");
+  assert.ok(musicRateForWave(2) > musicRateForWave(1), "wave 2's rate must exceed wave 1's rate");
+  assert.ok(
+    musicRateForWave(2) - musicRateForWave(1) > 0.05,
+    "the wave 2 rate should differ by a real margin, not by floating-point noise",
+  );
+
+  // The root partial (55Hz, per sfx.ts's DRONE_PARTIALS) and the loop's own
+  // 8-second length, both scaled by the tightened rate — the concrete,
+  // audible-if-anyone-could-hear-it consequence of the number above.
+  const LOOP_ROOT_HZ = 55;
+  const LOOP_SECONDS = 8;
+  const tightenedRoot = LOOP_ROOT_HZ * musicRateForWave(2);
+  const tightenedLoopSeconds = LOOP_SECONDS / musicRateForWave(2);
+  assert.ok(tightenedRoot > LOOP_ROOT_HZ, `the root partial should climb above ${LOOP_ROOT_HZ}Hz, not just the rate number`);
+  assert.ok(
+    tightenedLoopSeconds < LOOP_SECONDS,
+    `the loop should complete in under ${LOOP_SECONDS}s once tightened, not just play at a different number`,
+  );
 });
