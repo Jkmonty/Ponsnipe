@@ -492,7 +492,7 @@ export default function ArcadePage() {
                         zero hits never sets it — see `bestSymbol`'s own doc
                         comment on `Snapshot`).
                       */}
-                      <p className="arc-card-rules arc-card-stats">
+                      <p className="arc-card-rules">
                         Longest streak {s.streak} · best ring {ringName(s.bestRing)}
                         {s.bestSymbol && <> · best ticker {s.bestSymbol}</>}
                       </p>

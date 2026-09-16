@@ -40,6 +40,7 @@ import {
   accuracyPct,
   SLOW_MOTION_SCALE,
   FINAL_STRETCH_MS,
+  ENDING_MAX_S,
 } from "../src/app/(site)/range/world";
 import { makeNullSurface } from "../src/app/(site)/range/render";
 import { waveAt } from "../src/app/(site)/range/waves";
@@ -1326,6 +1327,77 @@ test("the camera turns to follow the last arrow while the round waits it out", (
   assert.ok(
     w.facing.pitch < pitchAtLoose,
     `the view should tilt down to track the falling arrow (pitch went from ${pitchAtLoose} to ${w.facing.pitch})`,
+  );
+});
+
+/*
+ * The ceiling on that wait, and why it is there. A last arrow loosed at the
+ * very top of the pitch clamp — `look(0, -9999)` pegs it at +0.28 rad, 16°
+ * up — and left to miss everything flies for 13.4 real seconds before it
+ * finally lands, which is thirteen seconds spent watching an arrow the
+ * player already knows has missed. `ENDING_MAX_S` ends the round instead,
+ * and does it without touching the arrow: its `life` is never clamped, so
+ * it is still in the air when the card comes up and the scene simply
+ * freezes under it, the same as every other path out of a round. The
+ * ceiling is checked once a frame, so "inside the cap" means inside it give
+ * or take the frame it is checked on.
+ */
+test("a lofted last arrow cannot hold the round open past the ending's ceiling", () => {
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  w.start();
+  const dt = 1 / 60;
+
+  w.look(0, -9999); // pegged at the top of the pitch clamp: the longest flight there is
+  assert.ok(w.fire(), "the shot should have loosed"); // `fire`'s default draw is a full one
+
+  w.msLeft = 1; // the clock runs out with that shot still climbing
+  let seconds = 0;
+  while (!w.over && seconds < ENDING_MAX_S * 4) {
+    w.step(dt);
+    seconds += dt;
+  }
+
+  assert.ok(w.over, "the round should have ended rather than waiting the whole flight out");
+  assert.ok(
+    seconds - ENDING_MAX_S < 2 * dt,
+    `the ending should have been cut off at its ceiling (${ENDING_MAX_S}s) — it ran ${seconds.toFixed(2)}s`,
+  );
+  assert.ok(
+    w.arrows.some((a) => a.mine && a.stuck === 0),
+    "the arrow should still be in the air: the cap ends the round, it does not cut the arrow's life short",
+  );
+});
+
+/*
+ * The other side of that ceiling, which is the one that would go unnoticed:
+ * it has to stay the exception. An ordinary flat shot resolves on its own
+ * terms — the arrow lands and sticks, and *that* is what ends the round —
+ * comfortably inside `ENDING_MAX_S`. If the cap ever became the ordinary way
+ * a round finishes, the ending would be broken in the opposite direction,
+ * and this is the assertion that would say so.
+ */
+test("an ordinary flat last arrow still ends the round on its own terms, well inside the ceiling", () => {
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  w.start();
+  const dt = 1 / 60;
+
+  assert.ok(w.fire(), "the shot should have loosed");
+
+  w.msLeft = 1;
+  let seconds = 0;
+  while (!w.over && seconds < ENDING_MAX_S * 4) {
+    w.step(dt);
+    seconds += dt;
+  }
+
+  assert.ok(w.over, "the round should have ended");
+  assert.ok(
+    seconds < ENDING_MAX_S * 0.8,
+    `a flat shot should finish well short of the ceiling (${ENDING_MAX_S}s), not be truncated by it — it ran ${seconds.toFixed(2)}s`,
+  );
+  assert.ok(
+    !w.arrows.some((a) => a.mine && a.stuck === 0),
+    "nothing of the player's should still be flying: this round ended because its arrow resolved, not because the cap fired",
   );
 });
 

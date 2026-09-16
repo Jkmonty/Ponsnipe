@@ -103,13 +103,37 @@ const START_LIVES = 3;
  * round themselves play out at the same quarter speed instead. One scale,
  * used everywhere `step` would otherwise pass a frame's real `dt` straight
  * through: arrows, butts, the wood, the popups. See `endingGate`, the one
- * place that decides when it applies, and `step`'s own comment on why the
- * round clock (`msLeft`) is the one thing never multiplied by it.
+ * place that decides when it applies, and `step`'s own comments on the two
+ * things never multiplied by it: the round clock (`msLeft`) and the
+ * ending's own ceiling (`ENDING_MAX_S`), both of which are counts of real
+ * seconds and would mean nothing measured in slowed ones.
  */
 export const SLOW_MOTION_SCALE = 0.25;
 /** The spec's own "last two seconds" — how far out from the round's own end
-    the slow-motion tail starts when nothing is in the air. */
+    the slow-motion tail starts when nothing is in the air. Real ms, since
+    the clock it is read off never slows down: the tail lasts two real
+    seconds, quarter speed or not. */
 export const FINAL_STRETCH_MS = 2_000;
+/**
+ * The ceiling on the last-arrow ending, in real seconds: once the round has
+ * spent this long following an arrow out, it ends, whatever that arrow is
+ * still doing.
+ *
+ * Five is chosen, not inherited. Measured headlessly against the real
+ * `World`, a last arrow that misses everything and is left to land takes
+ * about 3.1–3.4s fired flat, 5.7–7.7s at 8° of loft, and 8.8–13.4s at the
+ * +0.28 rad the pitch clamp allows; a hit ends sooner still, because the
+ * arrow sticks where it lands. Five sits above every flat miss and every
+ * hit and below the lofted outlier, so it truncates only the case worth
+ * truncating — thirteen seconds watching an arrow the player already knows
+ * has missed — and never becomes the ordinary way a round finishes.
+ *
+ * The arrow's own `life` is deliberately not clamped to match: it is still
+ * flying when the round ends, and the results card comes up over a frozen
+ * scene exactly as it does on every other path, rather than the arrow
+ * winking out in mid-air.
+ */
+export const ENDING_MAX_S = 5;
 /** How fast the view eases toward the last arrow while it is being followed
     out — snappy enough to read as the camera turning to watch it land,
     never an instant snap onto it. */
@@ -152,8 +176,10 @@ export interface EndingGates {
       clock itself. 1 outside either ending condition. */
   timeScale: number;
   /** Whether the clock has run out. `step` holds off setting `over` while
-      this is true and a player arrow is still up, and refuses new spawns,
-      new fire and new hostile shots the whole time it is true. */
+      this is true and a player arrow is still up — for at most
+      `ENDING_MAX_S` real seconds of it, which is `step`'s own ceiling and
+      not this function's — and refuses new spawns, new fire and new hostile
+      shots the whole time it is true. */
   timeUp: boolean;
 }
 
@@ -358,7 +384,8 @@ export class World {
   /**
    * True once the round clock has run out and a last arrow is still being
    * followed home (see `endingGate`'s `timeUp`) — from the frame that
-   * happens until that arrow resolves and `over` is finally set. Every
+   * happens until that arrow resolves, or `ENDING_MAX_S` real seconds pass
+   * with it still flying, and `over` is finally set either way. Every
    * input that could begin something new (`look`, `setScoped`, `beginDraw`,
    * `touchFire`, `fire`, `aimAt`, `setStrafe`) refuses outright while this
    * is true, the same shape `attracting` already gates them on: nothing new
@@ -366,6 +393,14 @@ export class World {
    * flight gets to finish.
    */
   private ending = false;
+  /**
+   * How long the ending above has been running, in real seconds — counted
+   * only while `ending`, never scaled by `SLOW_MOTION_SCALE` (see `step`,
+   * which says why), and compared against `ENDING_MAX_S` to decide when a
+   * last arrow has been followed for long enough. Reset by `start()` along
+   * with the rest of a round's state.
+   */
+  private endingSeconds = 0;
   /** Elapsed seconds since `attract()` began, driving the camera's own drift
       — kept apart from anything else so it does not reset on a resize or a
       snapshot, only on a fresh `attract()`. */
@@ -1007,8 +1042,18 @@ export class World {
         this.onChange(this.snapshot());
         return;
       }
-      // Else: the clock has run out but the last arrow is still up. Keep
-      // stepping — at `dtScaled`'s own quarter speed — instead of returning;
+      /*
+       * Else: the clock has run out but the last arrow is still up, so this
+       * frame belongs to the ending. Count it — in raw, unscaled `dt`,
+       * which is deliberate and not a line the time-scale pass above
+       * missed. `ENDING_MAX_S` is a ceiling in *real* seconds, and a
+       * counter fed `dtScaled` would stretch by 4x along with everything
+       * else the quarter speed touches and so cap nothing at all. This and
+       * `msLeft` above are the only two places in `step` where raw `dt` is
+       * the right answer.
+       */
+      this.endingSeconds += dt;
+      // Keep stepping — at `dtScaled`'s own quarter speed — instead of returning;
       // no new spawn and no new hostile shot may begin below while `ending`
       // is true (see the spawn and wind-up/loose blocks), and every input
       // that could start something new already refuses on the same flag
@@ -1196,12 +1241,19 @@ export class World {
       // `stepArrows` above, rather than where it was at the top of this
       // frame — "the camera following it in", per the spec.
       const followed = this._arrows.find((a) => a.mine && a.stuck === 0);
-      if (followed) {
+      if (followed && this.endingSeconds < ENDING_MAX_S) {
         this.followArrow(followed, dtScaled);
       } else {
-        // It just resolved this frame — stuck in something, or expired.
-        // The round finishes here, with that last hit (or miss) already
-        // reflected in this same frame's score and health.
+        /*
+         * Either that arrow just resolved this frame — stuck in something,
+         * or expired — or it is still flying and the ending has hit its own
+         * ceiling (see `ENDING_MAX_S`, and the count kept above). Both
+         * finish the round here, with that last hit (or miss) already
+         * reflected in this same frame's score and health. A capped ending
+         * leaves the arrow exactly as it is, still in the air with its
+         * `life` untouched: the scene freezes under the results card, the
+         * same as it does on every other path out of a round.
+         */
         this.ending = false;
         this.over = true;
         this.renderedFinalFrame = false;
@@ -1838,6 +1890,7 @@ export class World {
     this.msLeft = ROUND_MS;
     this.over = false;
     this.ending = false;
+    this.endingSeconds = 0;
     this.hurt = 0;
     this.mark = 0;
     this.markKill = false;
