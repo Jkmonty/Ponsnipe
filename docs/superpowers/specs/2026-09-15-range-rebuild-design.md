@@ -23,7 +23,7 @@ These came out of the brainstorm and are not open.
 | Scope this round | Feel, danger, ending and look, all four |
 | Round shape | Unchanged: 60 seconds, six arrows taken ends it (the spec previously said three; the game has always had 100 health at 18 a hit, which is six, and the code is what ships) |
 | Light | Golden hour: low sun, long shadows, warm haze |
-| Desktop shot | Hold to draw, release to loose; draw sets power |
+| Desktop shot | Click to shoot: one click, one arrow, immediately, at the same fixed draw a tap uses (the spec previously said hold to draw, release to loose, with the draw setting power; the user reversed that decision after playing it — "just make it tap to shoot and click to shoot on pc" — and a reversal by the person the game is for outranks a brainstorm) |
 | Phone shot | Tap to fire at a fixed draw; drag to aim |
 
 ## Non-goals
@@ -50,7 +50,7 @@ src/app/(site)/range/
   butts.ts      targets: spawn, rise, drift, retire, scoring     (new)
   arrows.ts     everything in flight, yours and theirs           (new)
   share.ts      the results image, drawn on a canvas             (new)
-  sfx.ts        unchanged, plus creak() and whistle()
+  sfx.ts        unchanged, plus whistle()
   kit.ts        unchanged
   page.tsx      the menu, the HUD, the results card
 ```
@@ -68,8 +68,12 @@ export interface Snapshot {
   hits: number; shots: number; combo: number;
   msLeft: number; over: boolean;
   mark: number; markKill: boolean; hurt: number;
-  /** 0..1, how far the bow is drawn right now. Desktop only. */
-  draw: number;
+  /** 0..1, how far the next arrow is back on the string after a shot — the
+      nock's refill, which is the whole of the rate of fire. This field was
+      `draw`, how far the bow was pulled back right now, desktop only; there
+      is no pull to report since the desktop hold was reversed, and the
+      refill is what the HUD's meter has to show instead. */
+  nock: number;
   /** Longest run of hits without a miss this round. */
   streak: number;
   /** Best ring struck this round: 1 gold, 2 red, 3 blue, 4 black, 5 white. */
@@ -86,34 +90,48 @@ export interface Snapshot {
 The single biggest change: **your arrow becomes a projectile**. It leaves the
 bow, arcs under gravity, and takes time to arrive.
 
-- Speed from the draw: 55 m/s at a full draw, 28 m/s at the minimum the game
-  will loose. Gravity 9.8 m/s², so a full-draw shot at the far rank drops
-  about a metre over its flight and has to be aimed a little high.
+- Speed from the draw: the curve runs 28 m/s at a slack string to 55 m/s at a
+  full pull, and every shot the game actually looses sits at the one fixed
+  draw of 0.8, which is 49.6 m/s (the spec previously quoted the two ends as
+  the speeds a player would see, which was written while the desktop hold let
+  them pick a point on the curve; that decision was reversed, so the curve is
+  now a mapping with a single input). Gravity 9.8 m/s², so a shot at the far
+  rank drops about a metre over its flight and has to be aimed a little high.
 - Both your arrows and theirs run through one integrator in `arrows.ts`, with
   a flag for whose they are.
 - An arrow that hits sticks in what it hit and fades over three seconds. One
   that misses thuds into the palisade or the ground. At most 24 stuck arrows
   live at once; the oldest is retired first.
 
-### Drawing
+### Loosing
 
-Desktop, left button held:
+*This section previously described a desktop hold: `draw` running 0 → 1 over
+700 ms, a 0.15 floor under which a stray click loosed nothing, the field of
+view creeping in by four degrees, a creak rising in pitch, and the aim
+wandering by up to a degree once the pull was held past 1.4 seconds. The user
+reversed that decision — "just make it tap to shoot and click to shoot on pc"
+— so none of it survives. What is written below is what the game does.*
 
-- `draw` runs 0 → 1 over 700 ms. Releasing under 0.15 does nothing; the shot
-  is not loosed and the draw resets, so a stray click does not waste an arrow.
-- The bow bends and the string pulls back with the draw. The camera creeps in
-  by four degrees of field of view, the wind drops slightly, and a creak rises
-  in pitch.
-- Held past 1.4 seconds the arm begins to shake: the aim wanders by up to one
-  degree, growing. This is what stops holding a full draw forever being free.
-- On release: the arrow looses, the bow kicks, the camera kicks by 0.9 degrees
-  and settles over 200 ms, and the nock refills over 420 ms before the next
-  draw can begin.
+One press, one arrow, on both platforms:
 
-Phone, one tap:
-
-- A tap looses immediately at a fixed draw of 0.8, with no shake and no meter.
-- The same 420 ms nock applies, so the rate of fire matches.
+- A click on a mouse or a tap on a screen looses immediately, at a fixed draw
+  of 0.8. There is nothing to hold, nothing to release and no meter of the
+  pull, because the player no longer sets it. It fires on pointer *down*.
+- The bow kicks, the camera kicks by 0.9 degrees and settles over 200 ms, and
+  the nock refills over 420 ms before another shot is allowed.
+- That 420 ms is the entire rate of fire, and it is the same number on both
+  platforms, so a click and a tap get the same arrows out of the same seconds
+  of clock. Both platforms post to the same weekly board, so this is a
+  correctness property and not a balance one; `tests/range.test.ts` holds the
+  two paths equal rather than pinning either count.
+- The fixed draw stayed at the 0.8 the tap already used rather than rising to
+  a full 1. It was tuned against the ranks' real distances and the wave
+  pacing across three phases of work, and raising it would have retuned the
+  difficulty of a scoring round as a side effect of an input change.
+- Aim assist still splits by input, and only by input: a thumb gets 3.9° of
+  steering to a cursor's 2.6°, because a thumb is both the aim and the
+  trigger. That is unchanged and deliberate — it is which device fired, not
+  which draw was used.
 
 ### Magnetism
 
@@ -212,7 +230,10 @@ light on a red face at 40 units is the one way this palette could break the
 game's only rule that matters: a bad day must read as red.
 
 Sound gains a wind bed under everything, a slow music loop that tightens for
-wave 2, the draw creak, and the incoming whistle. Everything falls back to
+wave 2, and the incoming whistle. (A draw creak was specified and built here
+too: a rasp whose pitch climbed with the pull. It was retired with the pull
+itself — it existed to track a continuously changing value, and a click has
+none to track.) Everything falls back to
 silence rather than blocking the game, as the current sounds already do.
 
 ### Assets
@@ -230,7 +251,7 @@ already is.
 | | Desktop | Phone |
 |---|---|---|
 | Aim | Mouse, pointer-locked; cursor if refused | Drag |
-| Shoot | Hold left to draw, release to loose | Tap |
+| Shoot | Click left (the spec previously said hold to draw, release to loose; reversed by the user) | Tap |
 | Scope | Hold right | Two-finger hold |
 | Move | A and D, or arrow keys, to sidestep | Swing the view |
 

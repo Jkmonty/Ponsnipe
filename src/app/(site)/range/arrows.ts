@@ -90,7 +90,11 @@ export function looseEnemyArrow(scene: T.Scene, b: Butt, at: T.Vector3): Arrow {
   return { mesh, vel, life: 4, mine: false, stuck: 0, spin: rand(2, 5) };
 }
 
-/** A full draw sends it flat and fast; a snap shot lobs. */
+/** The two ends of the scale `drawSpeed` maps a draw onto: a full draw sends
+    an arrow flat and fast, a barely-pulled string lobs it. Both ends are real
+    numbers the function still has to honour, but the game itself now only
+    ever asks for the one fixed draw every shot looses at — see `SHOT_DRAW`
+    in world.ts. */
 export const DRAW_MIN_SPEED = 28;
 export const DRAW_MAX_SPEED = 55;
 export const GRAVITY = 9.8;
@@ -102,21 +106,18 @@ const MAX_ARROWS = 24;
 /** A player arrow that hits nothing eventually gives up and is removed. */
 export const ARROW_LIFE = 6;
 
+/**
+ * The speed a draw of `draw` sends an arrow out at, linear between the two
+ * ends above and clamped to them outside 0..1.
+ *
+ * The player no longer chooses the number that comes in here — every shot,
+ * click or tap, looses at `SHOT_DRAW` — but the mapping is still what turns
+ * that one draw into an arrow speed, and is still the only place the two
+ * ends of the scale are joined up.
+ */
 export function drawSpeed(draw: number): number {
   const d = Math.max(0, Math.min(1, draw));
   return DRAW_MIN_SPEED + (DRAW_MAX_SPEED - DRAW_MIN_SPEED) * d;
-}
-
-/**
- * How far the aim wanders after holding a full draw too long.
- *
- * Without this, the best play is to hold at full draw forever and loose only
- * on a certainty, which is not archery and is not a game. An archer's arm
- * starts to go after about a second and a half, so this does too.
- */
-export function drawShake(heldSeconds: number): number {
-  const over = Math.max(0, heldSeconds - 1.4);
-  return Math.min(0.0175, over * 0.011);
 }
 
 /**

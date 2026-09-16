@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import * as T from "three";
 import {
   drawSpeed,
-  drawShake,
   assistAngle,
   stepArrows,
   looseEnemyArrow,
@@ -254,18 +253,6 @@ test("two arrows landing on the same face in one tick score only once", () => {
 
   assert.equal(hits, 1, "the second arrow must not score a butt the first already killed this tick");
   assert.ok(a1.stuck > 0 && a2.stuck > 0, "both arrows still physically land, only one is credited");
-});
-
-test("a steady draw does not shake, and a long one does", () => {
-  assert.equal(drawShake(0), 0);
-  assert.equal(drawShake(1.4), 0);
-  assert.ok(drawShake(2) > 0, "past the hold limit the arm should wander");
-  assert.ok(drawShake(3) > drawShake(2), "and wander further the longer it is held");
-});
-
-test("the shake is capped, so a long hold is worse but never hopeless", () => {
-  assert.equal(drawShake(3), drawShake(30));
-  assert.ok(drawShake(30) <= 0.0175, "one degree is the most it may wander");
 });
 
 test("a touch-fired arrow is steered by the wider cone; a mouse-fired one at the same angle is not", () => {
@@ -591,17 +578,86 @@ test("looseEnemyArrow's elevation is clamped rather than NaN when the range is b
 });
 
 /*
- * `touchFire` used to call `fire` directly, and `fire`'s own gate
- * (`drawn < 0.5`) was looser than `beginDraw`'s (`drawn < 1`) — a tapping
- * phone could loose a shot every ~210ms against a mouse's own ~525ms.
- * `nockReady` is now the one gate both paths ask, so a value that used to
- * pass the old, looser `fire` threshold must now fail it too.
+ * The gate itself, in isolation — the arithmetic that the two-path parity
+ * test below rests on.
+ *
+ * There were once two thresholds: `fire` asked for half a nock while the
+ * desktop hold asked for a full one, and touch reached `fire` directly, so a
+ * tapping phone could loose every ~210ms against a mouse's ~525ms. The hold
+ * is gone and both inputs now enter through `fire`, which makes this the
+ * single question either of them asks. That is what earns it its own test
+ * and not fewer: a half-nock door reopening here would be the whole of the
+ * old platform imbalance coming back, and it would come back for *both*
+ * inputs at once, which is exactly the shape of defect an end-to-end parity
+ * test cannot see.
  */
-test("the nock gate is one full pull for a tap and a click alike, not the old half-nock door", () => {
+test("the nock gate is one full refill, and the old half-nock door stays shut", () => {
   assert.equal(nockReady(0), false);
   assert.equal(nockReady(0.5), false, "0.5 was fire()'s own old threshold — exactly what let touch fire 2.5x as fast");
   assert.equal(nockReady(0.99), false);
   assert.equal(nockReady(1), true);
+});
+
+/*
+ * Desktop and phone are one board, so they have to be one game.
+ *
+ * Scores from both post to the same weekly leaderboard, and that board pays
+ * a prize — so a platform that can put more arrows in the air than the other
+ * over the same seconds of clock, or send them out faster when it does, is a
+ * defect in the board and not a balance question to argue about. Desktop
+ * used to hold to draw, which made that comparison a genuinely open one: a
+ * held pull bought a faster arrow than a tap's fixed draw could. One click,
+ * one arrow closed it, and this is what holds it closed.
+ *
+ * Asserted as a relationship between the two paths and never as a
+ * transcribed number: the rate of fire and the arrow speed are both free to
+ * be retuned, and neither is what this test is about. What it refuses is the
+ * two of them ever disagreeing.
+ *
+ * Both drivers press as fast as the input allows — `fire` returns false for
+ * free while the nock is refilling, so calling it every frame is the most
+ * either platform could possibly get out of the window. The window sits in
+ * the middle of the round, clear of the last two seconds' slow motion, and a
+ * single up stock keeps the range hostile-free so nothing but the clock can
+ * end it.
+ */
+test("a click and a tap loose the same arrows, as many and as fast, over the same window", () => {
+  const dt = 1 / 60;
+  const windowMs = 5_000;
+  const stock = [{ symbol: "UP", changePct: 1 }];
+
+  const press = (touch: boolean) => {
+    const w = new World(makeNullSurface(), stock, () => {});
+    w.start();
+    const speeds: number[] = [];
+    while (w.msLeft > ROUND_MS - windowMs && !w.over) {
+      // `touch` is the one thing that differs between the two runs: which
+      // input this shot came from. It must not reach the rate of fire or the
+      // arrow's speed at all — only the aim assist, which is measured by its
+      // own test elsewhere.
+      if (w.fire(touch)) speeds.push(w.arrows[w.arrows.length - 1].vel.length());
+      w.step(dt);
+    }
+    return speeds;
+  };
+
+  const click = press(false);
+  const tap = press(true);
+
+  assert.ok(
+    click.length > 1,
+    "the window has to be long enough for the rate of fire to actually bind, or the equalities below compare nothing",
+  );
+  assert.equal(
+    tap.length,
+    click.length,
+    "a tap and a click must get the same number of arrows out of the same span of clock",
+  );
+  assert.deepEqual(tap, click, "and each of those arrows must leave at the same speed on both platforms");
+  assert.ok(
+    click.every((v) => v === click[0]),
+    "no shot may leave faster or slower than another: there is one draw now, and the player does not set it",
+  );
 });
 
 /*
@@ -1497,10 +1553,13 @@ test("the round's last arrow is followed out in slow motion instead of being cut
   assert.equal(w.msLeft, 0, "the clock clamps at zero and goes no further");
   assert.equal(w.over, false, "the round must not end yet — the last arrow is still being followed");
 
-  // Nothing new can be loosed while the last arrow is being followed out.
+  // Nothing new can be loosed while the last arrow is being followed out,
+  // and clicking away for a full second of frames must not change that.
   assert.equal(w.fire(), false, "no shot should be loosable during the ending sequence");
-  w.beginDraw();
-  for (let i = 0; i < 60; i++) w.step(dt);
+  for (let i = 0; i < 60; i++) {
+    w.fire();
+    w.step(dt);
+  }
   assert.equal(w.shots, 1, "the ending sequence must not let a second shot be counted");
 
   // Drive it forward until the arrow actually resolves.
@@ -1708,27 +1767,25 @@ test("reduced motion: the last two seconds still slow, the camera stays put, and
 /*
  * The one thing the reduced-motion flag may never do: change the score.
  *
- * `step` feeds the ending's scaled `dt` to both timers that gate a shot —
- * the nock's refill and the bow's pull — so whatever scale the "last two
- * seconds" tail runs at decides how many arrows a player can get away
- * inside it. Neutralising that scale for the setting and not against it
- * therefore paid out in shots, and shots are points on a board that pays a
- * prize. Extra shots are the same defect as fewer, so what is asserted here
- * is the relationship and not either count: whatever the game's rate of
- * fire turns out to be, the same two seconds of clock have to allow the
- * same number of them both ways round.
+ * `step` feeds the ending's scaled `dt` to the timer that gates a shot —
+ * the nock's refill — so whatever scale the "last two seconds" tail runs at
+ * decides how many arrows a player can get away inside it. Neutralising that
+ * scale for the setting and not against it therefore paid out in shots, and
+ * shots are points on a board that pays a prize. Extra shots are the same
+ * defect as fewer, so what is asserted here is the relationship and not
+ * either count: whatever the game's rate of fire turns out to be, the same
+ * two seconds of clock have to allow the same number of them both ways
+ * round.
  *
  * Two windows, each exactly `FINAL_STRETCH_MS` of clock wide so they are
  * comparable: one in the middle of the round, which is also what stops the
  * equality being satisfied by a driver that never looses anything at all,
  * and the tail itself.
  *
- * The driver is the full-draw player, the higher-scoring pattern and the
- * one the defect landed on: back on the string the instant the nock allows
- * and let go the instant it is at a full pull. `beginDraw` is a no-op while
- * already drawing or still nocking, so calling it every frame is simply
- * holding the button down. A single up stock keeps the range hostile-free,
- * so nothing but the clock can end either window.
+ * The driver is a player clicking as fast as the game will take it, which
+ * since one click is one arrow is now simply calling `fire` every frame:
+ * it returns false and costs nothing until the nock allows a shot, so this
+ * is the maximum a player could possibly get out of either window.
  */
 test("reduced motion cannot change how many shots two seconds of clock allow, at the end or anywhere else", () => {
   const dt = 1 / 60;
@@ -1740,9 +1797,8 @@ test("reduced motion cannot change how many shots two seconds of clock allow, at
     w.msLeft = from;
     let shots = 0;
     while (w.msLeft > to && !w.over) {
-      w.beginDraw();
+      if (w.fire()) shots += 1;
       w.step(dt);
-      if (w.pull >= 1 && w.releaseDraw()) shots += 1;
     }
     return shots;
   };
@@ -1750,7 +1806,7 @@ test("reduced motion cannot change how many shots two seconds of clock allow, at
   const midRound = shotsBetween(false, ROUND_MS, ROUND_MS - FINAL_STRETCH_MS);
   assert.ok(
     midRound > 0,
-    "the full-draw driver has to be able to loose something in an ordinary two seconds, or every equality below is vacuous",
+    "the clicking driver has to be able to loose something in an ordinary two seconds, or every equality below is vacuous",
   );
   assert.equal(
     shotsBetween(true, ROUND_MS, ROUND_MS - FINAL_STRETCH_MS),
@@ -1761,7 +1817,7 @@ test("reduced motion cannot change how many shots two seconds of clock allow, at
   assert.equal(
     shotsBetween(true, FINAL_STRETCH_MS, 0),
     shotsBetween(false, FINAL_STRETCH_MS, 0),
-    "the last two seconds must allow a full-draw player exactly the same shots with the setting as without it",
+    "the last two seconds must allow a clicking player exactly the same shots with the setting as without it",
   );
 });
 

@@ -40,13 +40,19 @@ The arrow landing is synthesised too, and deliberately low and quiet — it
 fires at the same instant as the marker, and three effects stacking on one hit
 is how a confirmation turns into mush.
 
-The draw's creak, the wind bed under a round and the music loop over it are
-synthesised as well, for the same two reasons in different proportions. The
-creak has to track a continuous value (how far the string is pulled), which a
-fixed sample cannot do, so it is built the way the marker is: filtered noise
-whose centre frequency and level both climb with the draw. The wind is a
-band-passed noise loop kept deliberately under every effect's level, so it
-reads as the floor the round stands on rather than as a sound of its own.
+The wind bed under a round and the music loop over it are synthesised as
+well. The wind is a band-passed noise loop kept deliberately under every
+effect's level, so it reads as the floor the round stands on rather than as a
+sound of its own.
+
+A draw creak was listed here too, and is no longer in the code: filtered noise
+whose pitch and level climbed with how far the string was pulled. It was
+synthesised rather than sampled because it had to track a continuous value,
+and when the desktop hold was replaced by a click there was no longer a
+continuous value to track — one grain at one fixed draw is a constant sound,
+which is exactly what a sample is good at and what the arrow's own release
+already covers. Nothing in the kit was ever licensed for it, so nothing is
+orphaned by its removal.
 
 The music loop is a plain low drone — root, a copy of the root detuned by
 exactly 1 / 8 Hz so it beats once slowly across the loop, a fifth and an
