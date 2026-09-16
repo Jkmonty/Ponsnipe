@@ -20,6 +20,18 @@ interface BoardRow {
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
+/** "Mon 15 Sep · 00:00 UTC". Always a Monday midnight by construction. Kept
+    in step with the same label on the hero's board card. */
+const endsLabel = (endsAt: number) => {
+  const day = new Date(endsAt).toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
+  return `${day} · 00:00 UTC`;
+};
+
 export default function ArcadePage() {
   const holder = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -33,6 +45,7 @@ export default function ArcadePage() {
   const [stocks, setStocks] = useState<Stock[] | null>(null);
   const [s, setS] = useState<Snapshot | null>(null);
   const [board, setBoard] = useState<BoardRow[]>([]);
+  const [endsAt, setEndsAt] = useState<number | null>(null);
   const [wallet, setWallet] = useState("");
   const [posted, setPosted] = useState<string | null>(null);
   /** Whether the browser granted pointer lock. Aiming differs if it did not. */
@@ -45,7 +58,10 @@ export default function ArcadePage() {
       .catch(() => setStocks([]));
     void fetch("/api/arcade")
       .then((r) => r.json())
-      .then((j: { top?: BoardRow[] }) => setBoard(j.top ?? []))
+      .then((j: { top?: BoardRow[]; endsAt?: number }) => {
+        setBoard(j.top ?? []);
+        setEndsAt(j.endsAt ?? null);
+      })
       .catch(() => {});
     // The wallet is only an address to send a prize to, so the one already in
     // this browser is the obvious default and nobody has to type anything.
@@ -206,7 +222,10 @@ export default function ArcadePage() {
         );
         return fetch("/api/arcade").then((r) => r.json());
       })
-      .then((j: { top?: BoardRow[] }) => setBoard(j?.top ?? []))
+      .then((j: { top?: BoardRow[]; endsAt?: number }) => {
+        setBoard(j?.top ?? []);
+        setEndsAt(j?.endsAt ?? null);
+      })
       .catch(() => setPosted("could not post that score"));
   }, [s?.over, posted, wallet]);
 
@@ -252,7 +271,7 @@ export default function ArcadePage() {
         </div>
       </div>
 
-      <div className="range-grid">
+      <div className="range-body">
 
         {/*
           The centre reticle is only honest in two of the three states: locked,
@@ -317,33 +336,67 @@ export default function ArcadePage() {
           {(!s || s.over || s.attract) && (
             <div className="arc-overlay">
               {!stocks ? (
-                <p>loading targets…</p>
+                <p className="arc-card arc-card-load">loading targets…</p>
               ) : !stocks.length ? (
-                <p>No stock targets available right now.</p>
-              ) : s?.over ? (
-                <>
-                  <h1>{s.points.toLocaleString()}</h1>
-                  <p>
-                    {s.hits} hits from {s.shots} shots
-                    {s.shots > 0 && ` · ${Math.round((s.hits / s.shots) * 100)}%`}
-                  </p>
-                  {posted && <p className="arc-posted">{posted}</p>}
-                  <button className="btn btn-primary btn-lg" onClick={play}>
-                    Again
-                  </button>
-                </>
+                <p className="arc-card arc-card-load">No stock targets available right now.</p>
               ) : (
-                <>
-                  <h1>Sherwood Shooting Range</h1>
-                  <p>
-                    Move to look, click to loose, hold right to raise the scope.
-                    Green butts are shares up today and worth points. Red ones are down
-                    on the day, and they shoot back — three arrows and you are finished.
-                  </p>
+                <div className="arc-card">
+                  <p className="lab arc-card-lab">Sherwood · Robinhood Chain</p>
+                  {s?.over ? (
+                    <>
+                      <h1 className="display arc-card-title">{s.points.toLocaleString()}</h1>
+                      <p className="arc-card-rules">
+                        {s.hits} hits from {s.shots} shots
+                      </p>
+                      {posted && <p className="arc-posted">{posted}</p>}
+                    </>
+                  ) : (
+                    <>
+                      <h1 className="display arc-card-title">Sherwood, at first light.</h1>
+                      <p className="arc-card-rules">
+                        Move to look, click to loose, hold right to raise the scope. Green
+                        butts are shares up today and worth points. Red ones are down on
+                        the day, and they shoot back — three arrows and you are finished.
+                      </p>
+                    </>
+                  )}
+
+                  <div className="arc-chips">
+                    {stocks.slice(0, 8).map((t) => (
+                      <span key={t.symbol} className={`arc-chip ${t.changePct >= 0 ? "up" : "down"}`}>
+                        <b>{t.symbol}</b>
+                        {t.changePct >= 0 ? "+" : ""}
+                        {t.changePct.toFixed(1)}%
+                      </span>
+                    ))}
+                  </div>
+
+                  {board.length > 0 && (
+                    <div className="arc-top3">
+                      <div className="arc-top3-h lab">
+                        <span>This week</span>
+                        {endsAt !== null && <span className="gold">ends {endsLabel(endsAt)}</span>}
+                      </div>
+                      <ol>
+                        {board.slice(0, 3).map((r, i) => (
+                          <li key={r.wallet}>
+                            <span className="n mono">{i + 1}</span>
+                            <span className="w mono">{r.name || short(r.wallet)}</span>
+                            <span className="p num">{r.points.toLocaleString()}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+
                   <button className="btn btn-primary btn-lg" onClick={play}>
-                    Start
+                    {s?.over ? "Again" : "Draw the bow"}
                   </button>
-                </>
+                  <p className="arc-controls mono">
+                    <span className="ctl-mouse">HOLD TO DRAW · RELEASE TO LOOSE · RIGHT-CLICK FOR THE SCOPE</span>
+                    <span className="ctl-touch">TAP TO FIRE · DRAG TO AIM</span>
+                  </p>
+                </div>
               )}
             </div>
           )}

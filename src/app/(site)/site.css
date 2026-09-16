@@ -360,10 +360,91 @@
 .site .range-head { width: min(1220px, 100%); display: flex; align-items: center; gap: var(--sp-5); padding: var(--sp-4) 0 var(--sp-2); }
 .site .range-head h1 { font-size: clamp(28px, 4vw, 40px); margin: 0; }
 .site .range-head p { margin: 4px 0 0; color: var(--moss); }
-.site .range-grid { width: min(1220px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--sp-6); align-items: start; }
-.site .range-grid .arc-stage { width: 100%; }
-.site .range-grid .arc-board { width: auto; }
-.site .range-grid .arc-rows li:nth-child(odd) { background: var(--forest-1); }
+/* The stage runs the full content width at roughly 16:9, the board below it
+   at the same width — not squeezed into a column beside it. fit() in
+   page.tsx keeps sizing the canvas off this box; only the box's shape moved. */
+.site .range-body { width: min(1220px, 100%); display: flex; flex-direction: column; gap: var(--sp-6); }
+.site .range-body .arc-stage { width: 100%; }
+.site .range-body .arc-board { width: 100%; }
+.site .range-body .arc-rows li:nth-child(odd) { background: var(--forest-1); }
+
+/* ── the menu card, over the drifting wood ───────────────────────────────
+   Glass, not a wall: golden hour and the attract drift are wasted behind a
+   solid black overlay. The card is translucent and blurred so the wood
+   still reads underneath, with a hairline and the same panel radius as the
+   rest of the site's surfaces. */
+/* overflow-y so a card taller than the stage (a lot of chips, a long board)
+   can be reached by scrolling the overlay itself rather than being clipped
+   by the stage's own overflow: hidden. */
+.site .arc-overlay { background: transparent; padding: var(--sp-5); overflow-y: auto; }
+.site .arc-card {
+  width: min(480px, 100%);
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-3);
+  text-align: center;
+  padding: var(--sp-6) var(--sp-5);
+  background: rgba(8, 12, 9, 0.78);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--hair-w);
+  border-radius: var(--r-panel);
+  box-shadow: var(--sh-3);
+}
+.site .arc-card-load { color: var(--moss); }
+.site .arc-card-lab { margin: 0; }
+.site .arc-card-title { margin: 0; font-size: clamp(24px, 3.4vw, 32px); }
+.site .arc-card-rules { margin: 0; color: var(--moss); font-size: 14px; line-height: 1.5; max-width: 42ch; }
+
+/* Today's targets, as chips: a ticker and its day move, the same green/red
+   rule the hero's pins use. */
+.site .arc-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.site .arc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono-site);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 10px 6px 8px;
+  border-radius: var(--r-ctl);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--hair-w);
+}
+.site .arc-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.site .arc-chip b { color: var(--moon); font-weight: 600; }
+.site .arc-chip.up { color: var(--up); }
+.site .arc-chip.down { color: var(--down); }
+
+/* The week's top three, folded into the card rather than a second panel. */
+.site .arc-top3 { width: 100%; max-width: 340px; }
+.site .arc-top3-h { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.site .arc-top3-h .gold { color: var(--gold); }
+.site .arc-top3 ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.site .arc-top3 li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: var(--r-ctl);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12.5px;
+}
+.site .arc-top3 li:first-child { background: var(--gold-dim); }
+.site .arc-top3 .n { color: var(--bark); }
+.site .arc-top3 li:first-child .n { color: var(--gold); }
+.site .arc-top3 .w { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--moon); }
+.site .arc-top3 .p { color: var(--lime); font-weight: 600; }
+
+/* The controls line: mouse wording by default, touch wording on a device
+   that cannot hover — the same query used to tell a finger from a cursor. */
+.site .arc-controls { margin: 0; font-size: 10.5px; letter-spacing: 0.06em; color: var(--bark); }
+.site .ctl-touch { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .site .ctl-mouse { display: none; }
+  .site .ctl-touch { display: inline; }
+}
 
 /* The draw meter: a thin lime bar, opposite the health bar, that fills as the
    string comes back. Only rendered while actually drawing, so its own CSS
@@ -408,7 +489,6 @@
 /* ── responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 940px) {
   .site .claims, .site .honest { grid-template-columns: 1fr; gap: var(--sp-5); }
-  .site .range-grid { grid-template-columns: 1fr; }
   .site .strip-row { grid-template-columns: 28px minmax(0, 1fr) auto; }
   .site .strip-row .q, .site .strip-row .age { display: none; }
 }
@@ -427,6 +507,24 @@
   .site .butt-arrow, .site .pin, .site .butt-note { display: none; }
   .site .board { width: 100%; }
   .site .hero-cta .hbtn { width: 100%; }
+
+  /* The card at phone width: pinned to the top of the stage rather than
+     vertically centred, less padding, smaller type, nothing wider than the
+     viewport so the page never gains a sideways scrollbar — and tight
+     enough top to bottom that it sits inside the stage's own height
+     without needing the overlay's scroll as anything but a safety net. */
+  .site .arc-overlay { align-content: start; padding: var(--sp-3); }
+  .site .arc-card { padding: var(--sp-4) var(--sp-3); gap: 6px; }
+  .site .arc-card-title { font-size: 21px; }
+  .site .arc-card-rules { font-size: 12.5px; line-height: 1.4; }
+  .site .arc-chips { gap: 6px; }
+  .site .arc-chip { font-size: 11px; padding: 4px 7px 4px 6px; }
+  .site .arc-controls { font-size: 10px; }
+  /* The week's top three is the one section dropped at phone width: the
+     full board already sits one scroll below the stage on this same page,
+     so repeating it inside a card this short would cost more height than
+     it is worth and push the button and controls line out of the stage. */
+  .site .arc-top3 { display: none; }
 }
 
 /* Everything honours reduced motion. Nothing animates behind text anyway.
