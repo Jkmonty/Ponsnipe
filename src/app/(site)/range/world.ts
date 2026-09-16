@@ -1158,17 +1158,27 @@ export class World {
        * which is deliberate and not a line the time-scale pass above
        * missed. `ENDING_MAX_S` is a ceiling in *real* seconds, and a
        * counter fed `dtScaled` would stretch by 4x along with everything
-       * else the quarter speed touches and so cap nothing at all. This and
-       * `msLeft` above are the only two places in `step` where raw `dt` is
-       * the right answer.
+       * else the quarter speed touches and so cap nothing at all (under
+       * reduced motion `dtScaled` is `dt`, and this is then the same
+       * number — the ceiling means real seconds either way, which is the
+       * point of counting it unscaled). This and `msLeft` above are the
+       * only two places in `step` where raw `dt` is the right answer.
        */
       this.endingSeconds += dt;
-      // Keep stepping — at `dtScaled`'s own quarter speed — instead of returning;
-      // no new spawn and no new hostile shot may begin below while `ending`
-      // is true (see the spawn and wind-up/loose blocks), and every input
-      // that could start something new already refuses on the same flag
-      // (see `look`, `setScoped`, `beginDraw`, `touchFire`, `fire`,
-      // `aimAt`, `setStrafe`).
+      /*
+       * Keep stepping — at `dtScaled`'s own speed — instead of returning.
+       * What the ending refuses, in full:
+       *   - no new spawn and no new wind-up or hostile shot may begin (see
+       *     the spawn block and the wind-up/loose block below);
+       *   - hostile arrows already in the air are frozen outright (see the
+       *     `stepArrows` call, which says why);
+       *   - every input that could start something new refuses on this
+       *     same flag (`look`, `setScoped`, `beginDraw`, `touchFire`,
+       *     `fire`, `aimAt`, `setStrafe`), and a sidestep already held is
+       *     let go of above, since `setStrafe` refusing cannot release it.
+       * What still runs: the player's own arrow, the butts, the wood, the
+       * popups, and the camera following that arrow home.
+       */
     }
 
     // The pollen is the one piece of ambient motion `reducedMotion` did not
@@ -1358,9 +1368,12 @@ export class World {
      * The incoming whistle: driven by whichever hostile arrow is nearest
      * the player right now, not a timer started when it was loosed — a shot
      * fired from the far rank has more air to close than one from the near
-     * rank, so only the real, changing distance says how urgent it is. Only
-     * arrows still actually flying count (`a.stuck === 0`); one that has
-     * already landed has nothing left to warn about.
+     * rank, so only the real distance says how urgent it is. Only arrows
+     * still actually flying count (`a.stuck === 0`); one that has already
+     * landed has nothing left to warn about. During the ending that
+     * distance stops changing, because the arrow it is measured from is
+     * frozen — the whistle holds its pitch along with the thing making it,
+     * which is the same freeze and not a separate rule.
      */
     let nearestHostile = Infinity;
     for (const a of this._arrows) {
@@ -1378,10 +1391,11 @@ export class World {
         // Reduced motion takes the camera out of it, not the wait: the
         // round still runs until this arrow resolves, the view simply
         // stays where the shot was aimed instead of sweeping yaw and pitch
-        // across to follow it down. Slow motion is already off by here
-        // (see `endingGate`), and a quarter-speed camera swinging for up
-        // to five seconds is close to the worst case for the setting this
-        // row of the spec's Failure table exists for.
+        // across to follow it down. `endingGate` has already taken the slow
+        // motion out for the same flag, so the two together are the spec's
+        // "slow motion ... off" row — a quarter-speed camera swinging for
+        // up to five seconds being close to the worst case for the setting
+        // that row exists for.
         if (!this.reducedMotion) this.followArrow(followed, dtScaled);
       } else {
         /*
