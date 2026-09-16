@@ -1211,8 +1211,11 @@ export class World {
        *     same flag (`look`, `setScoped`, `beginDraw`, `touchFire`,
        *     `fire`, `aimAt`, `setStrafe`), and a sidestep already held is
        *     let go of above, since `setStrafe` refusing cannot release it.
-       * What still runs: the player's own arrow, the butts, the wood, the
-       * popups, and the camera following that arrow home.
+       * What still runs: the player's own arrow, the butts and the popups
+       * unconditionally, plus two more that are the visitor's to switch
+       * off — the wood (`stepWood`, a dozen lines below) and the camera
+       * following that arrow home (the `followArrow` call, further down
+       * still), both of which reduced motion skips.
        */
     }
 
