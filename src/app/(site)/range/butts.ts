@@ -542,6 +542,36 @@ export function stepButt(b: Butt, dt: number, bounds = 34): void {
 }
 
 /**
+ * How fast a butt is moving sideways, right now — the horizontal counterpart
+ * of `ballisticElevation`'s vertical solve, and what `World.fire` reads to
+ * lead a moving target rather than aiming at wherever its face stood the
+ * instant the reticle found it.
+ *
+ * Exported as a function of the butt's own state rather than left to the
+ * caller differencing two frames' positions: a difference lags a whole frame
+ * behind and would get the sign wrong on the exact frame a `drift` bounces
+ * off `bounds` in `stepButt`, which is the one moment a stale velocity would
+ * matter most.
+ *
+ * `stand` and `peek` never move sideways, so this is 0 for both — read
+ * straight off `stepButt`'s own branches, not asserted separately. `drift`
+ * moves at the constant `b.vx` `stepButt` already steps `b.x` by. `swing`
+ * traces `b.originX + sin(b.swingT * SWING_SPEED) * SWING_AMPLITUDE` (see
+ * `stepButt`); this is that expression's own derivative with respect to
+ * time, `SWING_AMPLITUDE * SWING_SPEED * cos(b.swingT * SWING_SPEED)`.
+ */
+export function lateralVelocity(b: Butt): number {
+  switch (b.behaviour) {
+    case "drift":
+      return b.vx;
+    case "swing":
+      return SWING_AMPLITUDE * SWING_SPEED * Math.cos(b.swingT * SWING_SPEED);
+    default:
+      return 0;
+  }
+}
+
+/**
  * Apply a credited hit's lifecycle decision to the butt it struck — pulled
  * out of `world.ts`'s `onArrowHit` the way `resolveButtHit` was, so the
  * mutation itself is a plain function this file's tests can call directly

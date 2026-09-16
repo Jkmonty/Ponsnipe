@@ -32,6 +32,7 @@ import {
   bestSymbolAfter,
   stepButt,
   pickBehaviour,
+  lateralVelocity,
   FACE_RADIUS,
   RANKS,
   SHOOTER_Z,
@@ -1906,7 +1907,56 @@ export class World {
      */
     const aimed = this.raycaster.intersectObjects(collectTargets(this.scene).all, false)[0];
     if (aimed) {
-      const d = aimed.point.clone().sub(from);
+      /*
+       * Lead a moving target — the horizontal counterpart of the elevation
+       * solve just below, aimed at where the butt the ray struck will be
+       * when the arrow gets there rather than where it stood the instant
+       * the reticle found it. `drift` and `swing` both move a whole hit
+       * radius or more over this game's 0.86-1.37s of flight, which the
+       * elevation fix alone cannot answer: it puts the arrow exactly on the
+       * aimed point, and the aimed point was already wrong the moment it
+       * moved.
+       *
+       * Only a butt the ray actually struck is led — never one merely near
+       * the aim line, which is `collectTargets`' `all` (ground included)
+       * having no `Butt` behind it at all, and `.find` below simply not
+       * matching. Leading anything else would be steering the shot onto a
+       * target the player never put the reticle on, which is an aimbot and
+       * not this assist.
+       *
+       * Flight time depends on the range flown, and the range now depends on
+       * where the lead puts the point — so this iterates. Two passes
+       * converge: the first solves a flight time against the point exactly
+       * as struck (lead 0, so it reproduces the plain elevation-only solve);
+       * the second solves it again against the point that flight time
+       * already led to, and that second flight time is what the final lead
+       * uses. A third pass would move the point by a fraction of the arrow's
+       * own width at every range and rank this game has, which is why two is
+       * where it stops rather than a loop to a fixed epsilon.
+       *
+       * Only `x` moves. Every behaviour with any lateral motion (`drift`,
+       * `swing`) moves in `x` alone, never `y` or `z` (see `stepButt`), so
+       * shifting just the aimed point's `x` keeps it at exactly the same
+       * offset off the face's own centre the ray actually hit, rather than
+       * snapping it back onto the centre.
+       */
+      const point = aimed.point.clone();
+      const targetButt = this._butts.find((b) => b.face === aimed.object);
+      if (targetButt) {
+        const lateral = lateralVelocity(targetButt);
+        let flightTime = 0;
+        for (let i = 0; i < 2; i++) {
+          const led = point.clone();
+          led.x += lateral * flightTime;
+          const d0 = led.sub(from);
+          const range0 = Math.hypot(d0.x, d0.z);
+          if (range0 <= 1e-6) break;
+          const elevation0 = ballisticElevation(range0, d0.y, speed);
+          flightTime = range0 / (speed * Math.cos(elevation0));
+        }
+        point.x += lateral * flightTime;
+      }
+      const d = point.clone().sub(from);
       const range = Math.hypot(d.x, d.z);
       if (range > 1e-6) {
         const elevation = ballisticElevation(range, d.y, speed);

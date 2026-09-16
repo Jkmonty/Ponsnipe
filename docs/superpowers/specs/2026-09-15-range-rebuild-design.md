@@ -152,6 +152,23 @@ target within 2.2° of its path, strong enough to forgive a pixel and far too
 weak to rescue a bad shot. The pull is 1.5× stronger on touch, because a
 thumb is not a mouse. A shot with no target near its path flies straight.
 
+*This section is about the pull spent during flight; it said nothing about
+where the shot is aimed in the first place, because until a later task
+nothing there needed to move. `World.fire` solves the elevation to wherever
+the aim ray meets a face — exact, and verified so — but it aimed at that
+face's position the instant the reticle found it, not where the target would
+be once the arrow, loosed now, actually arrived 0.86-1.37s later. A `drift`
+or `swing` target moves a hit radius or more in that time, which no amount
+of in-flight magnetism can rescue: the 2.2° cone above is measured from the
+arrow's current heading, and a target that has already moved out of it is
+outside the pull's reach regardless of how forgiving the pull is. `fire` now
+solves the horizontal aim the same way it already solves the vertical one —
+to where the target will be, not where it is — and only for the face the
+reticle actually struck, never one merely near the aim line, which would be
+an aimbot and not this assist. That is a second, one-shot solve at the
+moment of loosing; the steering above is a different mechanism and runs
+exactly as this section always said.*
+
 ### A hit
 
 - The butt rocks back on its post and settles.

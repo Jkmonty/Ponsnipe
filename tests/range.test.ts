@@ -994,6 +994,145 @@ test("a click and a tap loose the same arrows, as many and as fast, over the sam
 });
 
 /*
+ * Bug B (the rest of report 1: "bow is inaccurate"): `fire()` solves the
+ * elevation exactly, to wherever the aim ray lands — verified in the tests
+ * above — but it aims at where a moving target's face stood the instant the
+ * reticle found it, not where that face will be once the arrow, loosed now,
+ * actually gets there 0.86-1.37s later. A `drift` target moves about 2.5
+ * units in that time against a hit radius of 2.6, so a shot the reticle
+ * said was dead centre the moment it was aimed lands where the target used
+ * to be.
+ *
+ * Written the way the bug was found: a live `World`, aim dead centre at the
+ * drifting face as it stands right now, fire once, step until the arrow
+ * resolves. The target itself is built with `makeButt` and put directly into
+ * the world's own scene and butt list — the same two things `World.spawn`
+ * does, minus the coin-flips (which stock, which rank, which x, which
+ * direction and speed) — rather than waited for out of the real spawner.
+ * Wave 0 only ever spawns `stand` (`BEHAVIOURS_BY_WAVE` in butts.ts), so
+ * waiting on the spawner for a `drift` butt of a *specific* rank, at a
+ * *specific* x, alone, and staying alone for the whole of a flight, needs
+ * wave 1 or later and would still be rare and slow to gather in volume; a
+ * built butt gets every one of those for free and lets this sweep x and
+ * drift direction/speed deliberately, the way the earlier dead-centre tests
+ * sweep spawn position by waiting for it. `dwell` is set high enough that a
+ * duck mid-flight cannot be blamed on the lead, and each trial aims and
+ * fires exactly once — a throwaway probe shot is not an option, since
+ * `fire()` zeroes `drawn` and a second shot would not be the first one
+ * aimed.
+ *
+ * The assertion is the relationship, not a percentage, exactly as the two
+ * tests above it already do it: a shot aimed dead centre at a target the
+ * player can see and track must connect, moving or not. Run with the lead
+ * itself disabled — the `if (targetButt)` block below deleted, `point` left
+ * exactly as the ray struck it — over the same 36 shots a side, the near
+ * rank came back clean (36/36: this sweep's own `vx`/`x` combinations happen
+ * to keep the near rank's larger face and shorter flight inside the old
+ * code's tolerance) and the far rank missed 18 of 36 — 50%, in the same
+ * range the task's own live measurement of drift/far reports (30% hit, 70%
+ * miss). A live round's actual spread of drift speeds is not this test's
+ * fixed sweep, and near/far diverging here rather than matching the task's
+ * table on both is that difference, not a sign the bug was only ever half
+ * real: the far rank's smaller face (half the near rank's radius) and
+ * longer flight (up to 1.37s against 1.05s) make it the one this sweep was
+ * always going to catch. After leading the shot, both ranks come back clean.
+ */
+test("a dead-centre shot leads a drifting target: aimed at where it stands, it still connects once the arrow arrives", () => {
+  const dt = 1 / 60;
+  // `look`'s own unscoped sensitivity — see the earlier dead-centre tests,
+  // which aim the same way for the same reason.
+  const LOOK_K = 0.0022;
+  const stock = { symbol: "UP", changePct: 1 };
+  // No stocks handed to `World` itself: `spawn` (which draws from
+  // `this.stocks`) no-ops on an empty list, so nothing but the one butt
+  // this test raises by hand is ever on the range — the same "one target on
+  // the range removes the question entirely" reasoning the earlier
+  // dead-centre tests rely on, made true by construction instead of by
+  // waiting for it and hoping.
+  const w = new World(makeNullSurface(), [], () => {});
+
+  /*
+   * Raise one `drift` butt directly, fully up and already moving, bypassing
+   * `World.spawn`'s own random draw of rank/x/direction/speed entirely — the
+   * scene and butt list are private, but `w.butts` already hands back the
+   * live array `world.ts` itself mutates (see its own doc comment: "the
+   * test... needs to see what it actually did... without a second copy of
+   * `World`'s own spawn/retire logic living in the test file"), so pushing
+   * onto it is using that same seam rather than a new one. The scene has no
+   * such getter, so this is the one place this file reaches past a private
+   * field, and only to put the mesh where `collectTargets` (arrows.ts) —
+   * which walks the real scene graph — can find it, exactly as `spawn` does.
+   *
+   * `rising: true` here is not "still climbing out of cover" — `stepButt`
+   * only advances `out` past 1 while `rising` is true and drops it back
+   * toward 0 the instant it is false, so a fully-up butt meant to *stay* up
+   * is `rising: true` with `out` already at 1 and `dwell` left high, not
+   * `rising: false`. Getting this backwards was this test's own first bug,
+   * not the fix's: it ducked the injected butt back into cover about a
+   * third of a second in (`out` decays at `2.4`/s from 1, and `isTargetable`
+   * needs it above 0.15), well inside the flight, and then removed it from
+   * the scene entirely — so every shot flew on into open air and the arrow
+   * was blamed on the lead for a target that was never there to hit.
+   */
+  const raise = (rank: Rank, x: number, vx: number): Butt => {
+    const butt = makeButt(stock, rank, x, "drift");
+    butt.vx = vx;
+    butt.out = 1;
+    butt.rising = true;
+    butt.dwell = 999; // long past any flight time; nothing here should duck
+    butt.group.position.set(x, 0, RANKS[rank].z); // stepButt's own fully-up position
+    butt.face.userData.arrowTarget = true;
+    (w as unknown as { scene: T.Scene }).scene.add(butt.group);
+    (w.butts as Butt[]).push(butt);
+    return butt;
+  };
+
+  const shoot = (rank: Rank, x: number, vx: number) => {
+    w.start();
+    const target = raise(rank, x, vx);
+
+    // Aim dead centre at the face's position right now — where the target
+    // is, not where it is going, exactly what the player's own click does
+    // and exactly what the bug report measured against.
+    const face = target.face.getWorldPosition(new T.Vector3());
+    const d = face.clone().sub(w.eye);
+    const yaw = Math.atan2(-d.x, -d.z);
+    const pitch = Math.asin(d.y / d.length());
+    w.look(-(yaw - w.facing.yaw) / LOOK_K, -(pitch - w.facing.pitch) / LOOK_K);
+    assert.ok(
+      Math.abs(w.facing.yaw - yaw) < 1e-6 && Math.abs(w.facing.pitch - pitch) < 1e-6,
+      "the view has to actually reach the face, or the shot below was never aimed at it",
+    );
+
+    assert.ok(w.fire(), "the nock is full at the start of a round, so the one shot has to loose");
+    const arrow = w.arrows[w.arrows.length - 1];
+    for (let g = 0; g < 600 && arrow.stuck === 0 && w.arrows.includes(arrow); g++) w.step(dt);
+    return { x, struck: target.dead > 0 };
+  };
+
+  for (const rank of ["near", "far"] as const) {
+    const shots: { x: number; struck: boolean }[] = [];
+    // A deliberate sweep across the rank's own spread (`SPAWN_X_LIMIT` is
+    // 30) and both drift directions at two speeds, rather than a spawn
+    // position taken on faith from the RNG — every combination the task's
+    // own measurement table would call a `drift` shot.
+    for (const x of [-28, -21, -14, -7, 0, 7, 14, 21, 28]) {
+      for (const vx of [-3.5, -2, 2, 3.5]) {
+        shots.push(shoot(rank, x, vx));
+      }
+    }
+    assert.equal(shots.length, 36, `${rank} rank: the sweep itself should never lose a trial`);
+    const missed = shots.filter((s) => !s.struck);
+    assert.deepEqual(
+      missed,
+      [],
+      `${rank} rank: a shot aimed dead centre at a drifting face, the moment it was aimed, must still connect once the arrow arrives — the shot has to be led to where the target the reticle found will actually be`,
+    );
+  }
+  w.stop();
+});
+
+/*
  * `steerToward`'s old `* 10` rate let it out-correct gravity every frame, so
  * any shot inside the assist cone converged onto the exact same point
  * regardless of how far off it had been aimed — the reviewer measured
