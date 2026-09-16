@@ -270,7 +270,7 @@ Every piece degrades rather than blocking.
 | A sound file fails | That sound is silent; the round plays. |
 | Targets are unavailable | The existing "no stock targets" state, unchanged. |
 | The clipboard is refused | The share image downloads instead. |
-| Reduced motion is set | Attract drift, screen shake and the last arrow's slow-motion camera are off; the game plays. The clock's own last two seconds still slow down for everyone (this row previously said slow motion was off outright, which was written before the ending had two branches to tell apart). That tail moves no camera, and it is time the player is still shooting in: the nock and the pull run on the slowed clock too, so turning it off for one setting and not the other would let an accessibility flag change how many arrows a round gets away, and so the score it posts. |
+| Reduced motion is set | Attract drift, screen shake and the last arrow's slow-motion camera are off; the game plays. The clock's own last two seconds still slow down for everyone (this row previously said slow motion was off outright, which was written before the ending had two branches to tell apart). That tail moves no camera, and it is time the player is still shooting in: the nock runs on the slowed clock too, so turning it off for one setting and not the other would let an accessibility flag change how many arrows a round gets away, and so the score it posts. (It said "the nock and the pull" until the pull was removed.) |
 
 ## Testing
 

@@ -567,7 +567,7 @@ export default function ArcadePage() {
             onPointerMove={move}
             onPointerDown={(e) => {
               /*
-               * Hold right to raise the scope, left to loose.
+               * Hold right to raise the scope, click left to shoot.
                *
                * This used to hang off `contextmenu`, which was the bug: once
                * pointer lock is granted the browser stops dispatching that event

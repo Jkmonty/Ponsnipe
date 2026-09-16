@@ -616,10 +616,11 @@ test("the nock gate is one full refill, and the old half-nock door stays shut", 
  *
  * Both drivers press as fast as the input allows — `fire` returns false for
  * free while the nock is refilling, so calling it every frame is the most
- * either platform could possibly get out of the window. The window sits in
- * the middle of the round, clear of the last two seconds' slow motion, and a
- * single up stock keeps the range hostile-free so nothing but the clock can
- * end it.
+ * either platform could possibly get out of the window. The window is the
+ * round's first five seconds, which is what `msLeft > ROUND_MS - windowMs`
+ * says — well clear of the last two seconds' slow motion, which is the only
+ * part of the clock that could move the rate of fire. A single up stock keeps
+ * the range hostile-free so nothing but the clock can end it.
  */
 test("a click and a tap loose the same arrows, as many and as fast, over the same window", () => {
   const dt = 1 / 60;
@@ -1600,9 +1601,11 @@ test("the camera turns to follow the last arrow while the round waits it out", (
 /*
  * The ceiling on that wait, and why it is there. A last arrow loosed at the
  * very top of the pitch clamp — `look(0, -9999)` pegs it at +0.28 rad, 16°
- * up — and left to miss everything flies for 13.4 real seconds before it
- * finally lands, which is thirteen seconds spent watching an arrow the
- * player already knows has missed. `ENDING_MAX_S` ends the round instead,
+ * up — and left to miss everything flies for 3.03 seconds of world time,
+ * which at the ending's quarter speed is 12.1 real seconds spent watching an
+ * arrow the player already knows has missed. (It was 13.4 while a full draw
+ * was reachable and the arrow left at 55 m/s; every shot is `SHOT_DRAW` now,
+ * so 49.6 m/s is the longest flight there is.) `ENDING_MAX_S` ends the round instead,
  * and does it without touching the arrow: its `life` is never clamped, so
  * it is still in the air when the card comes up and the scene simply
  * freezes under it, the same as every other path out of a round. The
@@ -1615,7 +1618,7 @@ test("a lofted last arrow cannot hold the round open past the ending's ceiling",
   const dt = 1 / 60;
 
   w.look(0, -9999); // pegged at the top of the pitch clamp: the longest flight there is
-  assert.ok(w.fire(), "the shot should have loosed"); // `fire`'s default draw is a full one
+  assert.ok(w.fire(), "the shot should have loosed"); // every shot is `SHOT_DRAW`; there is no other
 
   w.msLeft = 1; // the clock runs out with that shot still climbing
   let seconds = 0;
