@@ -151,7 +151,7 @@ safe shot and a good one is real.
 | Swing | Hangs from a branch and swings through a shallow arc |
 
 **Incoming arrows.** A red butt winds up over 900 ms with a visible tell, the
-face turning to you and a red glow rising, then looses an arrow at 30 m/s with
+face turning to you and a red glow rising, then looses an arrow at 34-42 m/s (the speed the game has always used; the spec previously said 30, which never matched the code) with
 a whistle that rises as it nears. You have the flight time to move. Today the
 hit simply happens; this is the change that makes being shot at a thing you
 play against rather than a thing that occurs.
