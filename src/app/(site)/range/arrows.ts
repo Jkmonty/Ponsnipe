@@ -1,6 +1,5 @@
 import * as T from "three";
 import type { Butt } from "./butts";
-import { HIT_RADIUS } from "./butts";
 import { rand } from "./rand";
 
 export interface Arrow {
@@ -35,6 +34,39 @@ export function makeArrowMesh(): T.Mesh {
   return shaft;
 }
 
+/**
+ * The launch elevation, in radians, that sends an arrow of `speed` exactly
+ * `range` units along the ground while climbing `rise` — the flat, fast arc
+ * of the two that reach, never the lob.
+ *
+ * Both sides need this and for the same reason. Every arrow got gravity in
+ * the same change that wrote `looseEnemyArrow`'s flat, straight-at-the-camera
+ * aim — correct the day it was written, wrong from the moment gravity
+ * existed, because the arrow now drops out from under its own aim line and
+ * 1,800 simulated trials scored zero hits. `World.fire` had the identical
+ * defect for the player's own shot for as long again, which is what made the
+ * reticle lie about where an arrow went.
+ *
+ * `0.5 * asin(g * range / v^2)` is this same solution written for a target at
+ * launch height, and that is the whole of what a hostile shot needs — see the
+ * `rise = 0` it passes below. A player's shot cannot ignore `rise`: a butt's
+ * face stands 5.2 units up and the nocked arrow leaves from about 3.4, and
+ * 1.8 units of climb across the far rank's 60 is 1.7 degrees, measured
+ * against a far face only 1.7 units across. The expression here reduces to
+ * exactly that half-angle form when `rise` is 0.
+ *
+ * Beyond what the speed can reach there is no solution at all and the square
+ * root would hand back NaN, so that case falls back to the clamped half-angle
+ * form — the steepest angle the speed can still manage, the best available
+ * shot rather than no shot.
+ */
+export function ballisticElevation(range: number, rise: number, speed: number): number {
+  const v2 = speed * speed;
+  const disc = v2 * v2 - GRAVITY * (GRAVITY * range * range + 2 * rise * v2);
+  if (range > 1e-6 && disc >= 0) return Math.atan2(v2 - Math.sqrt(disc), GRAVITY * range);
+  return 0.5 * Math.asin(Math.max(-1, Math.min(1, (GRAVITY * range) / v2)));
+}
+
 /** A hostile butt's shot, loosed at `at` — the camera's position. */
 export function looseEnemyArrow(scene: T.Scene, b: Butt, at: T.Vector3): Arrow {
   const from = b.group.position.clone().add(new T.Vector3(0, 5.2, 0));
@@ -42,18 +74,18 @@ export function looseEnemyArrow(scene: T.Scene, b: Butt, at: T.Vector3): Arrow {
   const speed = rand(34, 42);
   /*
    * The ballistic solution for a flat trajectory, not a straight line to
-   * the target.
+   * the target. See `ballisticElevation` above for what it solves and why
+   * both sides now call the one function.
    *
-   * Every arrow got gravity in the same change that first wrote this
-   * function's flat, straight-at-the-camera aim — correct the day it was
-   * written, wrong from the moment gravity existed, because the arrow now
-   * drops out from under its own aim line and 1,800 simulated trials
-   * scored zero hits. `0.5 * asin(g * range / v^2)` is the elevation that
-   * sends a shot of this speed exactly `range` before gravity brings it
-   * back to launch height. Beyond what the speed can reach the argument to
-   * `asin` would exceed 1 and hand back NaN, so it is clamped to the
-   * steepest angle the speed can still manage — the best available shot
-   * rather than no shot at all.
+   * `rise` is passed as 0 rather than the real -1.6 units down to the
+   * camera, which is what this has always solved and what the dodge's
+   * escape margin is pinned against. It is not an oversight: a shot that
+   * returns to *launch* height at the player's range is still descending
+   * through them a little beyond it, and `stepArrows` scores a hostile
+   * arrow by closest approach along the segment against `HIT_RADIUS` of
+   * 2.6, which 1.6 sits comfortably inside. The player's own shot is
+   * scored by a raycast against a disc and has no such slack, which is the
+   * whole reason the parameter exists.
    */
   const toGround = to.clone().sub(from);
   const range = Math.hypot(toGround.x, toGround.z);
@@ -61,8 +93,7 @@ export function looseEnemyArrow(scene: T.Scene, b: Butt, at: T.Vector3): Arrow {
     range > 1e-6
       ? new T.Vector3(toGround.x / range, 0, toGround.z / range)
       : new T.Vector3(0, 0, -1);
-  const arg = Math.max(-1, Math.min(1, (GRAVITY * range) / (speed * speed)));
-  const elevation = 0.5 * Math.asin(arg);
+  const elevation = ballisticElevation(range, 0, speed);
   const vel = dir.multiplyScalar(speed * Math.cos(elevation));
   vel.y = speed * Math.sin(elevation);
   // Unlit and pale, because an arrow you cannot see coming is not a
@@ -94,10 +125,41 @@ export function looseEnemyArrow(scene: T.Scene, b: Butt, at: T.Vector3): Arrow {
     an arrow flat and fast, a barely-pulled string lobs it. Both ends are real
     numbers the function still has to honour, but the game itself now only
     ever asks for the one fixed draw every shot looses at — see `SHOT_DRAW`
-    in world.ts. */
+    below. */
 export const DRAW_MIN_SPEED = 28;
 export const DRAW_MAX_SPEED = 55;
 export const GRAVITY = 9.8;
+
+/**
+ * How near an arrow has to pass to count. Generous: this is an arcade.
+ *
+ * It was declared in `butts.ts` and only ever read here — it is the
+ * tolerance `stepArrows` measures a hostile arrow's closest approach to the
+ * player against. It moved because `butts.ts` now has to know how long an
+ * arrow takes to reach a rank (see `dwellFor` there), and a butt asking the
+ * arrows module a question while the arrows module asks the butts module
+ * one is a cycle. Nothing else imported it, so the move is a move and not a
+ * change.
+ */
+export const HIT_RADIUS = 2.6;
+
+/**
+ * What every shot looses at.
+ *
+ * One click or one tap, one arrow, at this pull — a solid, deliberate draw
+ * with no wait and nothing to hold. It was `TOUCH_DRAW` while a thumb was
+ * the only input that fired at a fixed strength and a mouse pulled its own
+ * string; a click looses the same way now, so the name no longer says
+ * "touch". The number is unchanged: it was tuned against the ranks' real
+ * distances and the wave pacing, and raising it to a full 1 would quietly
+ * retune the difficulty of a round that posts to a board.
+ *
+ * It was declared in `world.ts`, which is still the only place that fires a
+ * player's arrow. It lives here now because it is half of `SHOT_SPEED`
+ * below, which is what `butts.ts` needs to work out how long a target has
+ * to stand up for.
+ */
+export const SHOT_DRAW = 0.8;
 
 /** How long a stuck arrow lingers before it fades out of the scene. */
 const STUCK_FADE = 3;
@@ -119,6 +181,15 @@ export function drawSpeed(draw: number): number {
   const d = Math.max(0, Math.min(1, draw));
   return DRAW_MIN_SPEED + (DRAW_MAX_SPEED - DRAW_MIN_SPEED) * d;
 }
+
+/**
+ * The speed every player arrow leaves the string at — `drawSpeed` of the one
+ * draw the game looses at, 49.6 units a second, worked out once rather than
+ * at each of the two call sites that want it. `World.fire` launches at it;
+ * `butts.ts` divides a rank's own longest shot by it to find out how long an
+ * arrow spends in the air getting there.
+ */
+export const SHOT_SPEED = drawSpeed(SHOT_DRAW);
 
 /**
  * How far off a shot may be and still be helped home.
@@ -183,8 +254,15 @@ export function steerToward(dir: T.Vector3, to: T.Vector3, maxAngle: number, dt:
  * `stepButt` every frame from the butt's own state, so that what is read
  * here is what is true this frame — a risen, unstruck butt and nothing
  * else.
+ *
+ * Exported because `World.fire` asks the same question a shot earlier than
+ * `stepArrows` does: it raycasts the aim down this same `all` to find how
+ * far away the thing under the reticle is, so the elevation it solves is
+ * measured against exactly what the arrow will later be tested for hitting.
+ * Two different answers to "what can an arrow hit" is how a reticle starts
+ * lying again.
  */
-function collectTargets(scene: T.Scene): { steerable: T.Object3D[]; all: T.Object3D[]; player?: T.Object3D } {
+export function collectTargets(scene: T.Scene): { steerable: T.Object3D[]; all: T.Object3D[]; player?: T.Object3D } {
   const steerable: T.Object3D[] = [];
   const all: T.Object3D[] = [];
   let player: T.Object3D | undefined;

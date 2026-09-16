@@ -34,6 +34,8 @@ import {
   pickBehaviour,
   FACE_RADIUS,
   RANKS,
+  SHOOTER_Z,
+  SPAWN_X_LIMIT,
   type Butt,
   type Rank,
 } from "./butts";
@@ -41,7 +43,9 @@ import {
   makeArrowMesh,
   looseEnemyArrow,
   stepArrows,
-  drawSpeed,
+  SHOT_SPEED,
+  ballisticElevation,
+  collectTargets,
   ARROW_LIFE,
   type Arrow,
 } from "./arrows";
@@ -292,19 +296,6 @@ const RELEASE_KICK_TIME = 0.2;
     and the only thing standing between the player and a machine gun now that
     a shot takes no time of its own to prepare. */
 const NOCK_TIME = 0.42;
-/**
- * What every shot looses at.
- *
- * One click or one tap, one arrow, at this pull — a solid, deliberate draw
- * with no wait and nothing to hold. It was `TOUCH_DRAW` while a thumb was
- * the only input that fired at a fixed strength and a mouse pulled its own
- * string; a click looses the same way now, so the name no longer says
- * "touch". The number is unchanged: it was tuned against the ranks' real
- * distances and the wave pacing, and raising it to a full 1 would quietly
- * retune the difficulty of a round that posts to a board.
- */
-const SHOT_DRAW = 0.8;
-
 /**
  * How long a hostile butt winds up — face turning to the player, rim glow
  * rising — before it actually looses. Exported so the wind-up-then-loose
@@ -560,7 +551,7 @@ export class World {
    * The nock's own refill, 0..1, climbing back to 1 on its own over
    * `NOCK_TIME` after every shot. This is the rate-of-fire gate and the only
    * timer a shot waits on: how hard the string is pulled is no longer a
-   * number the player moves, it is the constant `SHOT_DRAW`.
+   * number the player moves, it is the constant `SHOT_DRAW` in arrows.ts.
    *
    * There used to be a second field, `draw`, one letter away and easy to
    * conflate with this one — how far the string was pulled back right now,
@@ -614,7 +605,10 @@ export class World {
     this.camera = new T.PerspectiveCamera(FOV_WIDE, 1, 0.1, 400);
     // Back from the first hedge, so there is ground between you and the
     // nearest butt and the range reads as a range rather than a wall.
-    this.camera.position.set(0, 3.6, 20);
+    // `SHOOTER_Z` rather than a literal 20: `butts.ts` measures each rank's
+    // own range from this same line to work out how long a butt there has to
+    // stay up, so the two cannot be allowed to drift apart.
+    this.camera.position.set(0, 3.6, SHOOTER_Z);
     // stepArrows finds the player by this flag, so a hostile arrow's
     // proximity check has an Object3D to measure against.
     this.camera.userData.isPlayer = true;
@@ -660,6 +654,17 @@ export class World {
       without reaching into the private fields it writes. */
   get facing(): { yaw: number; pitch: number } {
     return { yaw: this.yaw, pitch: this.pitch };
+  }
+
+  /** Where the eye is this frame — the camera's own world position, for the
+      same test-only reason as `butts`/`arrows`/`sidestep`/`facing`. A test
+      that aims the way the player does has to build the same direction the
+      camera's ray is built from, and that starts here; rebuilding it from
+      the constructor's `(0, 3.6, 20)` and the sidestep's own clamp would be
+      a second copy of where the player stands, living in the test file.
+      Cloned, so nothing outside can walk the camera through it. */
+  get eye(): T.Vector3 {
+    return this.camera.position.clone();
   }
 
   /**
@@ -959,7 +964,10 @@ export class World {
     }
     const stock = pool[Math.floor(Math.random() * pool.length)];
     const rank: Rank = Math.random() < World.NEAR_CHANCE ? "near" : "far";
-    const x = rand(-30, 30);
+    // The same spread `butts.ts`'s `SPAWN_X_LIMIT` takes the worst-case shot
+    // from: a butt at the edge of this is the longest shot its rank can ask
+    // for, and the one its dwell has to outlast.
+    const x = rand(-SPAWN_X_LIMIT, SPAWN_X_LIMIT);
     const behaviour = pickBehaviour(wave.wave);
     const butt = makeButt(stock, rank, x, behaviour);
     // stepArrows steers the player's own shots toward whatever carries this
@@ -1785,9 +1793,16 @@ export class World {
      * where you were looking a frame ago, not where the reticle is. That is
      * why shooting appeared not to work: the ray was real and pointed slightly
      * wrong, so it missed everything that looked dead centre.
+     *
+     * The scene's own matrices are updated for the same reason and in the
+     * same breath: the ray below is raycast against the butt faces, which
+     * `stepButt` moved this frame, and `updateMatrixWorld` is what makes
+     * those moves visible to a raycast. The camera is not in the scene (it
+     * carries the bow and the nock instead), so both calls are needed.
      */
     this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
     this.camera.updateMatrixWorld(true);
+    this.scene.updateMatrixWorld();
     this.raycaster.setFromCamera(this.aim, this.camera);
     this.drawn = 0;
     this.sfx?.loose();
@@ -1809,10 +1824,65 @@ export class World {
      * the matrix note above still matters.
      */
     const from = this.nock?.getWorldPosition(new T.Vector3()) ?? this.camera.position.clone();
-    const dir = this.raycaster.ray.direction.clone();
     // Every arrow leaves at the same speed, because every arrow leaves at the
-    // same draw. Nothing the player does between shots changes this number.
-    const vel = dir.multiplyScalar(drawSpeed(SHOT_DRAW));
+    // same draw. Nothing the player does between shots changes this number —
+    // and `butts.ts` divides each rank's own longest shot by this same
+    // constant to decide how long a butt there stays up for.
+    const speed = SHOT_SPEED;
+    const vel = this.raycaster.ray.direction.clone().multiplyScalar(speed);
+    /*
+     * The elevation that puts the arrow where the reticle is.
+     *
+     * This ray used to be built and then thrown away, and the arrow left
+     * along the aim direction alone — flat, straight at whatever was under
+     * the reticle. Gravity, which every arrow got in the same change that
+     * gave the hostiles theirs, then dropped it out from under its own aim
+     * line: a dead-centre shot passed 3.6 to 5.4 units under a near-rank
+     * face and 7.3 to 9.1 under a far-rank one, at every range the butts
+     * actually stand at, on every shot. Against faces 3.4 and 1.7 units
+     * across, that is every shot missing. It is what "hits aren't
+     * registering" was — the arrows were real and the reticle was lying
+     * about where they went. `looseEnemyArrow` had exactly this defect and was fixed in exactly
+     * these terms; `ballisticElevation` is now the one solver both call.
+     *
+     * The range is whatever the aim actually meets — a butt's face or the
+     * ground, which is all of `collectTargets`, which is the same set
+     * `stepArrows` later tests the flight against. Solving to the hit
+     * point rather than to some butt's centre is what makes the rim of a
+     * face, and a patch of dirt, both things you can aim at and get.
+     *
+     * When the ray meets nothing — aimed over the palisade at open sky —
+     * the arrow leaves flat, down the aim line, exactly as every shot did
+     * before. There is no range to solve for there. A stand-in range would
+     * be a guess, and a guess would launch the arrow at an angle that
+     * matches nothing on screen; firing along the line the player is
+     * actually pointing is the honest answer to "nothing is there".
+     *
+     * This lands before the aim assist, and could not be otherwise: the
+     * assist runs per frame inside `stepArrows`, and what it writes back is
+     * only the horizontal heading — `vel.y` is left to gravity. That is a
+     * property of the call site in `stepArrows`, which flattens the velocity
+     * to y = 0 before steering and then writes back x and z alone, and not
+     * of `steerToward` itself, which rotates about a full 3D cross-product
+     * axis and would happily turn a vector through the vertical if it were
+     * handed one. The conclusion holds either way: nothing downstream can
+     * undo the elevation set here. Nor does setting it move what the assist's cone is
+     * measured off: the heading below is the same bearing the flat launch
+     * used, differing only by the width of the bow, since it runs from the
+     * nock (0.12 units right of the eye) rather than from the eye — at the
+     * near rank, 0.17 degrees, and toward the point aimed at rather than
+     * away from it, against a cone of 2.6.
+     */
+    const aimed = this.raycaster.intersectObjects(collectTargets(this.scene).all, false)[0];
+    if (aimed) {
+      const d = aimed.point.clone().sub(from);
+      const range = Math.hypot(d.x, d.z);
+      if (range > 1e-6) {
+        const elevation = ballisticElevation(range, d.y, speed);
+        const flat = speed * Math.cos(elevation);
+        vel.set((d.x / range) * flat, speed * Math.sin(elevation), (d.z / range) * flat);
+      }
+    }
     const mesh = makeArrowMesh();
     mesh.position.copy(from);
     mesh.lookAt(from.clone().add(vel));

@@ -96,7 +96,18 @@ bow, arcs under gravity, and takes time to arrive.
   the speeds a player would see, which was written while the desktop hold let
   them pick a point on the curve; that decision was reversed, so the curve is
   now a mapping with a single input). Gravity 9.8 m/s², so a shot at the far
-  rank drops about a metre over its flight and has to be aimed a little high.
+  rank passes 7.3 to 9.1 units under what it was aimed at, and one at the near
+  rank 3.6 to 5.4 — not the "about a metre" the spec previously estimated,
+  which was written from the outside and is out by something like an order of
+  magnitude, partly because the butts' real spawn positions (`x = rand(-30,
+  30)`) put a far-rank face 60 to 67 units away rather than the 40 the
+  geometry section quotes. Nor does the player aim high for it: `fire`
+  raycasts the aim, measures the range to whatever is under the reticle, and
+  launches at the elevation that lands the arrow there — about 5° of holdover
+  at the near rank and 7° at the far. The drop is exactly as real as it was;
+  the arrow simply now goes where the reticle says it goes, and the lead a
+  moving target needs is unchanged. The same solver (`ballisticElevation`)
+  aims the hostiles' arrows.
 - Both your arrows and theirs run through one integrator in `arrows.ts`, with
   a flag for whose they are.
 - An arrow that hits sticks in what it hit and fades over three seconds. One
@@ -165,8 +176,29 @@ safe shot and a good one is real.
 |---|---|
 | Stand | Rises and stays, as now |
 | Drift | Tracks sideways along its rank |
-| Peek | Rises for 1.8 seconds and drops whether hit or not |
+| Peek | Rises, and drops whether hit or not, on the tightest window its rank allows |
 | Swing | Hangs from a branch and swings through a shallow arc |
+
+**How long a target stays up** is derived, not chosen. Every dwell starts at
+`minimumDwell(rank)` — the time to notice a target and put the reticle on it,
+plus the time the one shot this game looses actually spends in the air
+reaching the far corner of that rank — and differs only in how far past that
+floor it may run: a `peek` not at all, a green butt by up to 0.7 s, a red one
+by up to 1.1 s. That works out at 1.85 s at the near rank and 2.17 s at the
+far.
+
+*This is new. The spec previously gave `peek` a flat 1.8 seconds and said
+nothing at all about the others, which were `rand(0.5, 1.2)` for a green butt
+and `rand(1.3, 2.4)` for a red one. Those numbers date from the original
+arcade, when a click was an instant raycast and a target only had to be up at
+the moment you clicked. Phase 1 gave arrows travel time and nothing revisited
+them, so a green butt was up for 0.5 to 1.2 seconds against a flight of 1.37 s
+to the far rank: a far-rank green target was not hittable at any x, and a
+near-rank one was a coin toss. Measured in a live round, a dead-centre shot at
+a standing butt connected 2 times in 42 at the far rank and 50 in 78 at the
+near. It is now 63 in 63 and 77 in 77. The arc, the travel time and the lead a
+moving target needs are all unchanged; what was wrong was that a target's life
+was set before any of them existed.*
 
 **Incoming arrows.** A red butt winds up over 900 ms with a visible tell, the
 face turning to you and a red glow rising, then looses an arrow at 34-42 m/s (the speed the game has always used; the spec previously said 30, which never matched the code) with

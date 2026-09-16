@@ -6,8 +6,11 @@ import {
   assistAngle,
   stepArrows,
   looseEnemyArrow,
+  ballisticElevation,
   DRAW_MIN_SPEED,
   DRAW_MAX_SPEED,
+  SHOT_DRAW,
+  SHOT_SPEED,
   type Arrow,
 } from "../src/app/(site)/range/arrows";
 import {
@@ -27,9 +30,22 @@ import {
   stepButt,
   pickBehaviour,
   RANKS,
-  PEEK_WINDOW,
+  peekWindow,
+  minimumDwell,
+  flightTimeTo,
+  longestShotTo,
+  dwellFor,
+  AIM_WINDOW,
+  GREEN_SPREAD,
+  HOSTILE_SPREAD,
+  SHOOTER_Z,
+  SPAWN_X_LIMIT,
+  FACE_HEIGHT,
+  NOCK_HEIGHT,
   SWING_AMPLITUDE,
   type Behaviour,
+  type Rank,
+  type Butt,
 } from "../src/app/(site)/range/butts";
 import {
   nockReady,
@@ -578,6 +594,255 @@ test("looseEnemyArrow's elevation is clamped rather than NaN when the range is b
 });
 
 /*
+ * The other half of the same arithmetic: the player's own shot.
+ *
+ * `looseEnemyArrow` was launching flat down its aim line and scoring zero
+ * hits, because gravity drops an arrow out from under a straight line to the
+ * target; the test above is what pinned its fix. `World.fire` had exactly the
+ * same defect and never got the fix — it built a ray down the centre of the
+ * view, threw the ray away, and sent the arrow off along the direction alone.
+ * A shot the reticle said was dead centre landed metres low at the near rank
+ * and further still at the far one, which is the whole of "hits aren't
+ * registering": the arrows were real, the reticle was lying about where they
+ * went.
+ *
+ * Stated as a relationship and never as a transcribed hit rate: a shot aimed
+ * dead centre at a face connects with *that* face. Both ranks, and a spread
+ * of spawn positions rather than one lucky butt — `x` is `rand(-30, 30)`, so
+ * the horizontal range to a near-rank butt runs from 42 to over 51 units and
+ * a far-rank one from 60 to 67, and the elevation each of those needs is a
+ * different number.
+ *
+ * Why it waits for a butt with flight time to spare on its dwell: the filter
+ * has to leave a standing target that is still standing when the arrow
+ * lands, or a duck mid-flight gets blamed on the ballistics. That used to
+ * mean aiming only at hostile butts, because a green one dwelled `rand(0.5,
+ * 1.2)`s once fully up against the ~1.3s an arrow needs to cross the far
+ * rank and would start sinking under a perfectly aimed shot — which was a
+ * second, separate defect this test was quietly steering around, and is now
+ * fixed (`dwellFor` in butts.ts, and the live test below). The stock list
+ * here is still every ticker down, so every butt is red and the volleys are
+ * paced the same way they were when this test was written; the filter is now
+ * `flightTimeTo(b.rank)` rather than a transcribed 1.6, which is the real
+ * condition and is satisfied by every butt of either colour today. Nothing
+ * else about the butt being hostile touches this: it shoots back, and being
+ * shot at moves health, not where our own arrow goes.
+ *
+ * Why it waits for a butt standing alone: a second butt up at the same time
+ * can be the one the arrow legitimately meets — a near-rank face between the
+ * eye and a far-rank one, or a same-rank neighbour whose face overlaps this
+ * one's — and a shot stopped by something genuinely in the way is not a
+ * ballistics failure. One target on the range removes the question entirely.
+ * Wave 0 spawns every 1.2-2.0s against the 0.42s a butt takes to rise, so
+ * the first one up is alone for long enough to shoot; a trial where a second
+ * arrives first is abandoned rather than scored.
+ *
+ * The assertion is on the target butt's own `dead`, not on the round's hit
+ * count: `dead > 0` is the struck butt falling away, so this pins the arrow
+ * to the face it was aimed at rather than to any face, and it is the same
+ * state the player sees as a target dropping when hit.
+ */
+test("a dead-centre shot connects: aimed at a standing butt's face, the arrow lands in that face — both ranks, right across the spread of spawn positions", () => {
+  const dt = 1 / 60;
+  // Every stock down, so every butt that rises is hostile — the same range
+  // this test has always been driven against; see above.
+  const stocks = [{ symbol: "DN", changePct: -1 }];
+  // `look`'s own unscoped sensitivity, which is the only way in to yaw and
+  // pitch from outside the class. Deltas are measured off `facing`, so this
+  // lands on exactly the angle wanted rather than accumulating.
+  const LOOK_K = 0.0022;
+
+  const shoot = (rank: "near" | "far") => {
+    const w = new World(makeNullSurface(), stocks, () => {});
+    w.start();
+    let target: Butt | undefined;
+    for (let f = 0; f < 600; f++) {
+      w.step(dt);
+      if (w.butts.length > 1) return null;
+      const b = w.butts[0];
+      if (b && b.rank === rank && b.behaviour === "stand" && b.out >= 1 && b.dead === 0 && b.dwell > flightTimeTo(rank)) {
+        target = b;
+        break;
+      }
+    }
+    if (!target) return null;
+
+    // Aim the way the camera does: straight at the face's world position,
+    // reticle dead centre (`look` re-centres `aim` itself).
+    const face = target.face.getWorldPosition(new T.Vector3());
+    const d = face.clone().sub(w.eye);
+    const yaw = Math.atan2(-d.x, -d.z);
+    const pitch = Math.asin(d.y / d.length());
+    w.look(-(yaw - w.facing.yaw) / LOOK_K, -(pitch - w.facing.pitch) / LOOK_K);
+    // A clamped view is not a dead-centre shot, and would make a miss below
+    // mean something other than what this test is about.
+    assert.ok(
+      Math.abs(w.facing.yaw - yaw) < 1e-6 && Math.abs(w.facing.pitch - pitch) < 1e-6,
+      "the view has to actually reach the face, or the shot below was never aimed at it",
+    );
+
+    assert.ok(w.fire(), "the nock is full at the start of a round, so the shot has to loose");
+    const arrow = w.arrows[w.arrows.length - 1];
+    for (let g = 0; g < 600 && arrow.stuck === 0 && w.arrows.includes(arrow); g++) w.step(dt);
+    const struck = target.dead > 0;
+
+    // The other half of what the player reported — "targets need to drop when
+    // hit" — measured on the same shot rather than argued about. `stepButt`'s
+    // death branch has always done this; there was simply never a hit to set
+    // it off, which is why it was invisible. A third of a second of the fall
+    // is enough to see it without running into `world.ts`'s own filter
+    // retiring the butt at `DEATH_FALL_TIME`.
+    const heldAt = target.group.position.y;
+    const facedAt = target.group.rotation.z;
+    for (let g = 0; g < 20; g++) w.step(dt);
+    const fell = heldAt - target.group.position.y;
+    const turned = Math.abs(target.group.rotation.z - facedAt);
+
+    w.stop();
+    return { x: +target.x.toFixed(1), range: +Math.hypot(d.x, d.z).toFixed(1), struck, fell, turned };
+  };
+
+  for (const rank of ["near", "far"] as const) {
+    const shots = [];
+    for (let i = 0; i < 300 && shots.length < 20; i++) {
+      const r = shoot(rank);
+      if (r) shots.push(r);
+    }
+    assert.ok(shots.length >= 20, `${rank} rank: not enough standing butts came up alone to say anything about the ballistics`);
+    const xs = shots.map((s) => s.x);
+    assert.ok(
+      Math.min(...xs) < -8 && Math.max(...xs) > 8,
+      `${rank} rank: the butts shot at have to be spread across the range, not clustered where one elevation happens to work (saw x from ${Math.min(...xs)} to ${Math.max(...xs)})`,
+    );
+    const missed = shots.filter((s) => !s.struck).map((s) => ({ x: s.x, range: s.range }));
+    assert.deepEqual(
+      missed,
+      [],
+      `${rank} rank: a shot aimed dead centre at a standing face must land in it, at every range that face can stand at`,
+    );
+    const stoodThere = shots.filter((s) => s.fell < 2 || s.turned < 1);
+    assert.equal(
+      stoodThere.length,
+      0,
+      `${rank} rank: a struck butt has to visibly fall away and turn as it goes; the drop was always there, and a hit landing is what finally makes it something anyone sees`,
+    );
+  }
+});
+
+/*
+ * The half of "hits aren't registering" that a correct arrow cannot fix.
+ *
+ * The test above proves the arrow arrives where it was aimed. It can only
+ * prove that because it waits for a butt whose `dwell` is long enough to
+ * still be there when the arrow lands — which, before the dwells were
+ * derived from the flight times, meant a hostile one. That filter is what
+ * kept this defect out of sight: a green butt was given 0.5-1.2s fully up
+ * against a flight of 1.05s to the near rank and 1.37s to the far one, so
+ * the far rank's target was always back in cover before the arrow could
+ * arrive and the near rank's was a coin toss. The arrow was right and the
+ * target was gone.
+ *
+ * So this one filters on nothing. It takes whatever comes up, of either
+ * colour, fires dead centre the first frame it is *fully* up — the earliest
+ * moment a player could be sure of what they were aiming at — and follows
+ * the shot to wherever it resolves. What it asserts is the relationship the
+ * game needs and not a percentage: a target you can see and aim at is a
+ * target you can hit. A transcribed hit rate would pass just as happily at
+ * 50% as at 100%, and 50% is what the near rank was.
+ *
+ * Both colours, because a green butt is the one the player is scored on and
+ * a red one is how the player stops being shot at, and they are given their
+ * dwell by two different expressions. Both ranks separately, because the
+ * far rank is 16 units further out and the whole point of deriving the
+ * dwell is that one number cannot serve both.
+ *
+ * `w.butts.length > 1` abandons a trial rather than failing it, for the
+ * reason the test above gives: a second butt up can legitimately be the one
+ * the arrow meets, and a shot stopped by something genuinely in the way is
+ * not what this is asking about.
+ */
+test("a target you can see and aim at is a target you can hit: fired dead centre the frame it stands fully up, at both ranks, green and red", () => {
+  const dt = 1 / 60;
+  // `look`'s own unscoped sensitivity — see the test above, which aims the
+  // same way for the same reason.
+  const LOOK_K = 0.0022;
+
+  const shoot = (rank: Rank, hostile: boolean) => {
+    const stock = [{ symbol: hostile ? "DN" : "UP", changePct: hostile ? -1 : 1 }];
+    const w = new World(makeNullSurface(), stock, () => {});
+    w.start();
+    let target: Butt | undefined;
+    for (let f = 0; f < 600; f++) {
+      w.step(dt);
+      if (w.butts.length > 1) break;
+      const b = w.butts[0];
+      if (b && b.rank === rank && b.behaviour === "stand" && b.out >= 1 && b.dead === 0) {
+        target = b;
+        break;
+      }
+    }
+    if (!target) {
+      w.stop();
+      return null;
+    }
+    const face = target.face.getWorldPosition(new T.Vector3());
+    const d = face.clone().sub(w.eye);
+    const yaw = Math.atan2(-d.x, -d.z);
+    const pitch = Math.asin(d.y / d.length());
+    w.look(-(yaw - w.facing.yaw) / LOOK_K, -(pitch - w.facing.pitch) / LOOK_K);
+    assert.ok(
+      Math.abs(w.facing.yaw - yaw) < 1e-6 && Math.abs(w.facing.pitch - pitch) < 1e-6,
+      "the view has to actually reach the face, or the shot below was never aimed at it",
+    );
+    assert.ok(w.fire(), "the nock is full at the start of a round, so the one shot has to loose");
+    const arrow = w.arrows[w.arrows.length - 1];
+    for (let g = 0; g < 600 && arrow.stuck === 0 && w.arrows.includes(arrow); g++) w.step(dt);
+    const shot = {
+      x: +target.x.toFixed(1),
+      range: +Math.hypot(d.x, d.z).toFixed(1),
+      dwell: +target.dwell.toFixed(2),
+      struck: target.dead > 0,
+      // A butt that is neither struck nor still fully up ducked back into
+      // cover while the arrow was in the air — the failure this test exists
+      // for, named so a regression says which of the two it is.
+      ducked: target.dead === 0 && target.out < 1,
+    };
+    w.stop();
+    return shot;
+  };
+
+  // Every group is run before anything is asserted about the misses, so a
+  // failure names all four rather than stopping at whichever one happens to
+  // break first — the near rank and the far rank fail for the same reason
+  // and by different amounts, and seeing only one of them is how the far
+  // rank's flight time gets mistaken for the near rank's.
+  const misses: Record<string, { x: number; range: number; dwell: number; ducked: boolean }[]> = {};
+  for (const hostile of [false, true]) {
+    for (const rank of ["near", "far"] as const) {
+      const label = `${hostile ? "red" : "green"} ${rank}`;
+      const shots = [];
+      for (let i = 0; i < 260 && shots.length < 15; i++) {
+        const r = shoot(rank, hostile);
+        if (r) shots.push(r);
+      }
+      assert.ok(shots.length >= 15, `${label}: not enough butts came up alone to say anything about the population`);
+      const xs = shots.map((s) => s.x);
+      assert.ok(
+        Math.min(...xs) < -8 && Math.max(...xs) > 8,
+        `${label}: the butts shot at have to be spread across the rank, not clustered where one dwell happens to be long enough (saw x from ${Math.min(...xs)} to ${Math.max(...xs)})`,
+      );
+      const missed = shots.filter((s) => !s.struck).map((s) => ({ x: s.x, range: s.range, dwell: s.dwell, ducked: s.ducked }));
+      if (missed.length) misses[label] = missed;
+    }
+  }
+  assert.deepEqual(
+    misses,
+    {},
+    "a butt standing fully up, aimed at dead centre and shot at once, must be hit: a target that ducks back into cover while the arrow aimed at it is still in the air is not a target the player can play against, at either rank or either colour",
+  );
+});
+
+/*
  * The gate itself, in isolation — the arithmetic that the two-path parity
  * test below rests on.
  *
@@ -809,21 +1074,33 @@ test("stepButt moves a drift sideways and not a stand", () => {
 });
 
 /*
- * "Rises for 1.8 seconds and drops whether hit or not" — a peek that only
- * ever left the scene when shot would be a drift with extra steps. This
- * drives an unstruck peek past its own window and checks it has started
- * ducking on its own, then drives a struck one through the real
- * `resolveButtHit`/`applyButtHit` hit path and checks the hit takes it out
- * immediately rather than waiting for the window either way.
+ * "Rises, and drops whether hit or not" — a peek that only ever left the
+ * scene when shot would be a drift with extra steps. This drives an unstruck
+ * peek past its own window and checks it has started ducking on its own,
+ * then drives a struck one through the real `resolveButtHit`/`applyButtHit`
+ * hit path and checks the hit takes it out immediately rather than waiting
+ * for the window either way.
+ *
+ * Both ranks, because the window is no longer one number. It was a flat 1.8
+ * seconds, set when a click was an instant raycast; it is now `peekWindow`,
+ * which is the reaction window plus the flight time to the rank the peek
+ * rose in. What this test pins is the behaviour's identity, which is
+ * unchanged: whatever the window is, a peek ducks at the end of it.
  */
-test("a peek retires within its window whether or not it is hit", () => {
+test("a peek retires within its own rank's window whether or not it is hit", () => {
   const dt = 1 / 60;
   const riseTime = 1 / 2.4; // `out` climbs from 0 to 1 at 2.4/s, same rate `stepButt` uses
 
-  const unhit = makeButt({ symbol: "CCC", changePct: 1 }, "near", 0, "peek");
-  for (let t = 0; t < riseTime + PEEK_WINDOW + 0.5; t += dt) stepButt(unhit, dt);
-  assert.equal(unhit.rising, false, "an unstruck peek must have started ducking within its own window");
-  assert.equal(unhit.dead, 0, "it should have left on its own timer, not because anything destroyed it");
+  for (const rank of ["near", "far"] as const) {
+    const unhit = makeButt({ symbol: "CCC", changePct: 1 }, rank, 0, "peek");
+    // Just short of the window, it must still be standing: a peek that ducked
+    // early would pass the assertion below for the wrong reason.
+    for (let t = 0; t < riseTime + peekWindow(rank) - 0.1; t += dt) stepButt(unhit, dt);
+    assert.equal(unhit.rising, true, `${rank} rank: a peek must still be up until its own window is spent`);
+    for (let t = 0; t < 0.6; t += dt) stepButt(unhit, dt);
+    assert.equal(unhit.rising, false, `${rank} rank: an unstruck peek must have started ducking within its own window`);
+    assert.equal(unhit.dead, 0, "it should have left on its own timer, not because anything destroyed it");
+  }
 
   const hit = makeButt({ symbol: "DDD", changePct: 1 }, "near", 0, "peek");
   for (let t = 0; t < riseTime / 2; t += dt) stepButt(hit, dt); // partway up, well inside the window
@@ -838,6 +1115,102 @@ test("a peek retires within its window whether or not it is hit", () => {
   applyButtHit(hit, result);
   stepButt(hit, dt);
   assert.ok(hit.dead > 0, "a peek that is hit should fall away like any other struck target, not linger for its window");
+});
+
+/*
+ * The same defect the live test above measures, said as arithmetic.
+ *
+ * The live one is the honest test and it is also a slow, statistical one:
+ * it drives real rounds and shoots at whatever comes up. This is the cheap
+ * half — it takes the two numbers that have to be compared and compares
+ * them, so a failure says *which* number moved rather than only that the
+ * hit rate fell.
+ *
+ * The flight time is worked out here from the game's own constants rather
+ * than read back out of `flightTimeTo`: the eye stands at `SHOOTER_Z`, a
+ * butt may rise anywhere up to `SPAWN_X_LIMIT` either side of centre, its
+ * face is at `FACE_HEIGHT` and the nock at `NOCK_HEIGHT`, and the arrow
+ * leaves at `SHOT_SPEED` on the elevation `ballisticElevation` solves for.
+ * Range over the flat part of that velocity is the time in the air. It is
+ * the same arithmetic `flightTimeTo` does, written out where a reader can
+ * check it against the numbers in the doc comments.
+ */
+test("a butt of each rank stays fully up longer than an arrow takes to reach it, in the worst case of its own spread", () => {
+  assert.equal(SHOT_SPEED, drawSpeed(SHOT_DRAW), "the speed a butt's dwell is measured against has to be the speed a shot actually leaves at");
+
+  for (const rank of ["near", "far"] as const) {
+    // The far corner of the rank: the longest shot a butt standing there can
+    // ask for, which is what its dwell has to outlast — not the average one.
+    const range = Math.hypot(SPAWN_X_LIMIT, SHOOTER_Z - RANKS[rank].z);
+    const elevation = ballisticElevation(range, FACE_HEIGHT - NOCK_HEIGHT, SHOT_SPEED);
+    const flight = range / (SHOT_SPEED * Math.cos(elevation));
+
+    assert.ok(Math.abs(longestShotTo(rank) - range) < 1e-9, `${rank} rank: longestShotTo has to be that corner`);
+    assert.ok(Math.abs(flightTimeTo(rank) - flight) < 1e-9, `${rank} rank: flightTimeTo has to be that flight`);
+
+    // The floor under every dwell at this rank, and the thing the whole fix
+    // rests on: time to react, and then time for the arrow to get there.
+    assert.ok(
+      Math.abs(minimumDwell(rank) - (AIM_WINDOW + flight)) < 1e-9,
+      `${rank} rank: the floor under a dwell has to be the aim window plus the flight, not a number picked to look like one`,
+    );
+
+    // And every dwell a butt of this rank can actually be handed clears it —
+    // the peek exactly, the green and the red by their own spreads. Driven
+    // through the real `dwellFor` over the whole spread rather than argued
+    // about, with `rand`'s two ends pinned so "worst case" means worst case.
+    assert.ok(
+      Math.abs(dwellFor(rank, false, "peek") - (AIM_WINDOW + flight)) < 1e-9,
+      `${rank} rank: a peek gets the floor exactly — the reaction and the flight and nothing more`,
+    );
+    const originalRandom = Math.random;
+    try {
+      for (const roll of [0, 0.5, 0.999999]) {
+        Math.random = () => roll;
+        for (const hostile of [false, true]) {
+          for (const behaviour of ["stand", "drift", "swing"] as const) {
+            const dwell = dwellFor(rank, hostile, behaviour);
+            assert.ok(
+              dwell > flight,
+              `${rank} rank: a ${hostile ? "red" : "green"} ${behaviour} drawing ${roll} gets ${dwell.toFixed(2)}s fully up, which does not outlast the ${flight.toFixed(2)}s an arrow needs to reach it`,
+            );
+            assert.ok(
+              dwell >= AIM_WINDOW + flight - 1e-9,
+              `${rank} rank: and it has to leave the player the ${AIM_WINDOW}s aim window on top of the flight, not just beat the arrow`,
+            );
+            const spread = hostile ? HOSTILE_SPREAD : GREEN_SPREAD;
+            assert.ok(
+              dwell <= AIM_WINDOW + flight + spread + 1e-9,
+              `${rank} rank: and no longer than the floor plus its own ${spread}s spread`,
+            );
+          }
+        }
+      }
+    } finally {
+      Math.random = originalRandom;
+    }
+  }
+
+  // The far rank is further, so it takes longer to reach and has to stand
+  // longer. One shared dwell cannot be right for both, which is what the old
+  // single `rand(0.5, 1.2)` and the old flat 1.8s peek each were.
+  assert.ok(flightTimeTo("far") > flightTimeTo("near"), "the far rank is the longer shot");
+  assert.ok(minimumDwell("far") > minimumDwell("near"), "so a butt standing there has to stay up longer");
+  assert.ok(peekWindow("far") > peekWindow("near"), "including the peek, whose window was one number for both ranks");
+
+  // A peek is the fleeting one: the tightest of the three at either rank.
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0; // the shortest green and the shortest red of each spread
+    for (const rank of ["near", "far"] as const) {
+      assert.ok(
+        peekWindow(rank) <= dwellFor(rank, false, "stand") && peekWindow(rank) <= dwellFor(rank, true, "stand"),
+        `${rank} rank: a peek must stay up no longer than the shortest green or red of the same rank`,
+      );
+    }
+  } finally {
+    Math.random = originalRandom;
+  }
 });
 
 /*
