@@ -43,7 +43,28 @@ import {
   ENDING_MAX_S,
   type Snapshot,
 } from "../src/app/(site)/range/world";
-import { shareLines, shareText, type Run } from "../src/app/(site)/range/share";
+import {
+  shareLines,
+  shareText,
+  SKY_STOPS,
+  SAMPLED_AGAINST,
+  HAZE,
+  SUN,
+  rgbTriplet,
+  type Run,
+} from "../src/app/(site)/range/share";
+import {
+  SKY_TOP,
+  SKY_MID,
+  SKY_HOT,
+  SKY_HORIZON,
+  FOG_COLOUR,
+  SUN_COLOUR,
+  GROUND_ALBEDO,
+  OAK_LEAF_ALBEDO,
+  PALISADE_ALBEDO,
+  SUN_ANGLE_DEG,
+} from "../src/app/(site)/range/scene";
 import { makeNullSurface } from "../src/app/(site)/range/render";
 import { waveAt } from "../src/app/(site)/range/waves";
 import { musicRateForWave } from "../src/app/(site)/range/sfx";
@@ -1927,4 +1948,45 @@ test("shareText: says nothing about money, winning or a prize", () => {
  */
 test("shareText: names no ticker, however the round went", () => {
   assert.ok(!shareText(aRun({ bestSymbol: "NVDA" })).includes("NVDA"));
+});
+
+/*
+ * The share image has to look like the game, and it is the only thing the
+ * range produces that travels beyond the site. It used to hand-copy nine
+ * values out of `scene.ts` — four sky stops, three albedos, the fog and the
+ * sun — with the provenance written in prose and no import at all, so a
+ * retune of the wood would have left the image painting a wood that no
+ * longer exists and nothing anywhere would have noticed.
+ *
+ * Every assertion below is the relationship, never the hex. Transcribing
+ * the values here would just be a third copy of them.
+ */
+test("the share image's sky, fog and sun are scene.ts's own, not a copy of them", () => {
+  assert.deepEqual(
+    [...SKY_STOPS],
+    [SKY_TOP, SKY_MID, SKY_HOT, SKY_HORIZON],
+    "the stops the image paints the sky with are scene.ts's stops, in scene.ts's order",
+  );
+  assert.equal(HAZE, rgbTriplet(FOG_COLOUR), "the haze is scene.ts's fog colour");
+  assert.equal(SUN, rgbTriplet(SUN_COLOUR), "the sun on the image is scene.ts's sun colour");
+});
+
+/*
+ * The other three cannot be imported: what the image paints is a screen
+ * colour, the product of the sun, the ambient, the fog and ACES tone
+ * mapping, read back off the running renderer. There is no expression of an
+ * albedo that produces one. So `share.ts` records which albedo each sample
+ * was taken against, and this is the alarm: if the wood is retuned, these
+ * samples are stale and the frame needs reading back again. Failing here
+ * does not mean a sample is wrong — it means nobody has looked since.
+ */
+test("the albedos the share image sampled against are still scene.ts's albedos", () => {
+  assert.equal(SAMPLED_AGAINST.ground, GROUND_ALBEDO, "the ground silhouette");
+  assert.equal(SAMPLED_AGAINST.oakLeaf, OAK_LEAF_ALBEDO, "the tree mass");
+  assert.equal(SAMPLED_AGAINST.palisade, PALISADE_ALBEDO, "the palisade, lit face and shaded");
+  assert.equal(
+    SAMPLED_AGAINST.sunAngleDeg,
+    SUN_ANGLE_DEG,
+    "the sun's disc is placed by eye for this elevation — move the sun and it needs placing again",
+  );
 });

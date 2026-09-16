@@ -17,6 +17,14 @@
  */
 import { accuracyPct } from "./world";
 import { ringName } from "./butts";
+import {
+  SKY_TOP,
+  SKY_MID,
+  SKY_HOT,
+  SKY_HORIZON,
+  FOG_COLOUR,
+  SUN_COLOUR,
+} from "./scene";
 
 /**
  * One finished round, as the results card shows it.
@@ -94,51 +102,94 @@ export function shareText(run: Run): string {
  * silhouettes.
  *
  * The range's colours are `scene.ts`'s, because an image that does not look
- * like the game is worse than no image. They are arrived at two ways, and
- * each constant below says which:
+ * like the game is worse than no image. They are arrived at two ways:
  *
- *  - The sky is `scene.ts`'s own four stops and its own piecewise mix,
- *    reproduced exactly (see `skyAt`).
+ *  - The sky, the fog and the sun are `scene.ts`'s own values, imported.
+ *    The sky additionally uses `scene.ts`'s own piecewise mix, reproduced
+ *    exactly (see `skyAt`).
  *  - Everything lit — the ground, the trees, the palisade — has a screen
  *    colour that is the product of the sun, the ambient, the fog and ACES
  *    tone mapping. Rather than reimplement that chain, the frame was read
- *    back from the running renderer and sampled. Where a sample is used as
- *    it came off the screen it says so; where one was adjusted to work as a
- *    flat shape, it says that instead.
+ *    back from the running renderer and sampled. Those four are literals,
+ *    and cannot be anything else: there is no expression of `scene.ts`'s
+ *    albedos that would produce them.
+ *
+ * Which is the whole reason `SAMPLED_AGAINST` below exists. All nine of
+ * `scene.ts`'s values used to be hand-copied here with their provenance
+ * written in prose and no import, so a retune there would have left this
+ * image painting a wood that no longer exists with nothing to say so. The
+ * six that can be imported — the four sky stops, the fog, the sun — are
+ * imported. The three that cannot are the albedos the four screen samples
+ * were taken against: `SAMPLED_AGAINST` records those, alongside the sun's
+ * elevation that its position on the image was chosen by eye against, and
+ * `range.test.ts` asserts that record still matches `scene.ts`. A failure
+ * there does not mean a sample is wrong — it means the frame needs reading
+ * back again.
  */
-
-/** The sky shader's four stops, from `scene.ts`'s `sky()`, unchanged. */
-const SKY_TOP = 0x16243a;
-const SKY_MID = 0x6b4a3a;
-const SKY_HOT = 0xe08a3c;
-const SKY_HORIZON = 0xf4b35a;
 
 /**
  * The lit materials, off the screen rather than out of `scene.ts`.
  *
  * `scene.ts`'s hexes for these are the materials' own albedo, not what lands
- * on screen — the 0x2f5a3c ground under a 13° sun composites to very nearly
+ * on screen — the ground's albedo under a 13° sun composites to very nearly
  * black, which is exactly why the range reads as silhouettes against an
- * orange band, and why reading these as a swatch would draw a different
+ * orange band, and why reading those as a swatch would draw a different
  * game.
  */
-/** Ground plane (albedo 0x2f5a3c), sampled as it came off the screen. */
+/** Ground plane, sampled as it came off the screen. */
 const GROUND = "#010a03";
-/** The conifer mass (albedo 0x2c5233). Not one sample: on screen the trees
-    are a scatter of lit faces near rgb(83, 116, 47) and shadowed ones at the
-    ground's own value, and a flat silhouette wants a single colour between
-    the two. */
+/** The tree mass. Not one sample: on screen the trees are a scatter of lit
+    faces near rgb(83, 116, 47) and shadowed ones at the ground's own value,
+    and a flat silhouette wants a single colour between the two. */
 const TREE = "#06110a";
-/** A palisade post's sunward face (albedo 0x4a3a28), sampled as it came off
-    the screen. */
+/** A palisade post's sunward face, sampled as it came off the screen. */
 const STAKE_LIT = "#1f0c03";
 /** The same post's shaded face, which samples at very nearly pure black and
     is lifted a little here so a stake reads as a shape rather than a hole. */
 const STAKE_DARK = "#0a0401";
-/** The fog, `scene.ts`'s `T.Fog(0xd8a367, …)`, used as the haze it makes. */
-const HAZE = "216, 163, 103";
-/** The sun, `scene.ts`'s `T.DirectionalLight(0xffd9a0, 2.4)`. */
-const SUN = "255, 217, 160";
+
+/** `0xrrggbb` as the `"r, g, b"` a canvas `rgba(...)` string wants. */
+export function rgbTriplet(hex: number): string {
+  return `${(hex >> 16) & 255}, ${(hex >> 8) & 255}, ${hex & 255}`;
+}
+
+/** The fog, used as the haze it makes. Exported for the same reason
+    `SKY_STOPS` is: the test states the relationship to `scene.ts` rather
+    than transcribing the value a second time. */
+export const HAZE = rgbTriplet(FOG_COLOUR);
+/** The sun's own light, exported for the same reason as `HAZE`. */
+export const SUN = rgbTriplet(SUN_COLOUR);
+
+/** The sky stops this image paints with, in the order `skyAt` mixes them —
+    overhead down to the horizon. Exported so the test can state the
+    relationship ("the share image's sky stops are `scene.ts`'s sky stops")
+    rather than transcribe four hexes a second time. */
+export const SKY_STOPS = [SKY_TOP, SKY_MID, SKY_HOT, SKY_HORIZON] as const;
+
+/**
+ * What the four screen samples above, and the sun's position below, were
+ * taken against.
+ *
+ * Not used to draw anything — this is provenance, and it is here to be
+ * asserted. Each value is `scene.ts`'s as it stood when the frame was read
+ * back; if `scene.ts` moves, the test that compares the two fails and says
+ * that these samples and this sun placement need redoing, which is exactly
+ * the notice the old prose provenance could not give.
+ */
+export const SAMPLED_AGAINST = {
+  /** `GROUND`. */
+  ground: 0x2f5a3c,
+  /** `TREE` — the oak canopy's albedo. The conifers randomise their own
+      green around it, so there is no second hex to record. */
+  oakLeaf: 0x2c5233,
+  /** `STAKE_LIT` and `STAKE_DARK`, the two faces of the same post. */
+  palisade: 0x4a3a28,
+  /** The sun's own elevation, which puts the disc where `paintRange` draws
+      it. That position is chosen by eye rather than projected from the
+      angle — the image's sky mapping would put it 67px higher — so it is
+      a number this file is pinned to, not one it derives. */
+  sunAngleDeg: 13,
+} as const;
 
 /** The site's own ink, from `site.css`. */
 const INK = "#f2f5ee"; // .site .display
@@ -183,10 +234,9 @@ function smoothstep(e0: number, e1: number, x: number): number {
  * would have painted a sky several times too bright.
  */
 function skyAt(h: number): string {
-  const top = linearRgb(SKY_TOP);
-  const mid = linearRgb(SKY_MID);
-  const hot = linearRgb(SKY_HOT);
-  const horizon = linearRgb(SKY_HORIZON);
+  // Off `SKY_STOPS` itself, so that the array the test asserts against is
+  // the array this actually paints with rather than a copy beside it.
+  const [top, mid, hot, horizon] = SKY_STOPS.map(linearRgb);
   let a: [number, number, number];
   let b: [number, number, number];
   let t: number;
@@ -234,8 +284,10 @@ function paintRange(c: CanvasRenderingContext2D): void {
   }
 
   // The sun: low, and on the right — `scene.ts` puts it over the shooter's
-  // right shoulder at 13°, so it sits above the skyline on that side, and
-  // clear of the column the words are set in.
+  // right shoulder at `SAMPLED_AGAINST.sunAngleDeg`, so it sits above the
+  // skyline on that side, and clear of the column the words are set in.
+  // Placed by eye rather than projected through the sky mapping above,
+  // which would put it 67px higher and behind the score.
   const sx = 1002;
   const sy = HORIZON - 104;
   const glow = c.createRadialGradient(sx, sy, 0, sx, sy, 270);
