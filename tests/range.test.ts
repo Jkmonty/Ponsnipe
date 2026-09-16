@@ -1583,6 +1583,60 @@ test("reduced motion: the ending runs at full speed, the camera stays put, and t
   assert.equal(w.facing.pitch, aimed.pitch, "nor tilted after it");
 });
 
+/*
+ * The sidestep across the `ending` boundary, both ways round.
+ *
+ * `setStrafe` refuses while `ending`. That covers the direction pressed
+ * during the ending and misses the one already held when the clock ran
+ * out: `strafeInput` kept its value and went on being applied every frame,
+ * and since `setStrafe(0)` is refused by the same line, letting the key go
+ * could not stop it. A direction held at the buzzer walked the camera all
+ * the way to the clamp under a cinematic the player does not aim.
+ *
+ * Both halves are asserted here, because fixing either one alone still
+ * leaves a view the player cannot control.
+ */
+test("a sidestep held when the clock runs out is let go of, and one pressed during the ending is refused", () => {
+  const dt = 1 / 60;
+  const stock = [{ symbol: "UP", changePct: 1 }];
+
+  // Held at the buzzer, and released the moment the player notices.
+  const held = new World(makeNullSurface(), stock, () => {});
+  held.start();
+  assert.ok(held.fire(), "the shot should have loosed");
+  held.setStrafe(1);
+  held.step(dt); // one ordinary frame with the key down, before the clock goes
+  const moved = held.sidestep;
+  assert.ok(moved > 0, "the dodge should work normally while the round is still running");
+
+  held.msLeft = 1;
+  held.step(dt); // the clock runs out here, with the key still down
+  held.setStrafe(0); // the player lets go — refused, and it must not matter
+  let seconds = 0;
+  while (!held.over && seconds < ENDING_MAX_S * 4) {
+    held.step(dt);
+    seconds += dt;
+  }
+  assert.ok(
+    held.sidestep < moved,
+    `a held direction must stop pushing once the ending begins — it went from ${moved} to ${held.sidestep}`,
+  );
+
+  // Pressed for the first time during the ending: nothing at all.
+  const pressed = new World(makeNullSurface(), stock, () => {});
+  pressed.start();
+  assert.ok(pressed.fire(), "the shot should have loosed");
+  pressed.msLeft = 1;
+  pressed.step(dt); // the clock runs out with nothing held
+  seconds = 0;
+  while (!pressed.over && seconds < ENDING_MAX_S * 4) {
+    pressed.setStrafe(-1);
+    pressed.step(dt);
+    seconds += dt;
+  }
+  assert.equal(pressed.sidestep, 0, "a direction first pressed during the ending must move nothing");
+});
+
 /**
  * Drive a real round until a hostile arrow is well down the range, and hand
  * it back. Every other ending test in this file builds its world from a

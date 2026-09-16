@@ -624,9 +624,16 @@ export class World {
    * itself, so releasing one while the other is still down keeps moving the
    * right way). A no-op while attracting, the same gate `look`, `fire` and
    * `setScoped` already use, so a key held over the menu cannot pre-load a
-   * dodge the instant Start is pressed — and the same while `ending`: the
-   * last arrow's cinematic is camera-only, so a direction still held from
-   * the moment time ran out cannot keep nudging the view sideways under it.
+   * dodge the instant Start is pressed — and the same while `ending`, since
+   * the last arrow's cinematic is the camera's own and not the player's to
+   * move under.
+   *
+   * Refusing here is only half of it, and on its own it was the wrong half:
+   * a direction *already* held when the clock ran out kept its value and
+   * kept being applied, and because this line refuses `setStrafe(0)` too,
+   * releasing the key could not stop it. `step` clears `strafeInput`
+   * itself for the duration of the ending — see the line beside where it
+   * sets `ending` — which is what actually makes the sentence above true.
    */
   setStrafe(dir: -1 | 0 | 1) {
     if (this.attracting || this.ending) return;
@@ -1076,6 +1083,20 @@ export class World {
     const arrowInFlight = this._arrows.some((a) => a.mine && a.stuck === 0);
     const endGate = endingGate({ msLeft: this.msLeft, arrowInFlight, reducedMotion: this.reducedMotion });
     this.ending = endGate.timeUp;
+    /*
+     * Let go of any direction still held at the buzzer.
+     *
+     * `setStrafe` refuses while `ending`, which stopped a new direction
+     * being taken and did nothing about one already held — `strafeInput`
+     * kept its value and the block below kept applying it, walking the
+     * camera to the clamp under a cinematic that is not the player's to
+     * aim. Worse, `setStrafe(0)` is refused on the same line, so letting
+     * the key go could not stop it either: the only way out was here.
+     * Cleared every frame of the ending rather than only on its first,
+     * which is the same thing while nothing can set it, and does not
+     * depend on catching the transition.
+     */
+    if (this.ending) this.strafeInput = 0;
     const dtScaled = dt * endGate.timeScale;
 
     if (endGate.timeUp) {
