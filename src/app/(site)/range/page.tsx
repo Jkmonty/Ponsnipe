@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Butt from "../Butt";
 import { World, ROUND_MS, type Snapshot, type Stock } from "./world";
+import { makeSurface } from "./render";
 import { Sfx } from "./sfx";
 
 interface BoardRow {
@@ -88,7 +89,7 @@ export default function ArcadePage() {
     const r = el.getBoundingClientRect();
     cv.style.width = `${r.width}px`;
     cv.style.height = `${Math.max(340, r.width * 0.58)}px`;
-    gameRef.current?.resize();
+    gameRef.current?.resize(cv.clientWidth, cv.clientHeight);
   }, []);
 
   useEffect(() => {
@@ -112,22 +113,29 @@ export default function ArcadePage() {
     if (!cv || !stocks || gameRef.current) return;
     fit();
     /*
-     * A missing WebGL context throws out of `new T.WebGLRenderer` — no
-     * WebGL, a driver blocklist, an Android WebView, too many live contexts
-     * already open. This effect is where that throw would otherwise land:
-     * React sends an effect's throw to the nearest error boundary, and there
-     * is no `error.tsx` under this route, so the default boundary would
-     * replace the whole page — leaderboard included. Catching it here and
-     * falling back to a line of text is what keeps the board standing.
+     * A missing WebGL context throws out of `new T.WebGLRenderer`, inside
+     * `makeSurface` — no WebGL, a driver blocklist, an Android WebView, too
+     * many live contexts already open. This effect is where that throw
+     * would otherwise land: React sends an effect's throw to the nearest
+     * error boundary, and there is no `error.tsx` under this route, so the
+     * default boundary would replace the whole page — leaderboard included.
+     * Catching it here and falling back to a line of text is what keeps the
+     * board standing.
      */
     let g: World;
     try {
-      g = new World(cv, stocks, setS);
+      g = new World(makeSurface(cv), stocks, setS);
     } catch {
       setWebgl(false);
       return;
     }
     gameRef.current = g;
+    // `fit()` above already gave the canvas its real CSS box; hand World
+    // those same measurements now that it exists, rather than the 960×560
+    // default it builds with — the one resize a fresh World used to do
+    // itself, reading `canvas.clientWidth` at the end of its own
+    // constructor.
+    g.resize(cv.clientWidth, cv.clientHeight);
     /*
      * A handle on the running game.
      *

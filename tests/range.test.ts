@@ -24,7 +24,52 @@ import {
   RING_FRACTIONS,
   FACE_RADIUS,
 } from "../src/app/(site)/range/butts";
-import { nockReady, attractStep } from "../src/app/(site)/range/world";
+import { nockReady, World } from "../src/app/(site)/range/world";
+import { makeNullSurface } from "../src/app/(site)/range/render";
+
+/*
+ * `World.attract()` starts its render loop the same way a browser round
+ * does, via `requestAnimationFrame` — Node has no such global. The
+ * acceptance test below drives every frame itself through the real
+ * `step()`, so the scheduled callback this never fires is not needed; it
+ * only has to exist so `attract()` does not throw building it.
+ */
+globalThis.requestAnimationFrame ??= (() => 0) as typeof requestAnimationFrame;
+globalThis.cancelAnimationFrame ??= (() => {}) as typeof cancelAnimationFrame;
+
+/*
+ * Attract mode spawns real (non-hostile) butts too — the wood is alive
+ * before Start, not just green afterward — and building one bakes its
+ * ticker onto a canvas texture (`tickerLabel` in butts.ts), which needs a
+ * working `document.createElement("canvas")`. This is bare 2D context
+ * plumbing so that real drawing can run without throwing; it decides
+ * nothing the game decides, the same way the rAF stand-in above only
+ * stands in for the browser's scheduler, not for `step` itself.
+ */
+if (typeof document === "undefined") {
+  const context2d = {
+    beginPath() {},
+    closePath() {},
+    moveTo() {},
+    lineTo() {},
+    arc() {},
+    arcTo() {},
+    rect() {},
+    fill() {},
+    stroke() {},
+    fillRect() {},
+    fillText() {},
+    measureText: (s: string) => ({ width: s.length * 8 }) as TextMetrics,
+  } as unknown as CanvasRenderingContext2D;
+  (globalThis as unknown as { document: Pick<Document, "createElement"> }).document = {
+    createElement: (tag: string) =>
+      ({
+        width: 0,
+        height: 0,
+        getContext: () => context2d,
+      }) as unknown as HTMLCanvasElement,
+  } as Pick<Document, "createElement"> as Document;
+}
 
 /** A bare arrow mesh — nothing from arrows.ts is needed to build one for a test. */
 function makeTestArrow(overrides: Partial<Arrow> & { vel: T.Vector3 }): Arrow {
@@ -471,82 +516,29 @@ test("the nock gate is one full pull for a tap and a click alike, not the old ha
 /*
  * Attract mode's own rules — the wood runs from the moment the page loads,
  * but the clock, hostiles and their consequences must all stay off until a
- * real round begins. `step` cannot be driven here (it needs a real WebGL
- * canvas), but the decision it consults, `attractStep`, is a plain function
- * of `{ attracting }` and `dt`, so the decision itself can be proven without
- * one. Each check below is a relationship — frozen vs moving, off vs on,
- * output equal to a named input — rather than a number copied out of a run.
+ * real round begins. This used to be provable only against `attractStep`
+ * itself, or against a hand-written stand-in that folded the gate into its
+ * own tiny copy of `step`'s bookkeeping — neither of which could ever
+ * notice `attractStep` being wired up wrong, or forgotten at a call site,
+ * inside the real `world.ts`. `World` no longer needs a real WebGL canvas
+ * to build (see `render.ts`), so this drives the real `World`, the real
+ * `attract()` and the real `step()` (via 600 real frames) end to end, and
+ * checks the real `points`/`health`/`msLeft`/`butts` it produced — the
+ * property the earlier attempts lacked is that deleting this test is the
+ * only way to stop it guarding the bug, not editing it.
  */
-test("attracting turns off exactly the clock, hostiles and hit consequences, and turns them back on once a real round begins", () => {
-  const dt = 1 / 60;
-  const attracting = attractStep({ attracting: true }, dt);
-  const playing = attractStep({ attracting: false }, dt);
-
-  assert.equal(attracting.clockDt, 0, "the round clock must not advance at all while attracting");
-  assert.equal(playing.clockDt, dt, "outside attract the clock's own dt should pass straight through");
-
-  assert.equal(attracting.hostileActive, false, "no butt may come up hostile or fire while attracting");
-  assert.equal(playing.hostileActive, true, "and both are allowed once a real round begins");
-
-  assert.equal(attracting.consequencesActive, false, "a hit must not be able to change score or health while attracting");
-  assert.equal(playing.consequencesActive, true, "and hits are allowed to matter once a real round begins");
-});
-
-test("the frozen clock holds for whatever dt a frame hands it, not just a typical one", () => {
-  for (const dt of [0, 1 / 240, 1 / 30, 1, 50]) {
-    assert.equal(attractStep({ attracting: true }, dt).clockDt, 0, `dt=${dt} should still freeze the clock`);
-    assert.equal(attractStep({ attracting: false }, dt).clockDt, dt, `dt=${dt} should pass through unattended`);
-  }
-});
-
-/*
- * The same decision, driven the way `step` actually drives it: once per
- * simulated frame, folded into a tiny stand-in for the round state it
- * gates. Attracting for ten seconds' worth of frames must leave the clock,
- * the score, the health and a hostile's own cooldown exactly where they
- * started; leaving attract must let all four move.
- *
- * What this proves is that `attractStep`'s own decision is right — nothing
- * more. It folds the gate into a hand-written stand-in rather than calling
- * `step()` itself (which needs a real WebGL canvas this runner does not
- * have), so it cannot catch `attractStep` being wired up wrong, or forgotten
- * at a call site, inside the real `world.ts` — a reimplementation of the
- * gating can never notice that the real wiring drifted from it. That call
- * site is verified by review for now; a headless harness that drives the
- * real `step()` end to end is Phase 3's work, not this one's.
- */
-test("driving a simulated round through attractStep leaves the clock, score, health and a hostile's cooldown untouched while attracting, and lets a real round move all four", () => {
-  function simulate(attracting: boolean, frames: number) {
-    let msLeft = 60_000;
-    let points = 500;
-    let health = 40;
-    let cooldown = 0.05; // a hostile mid-volley, about to loose
-    const dt = 1 / 60;
-    for (let i = 0; i < frames; i++) {
-      const gate = attractStep({ attracting }, dt);
-      msLeft -= gate.clockDt * 1000;
-      if (gate.hostileActive) {
-        cooldown -= dt;
-        if (cooldown <= 0 && gate.consequencesActive) {
-          health -= 18; // a hostile arrow landing on the player
-          cooldown = 1;
-        }
-      }
-      if (gate.consequencesActive) points += 10; // stand-in for a credited hit
-    }
-    return { msLeft, points, health, cooldown };
-  }
-
-  const frozen = simulate(true, 600); // ten seconds at 60fps
-  assert.equal(frozen.msLeft, 60_000, "the clock must not have moved a millisecond while attracting");
-  assert.equal(frozen.points, 500, "score must not have moved while attracting");
-  assert.equal(frozen.health, 40, "health must not have dropped while attracting");
-  assert.equal(frozen.cooldown, 0.05, "a hostile's cooldown must never tick while attracting, so it never gets the chance to fire");
-
-  const live = simulate(false, 600);
-  assert.ok(live.msLeft < 60_000, "outside attract the clock should have run down");
-  assert.ok(live.points > 500, "outside attract score should have been free to grow");
-  assert.ok(live.health < 40, "outside attract health should have been free to drop");
+test("attract mode cannot advance the clock, score, or spawn anything hostile", () => {
+  const w = new World(makeNullSurface(), [
+    { symbol: "UP", changePct: +1 },
+    { symbol: "DOWN", changePct: -1 },
+  ], () => {});
+  w.attract();
+  const before = { points: w.points, health: w.health, msLeft: w.msLeft };
+  for (let i = 0; i < 600; i++) w.step(1 / 60);
+  assert.equal(w.points, before.points);
+  assert.equal(w.health, before.health);
+  assert.equal(w.msLeft, before.msLeft);
+  assert.equal(w.butts.filter((b) => b.hostile).length, 0);
 });
 
 test("aim assist forgives a near miss in proportion to the error, rather than deciding the ring at spawn", () => {

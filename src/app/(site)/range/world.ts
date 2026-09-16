@@ -19,6 +19,7 @@
 import * as T from "three";
 import { buildWood, disposeWood, stepWood, type Wood } from "./scene";
 import { rand } from "./rand";
+import type { Surface } from "./render";
 import {
   LANES,
   makeButt,
@@ -27,10 +28,10 @@ import {
   resolveButtHit,
   comboAfter,
   streakAfter,
-  isTargetable,
   applyButtHit,
   disposeButt,
   bestSymbolAfter,
+  stepButt,
   FACE_RADIUS,
   type Butt,
 } from "./butts";
@@ -188,11 +189,10 @@ const POPUP_RISE = 2.2;
 const POPUP_SCALE = 1.1;
 
 export class World {
-  private renderer: T.WebGLRenderer;
   private scene = new T.Scene();
   private camera: T.PerspectiveCamera;
   private raycaster = new T.Raycaster();
-  private butts: Butt[] = [];
+  private _butts: Butt[] = [];
   private arrows: Arrow[] = [];
   /** Points popups floating up off a struck face — a sprite each, aged out
       and disposed once they finish fading rather than left to accumulate. */
@@ -307,23 +307,10 @@ export class World {
   } | null = null;
 
   constructor(
-    private canvas: HTMLCanvasElement,
+    private surface: Surface,
     private stocks: Stock[],
     private onChange: (s: Snapshot) => void,
   ) {
-    this.renderer = new T.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    // Shadows and a filmic curve. The wood is flat-shaded low-poly, which
-    // reads as cardboard under a flat light — the long shadows of a low sun
-    // are what give it depth, and ACES stops the warm sun clipping to white
-    // where it lands.
-    this.renderer.shadowMap.enabled = true;
-    // PCFSoftShadowMap was removed in this three.js version (0.186); it
-    // warned on the console and silently fell back to PCFShadowMap, which
-    // is what this now asks for directly.
-    this.renderer.shadowMap.type = T.PCFShadowMap;
-    this.renderer.toneMapping = T.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
     this.camera = new T.PerspectiveCamera(FOV_WIDE, 1, 0.1, 400);
     // Back from the first hedge, so there is ground between you and the
     // nearest butt and the range reads as a range rather than a wall.
@@ -335,6 +322,19 @@ export class World {
     this.tagGround(this.wood.root);
     this.buildBow();
     this.resize();
+  }
+
+  /**
+   * The butts currently on the range. Read-only, and only ever meant for a
+   * test: `world.ts`'s own logic reads and mutates the private list this
+   * wraps, never this getter. Exists so `tests/range.test.ts` can drive a
+   * real `World` end to end (see `attract()`) and check what it actually
+   * did — whether anything hostile came up — without a second copy of
+   * `World`'s own spawn/retire logic living in the test file to check it
+   * against.
+   */
+  get butts(): readonly Butt[] {
+    return this._butts;
   }
 
   /**
@@ -520,7 +520,7 @@ export class World {
     // flag, and raycasts every arrow's flight against it.
     butt.face.userData.arrowTarget = true;
     this.scene.add(butt.group);
-    this.butts.push(butt);
+    this._butts.push(butt);
   }
 
   /**
@@ -616,7 +616,17 @@ export class World {
     this.turn(-dx * k, -dy * k);
   }
 
-  private step(dt: number) {
+  /**
+   * One frame of the round: the clock, hostile spawns and fire, arrow and
+   * butt motion, and whatever a hit resolves to — everything `runLoop`
+   * drives sixty times a second via `requestAnimationFrame`. Not private:
+   * `runLoop` still calls it the same way, but this is also the one thing
+   * `tests/range.test.ts`'s acceptance test needs to drive a real round
+   * without a real render loop, which needs a browser this test runner does
+   * not have. Calling this by hand does not skip anything a frame normally
+   * does — it just skips waiting for the browser to schedule it.
+   */
+  step(dt: number) {
     if (this.over) return;
     const gate = attractStep({ attracting: this.attracting }, dt);
     // The pollen is the one piece of ambient motion `reducedMotion` did not
@@ -695,37 +705,17 @@ export class World {
       this.spawnIn = rand(0.5, 1.2) * (1 - progress * 0.45);
     }
 
-    for (const b of this.butts) {
-      if (b.dead > 0) {
-        b.dead -= dt;
-        b.group.position.y -= dt * 9;
-        b.group.rotation.z += dt * 5;
-        // The recoil from the hit that killed it plays on top of the fall
-        // rather than being skipped for it — a destroyed butt still
-        // flinches before it goes over.
-        this.stepRock(b, dt);
-        continue;
-      }
-      b.x += b.vx * dt;
-      if (b.x < -34 || b.x > 34) b.vx *= -1;
-
-      if (b.rising) {
-        b.out = Math.min(1, b.out + dt * 2.4);
-        if (b.out >= 1) {
-          b.dwell -= dt;
-          if (b.dwell <= 0) b.rising = false;
-        }
-      } else {
-        b.out = Math.max(0, b.out - dt * 2.4);
-      }
-      // Rises from behind the hedge rather than fading in.
-      b.group.position.set(b.x, -9 + b.out * 9, LANES[b.lane]);
+    for (const b of this._butts) {
+      // Captured before `stepButt` mutates `dead`, so a butt that was
+      // already falling this frame cannot also loose a shot on the very
+      // frame it dies — the same thing the old inline `continue` did.
+      const wasFalling = b.dead > 0;
+      stepButt(b, dt);
+      // The recoil from the hit that killed it plays on top of the fall
+      // rather than being skipped for it — a destroyed butt still flinches
+      // before it goes over.
       this.stepRock(b, dt);
-      // Only a butt that is actually up and not already falling is
-      // something a flying arrow should be steered toward or able to hit —
-      // the same predicate `onArrowHit` reads before crediting a hit, so the
-      // two cannot silently disagree about what is a live target.
-      b.face.userData.arrowTarget = isTargetable(b);
+      if (wasFalling) continue;
 
       if (b.hostile && b.out > 0.6 && gate.hostileActive) {
         b.cooldown -= dt;
@@ -740,14 +730,14 @@ export class World {
      * scene. Kept as one pass rather than two overlapping filters, which is
      * what this was and which left some of them in the world for ever.
      */
-    this.butts = this.butts.filter((b) => {
+    this._butts = this._butts.filter((b) => {
       if (b.dead >= 0) return true;
       this.scene.remove(b.group);
       disposeButt(b);
       return false;
     });
     // A butt that has fully ducked has done its job and can go.
-    this.butts = this.butts.filter((b) => {
+    this._butts = this._butts.filter((b) => {
       if (b.dead > 0 || b.rising || b.out > 0.01) return true;
       this.scene.remove(b.group);
       disposeButt(b);
@@ -891,7 +881,7 @@ export class World {
     // even if an arrow got here some other way.
     if (!consequencesActive) return;
     if (a.mine) {
-      const b = this.butts.find((x) => x.face === hit);
+      const b = this._butts.find((x) => x.face === hit);
       if (!b) {
         // Landed in the dirt, or flew clean past everything: a miss, same
         // as the old instant hitscan's miss. The streak already reached is
@@ -1144,10 +1134,15 @@ export class World {
     return true;
   }
 
-  resize() {
-    const w = this.canvas.clientWidth || 960;
-    const h = this.canvas.clientHeight || 560;
-    this.renderer.setSize(w, h, false);
+  /**
+   * `World` no longer holds a canvas to measure itself — `page.tsx` does,
+   * and passes the CSS box it just gave the canvas straight through. The
+   * defaults are only for a `World` nobody has resized yet (a fresh one in
+   * a test, say): the same 960×560 fallback the old canvas-reading version
+   * fell back to before its first real layout.
+   */
+  resize(w = 960, h = 560) {
+    this.surface.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
 
@@ -1236,7 +1231,7 @@ export class World {
       // that will not change again until the next `start()`.
       const idle = this.over && !this.attracting;
       if (!idle || !this.renderedFinalFrame) {
-        this.renderer.render(this.scene, this.camera);
+        this.surface.render(this.scene, this.camera);
         if (idle) this.renderedFinalFrame = true;
       }
       since += dt;
@@ -1344,11 +1339,11 @@ export class World {
       (Array.isArray(a.mesh.material) ? a.mesh.material : [a.mesh.material]).forEach((m) => m.dispose());
     }
     this.arrows = [];
-    for (const b of this.butts) {
+    for (const b of this._butts) {
       this.scene.remove(b.group);
       disposeButt(b);
     }
-    this.butts = [];
+    this._butts = [];
   }
 
   /**
@@ -1363,6 +1358,6 @@ export class World {
     cancelAnimationFrame(this.raf);
     this.clearRound();
     disposeWood(this.wood);
-    this.renderer.dispose();
+    this.surface.dispose();
   }
 }

@@ -177,6 +177,54 @@ export function isTargetable(b: Butt): boolean {
 const DEATH_FALL_TIME = 0.6;
 
 /**
+ * One frame of a butt's own motion: drift along its lane, rise out of cover,
+ * dwell once fully up, and — once struck — fall away and out (`retire`).
+ * Pulled out of `world.ts`'s per-frame loop unchanged in behaviour, the same
+ * move `resolveButtHit` and `isTargetable` already made: this is deferred
+ * twice before now because nothing forced the issue, and this phase adds
+ * four more behaviours to exactly this loop.
+ *
+ * `world.ts` still owns what a live, risen, hostile butt does *to the
+ * world* — loosing an arrow needs the scene and the arrow list, neither of
+ * which a butt's own motion has any business touching — so firing stays in
+ * `world.ts`'s loop, called after this for whichever butts this leaves
+ * live.
+ */
+export function stepButt(b: Butt, dt: number, bounds = 34): void {
+  if (b.dead > 0) {
+    // Retire: falling away after being struck, on its way out of the scene
+    // once `world.ts`'s own filter sees `dead` run out.
+    b.dead -= dt;
+    b.group.position.y -= dt * 9;
+    b.group.rotation.z += dt * 5;
+    return;
+  }
+
+  // Drift: paces along its lane, bouncing back at the edge rather than
+  // wandering off it.
+  b.x += b.vx * dt;
+  if (b.x < -bounds || b.x > bounds) b.vx *= -1;
+
+  // Rise, and dwell once fully up before sinking back into cover on its own.
+  if (b.rising) {
+    b.out = Math.min(1, b.out + dt * 2.4);
+    if (b.out >= 1) {
+      b.dwell -= dt;
+      if (b.dwell <= 0) b.rising = false;
+    }
+  } else {
+    b.out = Math.max(0, b.out - dt * 2.4);
+  }
+  // Rises from behind the hedge rather than fading in.
+  b.group.position.set(b.x, -9 + b.out * 9, LANES[b.lane]);
+  // Only a butt that is actually up and not already falling is something a
+  // flying arrow should be steered toward or able to hit — the same
+  // predicate `onArrowHit` reads before crediting a hit, so the two cannot
+  // silently disagree about what is a live target.
+  b.face.userData.arrowTarget = isTargetable(b);
+}
+
+/**
  * Apply a credited hit's lifecycle decision to the butt it struck — pulled
  * out of `world.ts`'s `onArrowHit` the way `resolveButtHit` was, so the
  * mutation itself is a plain function this file's tests can call directly
