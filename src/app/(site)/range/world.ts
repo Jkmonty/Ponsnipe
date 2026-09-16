@@ -83,9 +83,11 @@ export interface Snapshot {
   /** How far the string is drawn back right now, 0..1. 0 whenever not drawing. */
   draw: number;
   /** True while the world is only running to be looked at: no round has
-      started, the clock is frozen, nothing hostile can spawn or fire, and no
-      hit can change points or health. The overlay reads this to know it
-      should still be showing the start screen rather than the HUD. */
+      started, the clock is frozen, nothing can wind up or fire, and no hit
+      can change points or health. Red butts do come up — the menu shows the
+      day as it is — they simply have nothing to shoot with. The overlay
+      reads this to know it should still be showing the start screen rather
+      than the HUD. */
   attract: boolean;
   /** Which wave is running, 0..2, so the HUD can tighten in the storm.
       Stays 0 through the whole of attract mode, the same as `msLeft`
@@ -334,10 +336,12 @@ export interface AttractGates {
       attract, and always exactly 0 while attracting. "The clock does not
       run" is precisely this being 0, however large or small `dt` is. */
   clockDt: number;
-  /** Whether a butt may come up hostile this frame, or an already-hostile
-      one may loose a shot. False for the whole of attract mode, so nothing
-      red ever fires — and, since `spawn` reads this too, nothing red even
-      appears. */
+  /** Whether an already-hostile butt may wind up and loose a shot. False
+      for the whole of attract mode, so nothing red ever fires there.
+      `spawn` reads it too, but for a different question — which stocks the
+      pool is drawn from — and red butts DO come up on the menu: with this
+      false they can neither wind up nor shoot, so there is nothing for a
+      colour filter to protect. See `spawn`, which says why. */
   hostileActive: boolean;
   /** Whether a credited hit, on either side, may change points or health
       this frame. False for the whole of attract mode: whatever else might
@@ -594,9 +598,9 @@ export class World {
    * test: `world.ts`'s own logic reads and mutates the private list this
    * wraps, never this getter. Exists so `tests/range.test.ts` can drive a
    * real `World` end to end (see `attract()`) and check what it actually
-   * did — whether anything hostile came up — without a second copy of
-   * `World`'s own spawn/retire logic living in the test file to check it
-   * against.
+   * did — what came up, and whether any of it ever wound up to shoot —
+   * without a second copy of `World`'s own spawn/retire logic living in the
+   * test file to check it against.
    */
   get butts(): readonly Butt[] {
     return this._butts;
@@ -819,14 +823,15 @@ export class World {
   private static readonly NEAR_CHANCE = 0.62;
 
   /**
-   * Raise one butt. `hostileActive` is `attractStep`'s own gate: while it is
-   * false (the whole of attract mode) a hostile pick is refused outright,
-   * not merely biased against — even on an all-red day, when `up` is empty,
-   * attract simply raises nothing rather than a red butt that (per the same
-   * gate, read again in `step`) could never be allowed to fire anyway.
-   * `wave` is the round's current pacing band (see `waves.ts`): it caps how
-   * many reds may already be up, biases the draw toward one more, and picks
-   * the behaviour pool a fresh butt may rise with.
+   * Raise one butt. `hostileActive` is `attractStep`'s own gate, and it
+   * splits this function in two. While it is false — the whole of attract
+   * mode — the pool is simply the day, every ticker in it, because a butt
+   * raised then can never wind up or loose an arrow (the same gate, read
+   * again in `step`) and so its colour is only what the day looks like.
+   * While it is true, the round's own rules apply: the hostile headcount is
+   * capped, the draw is biased, and `wave` — the current pacing band, see
+   * `waves.ts` — decides both, along with the behaviour pool a fresh butt
+   * may rise with.
    */
   private spawn(hostileActive: boolean, wave: WaveState) {
     if (!this.stocks.length) return;
@@ -1992,8 +1997,9 @@ export class World {
    * rising and settling, the camera drifting on its own — and, via
    * `attracting`, every input that could shoot or score refusing outright
    * (see `look`, `fire`, `beginDraw`, `touchFire`, `setScoped`) and `step`
-   * itself skipping the clock, hostile spawns and fire, and any hit's
-   * consequences (see `attractStep`). This is what runs from the moment the
+   * itself skipping the clock, every wind-up and shot, and any hit's
+   * consequences (see `attractStep`). Butts of both colours rise — the
+   * menu is the day as it is — and none of them can do anything. This is what runs from the moment the
    * page mounts, so the range is alive under the menu rather than a black
    * box waiting for Start.
    */
