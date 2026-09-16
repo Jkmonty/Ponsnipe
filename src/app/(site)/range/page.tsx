@@ -394,6 +394,28 @@ export default function ArcadePage() {
    * left open on a phone in a pocket. `World.setActive` only starts or stops
    * the render loop — `runLoop` is idempotent and `stop()` remains the one
    * real teardown, called only on unmount above.
+   *
+   * The decision this carries, ruled and written down rather than left
+   * implicit, because it has been an open question since this phase's
+   * pre-flight scan: **the pause stays, and it pauses a live round.**
+   *
+   * Scrolling the stage out of view freezes the round clock along with
+   * everything else, so a sixty-second round can be held open for as long
+   * as someone likes. That cannot inflate a score. `runLoop` resets
+   * `this.last` to `performance.now()` the moment it resumes, so the first
+   * frame back is an ordinary `dt` and not the whole gap — and `dt` is
+   * capped at 0.05 besides. Nothing accrues while it is stopped: no clock,
+   * no spawns, no arrows, no hostile fire.
+   *
+   * So the trade is between someone holding a round open and someone
+   * forfeiting a round because they scrolled down to look at the board.
+   * The second is a worse outcome, and it is the far likelier one on a
+   * phone, where the board sits directly under the stage. Holding a round
+   * open buys nothing: the clock is frozen, so there is no extra time to
+   * shoot in.
+   *
+   * It now freezes the ending too — the last arrow hangs mid-flight until
+   * the stage comes back. Same trade, same answer.
    */
   useEffect(() => {
     const el = holder.current;
