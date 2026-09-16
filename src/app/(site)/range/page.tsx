@@ -352,7 +352,7 @@ export default function ArcadePage() {
                     </>
                   ) : (
                     <>
-                      <h1 className="display arc-card-title">Sherwood, at first light.</h1>
+                      <h1 className="display arc-card-title">Sherwood, last light.</h1>
                       <p className="arc-card-rules">
                         Move to look, click to loose, hold right to raise the scope. Green
                         butts are shares up today and worth points. Red ones are down on

@@ -84,6 +84,13 @@
   .site .snav-links { gap: var(--sp-2); }
   .site .snav-pill { height: 34px; padding: 0 14px; font-size: 14px; }
 }
+/* Narrow enough that the two pills squeeze the lockup below its own content
+   width (it carries min-width: 0 so it can shrink at all) — the wordmark
+   image was overflowing under them, clipping to "Ponsnip". The mark alone
+   is recognisable and every page heading says the rest. */
+@media (max-width: 400px) {
+  .site .snav-word { display: none; }
+}
 
 /* ── footer ──────────────────────────────────────────────────────────────── */
 .site .sfoot {
@@ -392,7 +399,7 @@
   box-shadow: var(--sh-3);
 }
 .site .arc-card-load { color: var(--moss); }
-.site .arc-card-lab { margin: 0; }
+.site .arc-card-lab { margin: 0; color: var(--gold); }
 .site .arc-card-title { margin: 0; font-size: clamp(24px, 3.4vw, 32px); }
 .site .arc-card-rules { margin: 0; color: var(--moss); font-size: 14px; line-height: 1.5; max-width: 42ch; }
 
