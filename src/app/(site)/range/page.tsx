@@ -12,6 +12,7 @@ import Butt from "../Butt";
 import { World, ROUND_MS, accuracyPct, type Snapshot, type Stock } from "./world";
 import { ringName } from "./butts";
 import { makeSurface } from "./render";
+import { drawShare, shareText, type Run } from "./share";
 import { Sfx } from "./sfx";
 
 interface BoardRow {
@@ -21,6 +22,18 @@ interface BoardRow {
 }
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+
+/** The finished round, as the card shows it — the six numbers on screen and
+    nothing else. `share.ts` is handed this rather than the snapshot, so it
+    never sees the clock, the health or the wave. */
+const runOf = (s: Snapshot): Run => ({
+  points: s.points,
+  hits: s.hits,
+  shots: s.shots,
+  streak: s.streak,
+  bestRing: s.bestRing,
+  bestSymbol: s.bestSymbol,
+});
 
 /** "Mon 15 Sep · 00:00 UTC". Always a Monday midnight by construction. Kept
     in step with the same label on the hero's board card. */
@@ -50,6 +63,18 @@ export default function ArcadePage() {
   const [endsAt, setEndsAt] = useState<number | null>(null);
   const [wallet, setWallet] = useState("");
   const [posted, setPosted] = useState<string | null>(null);
+  /** What became of the share image. `label` replaces the button's own,
+      which is why the clipboard path costs the card no height at all; `note`
+      is only set where a button's worth of words is not enough — the
+      download path, where the image is a file to attach rather than a paste,
+      and the one case where nothing could be drawn. `line` is narrower
+      still: only where the text could not be put on the clipboard either,
+      so the card has to print it to be selected by hand. */
+  const [shared, setShared] = useState<{ label: string; note?: string; line?: string } | null>(null);
+  /** True from the press until the image has been handed over. Drawing it
+      waits on the fonts and the mark, which on a cold cache is long enough
+      to be worth saying. */
+  const [drawing, setDrawing] = useState(false);
   /** Whether the browser granted pointer lock. Aiming differs if it did not. */
   const [locked, setLocked] = useState(true);
   /** False only if building the `World` threw — no WebGL context, a driver
@@ -156,6 +181,7 @@ export default function ArcadePage() {
     if (!cv || !g || !stocks?.length) return;
     fit();
     setPosted(null);
+    setShared(null);
     setLocked(true);
     // Audio can only start from a gesture, and this is one.
     sfxRef.current ??= new Sfx();
@@ -181,6 +207,98 @@ export default function ArcadePage() {
       if (res && typeof res.catch === "function") res.catch(() => setLocked(false));
     } catch {
       setLocked(false);
+    }
+  };
+
+  /*
+   * The round, as an image worth posting.
+   *
+   * Nothing leaves the browser: `drawShare` paints a 1200×675 canvas here
+   * and the result is handed straight to the player. The spec's Failure
+   * table pins what happens when the clipboard says no — the image
+   * downloads instead, it does not error — so both paths below actually
+   * finish, and the one case where neither can (a browser that will not
+   * encode a canvas) says so rather than leaving a dead button.
+   */
+  const share = async () => {
+    if (!s) return;
+    const run = runOf(s);
+    const line = shareText(run);
+    setDrawing(true);
+    setShared(null);
+    /*
+     * The image as a promise, not an awaited blob.
+     *
+     * `ClipboardItem` accepts a `Promise<Blob>` precisely so the write can
+     * be issued inside the click's own transient activation: Safari refuses
+     * a clipboard write that only begins after an `await`, and drawing has
+     * to wait for `document.fonts` and the mark. The no-op `.catch` below
+     * is not the error handling — the `catch` block is — it only marks the
+     * rejection handled, since the clipboard branch can throw before
+     * anything awaits this.
+     */
+    const png = (async () => {
+      const cv = document.createElement("canvas");
+      await drawShare(cv, run);
+      const blob = await new Promise<Blob | null>((r) => cv.toBlob(r, "image/png"));
+      if (!blob) throw new Error("this browser would not encode the canvas");
+      return blob;
+    })();
+    png.catch(() => {});
+    try {
+      // Not every browser that has a clipboard has an image on it, and an
+      // insecure context has none at all. Fall through to the download
+      // rather than call into undefined.
+      if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
+        throw new Error("this browser has no clipboard image support");
+      }
+      // The text goes in the same item as the image, which is what makes it
+      // "prefilled": one paste into a post puts both there.
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "image/png": png,
+          "text/plain": new Blob([line], { type: "text/plain" }),
+        }),
+      ]);
+      setShared({ label: "Copied" });
+    } catch {
+      const blob = await png.then(
+        (b) => b,
+        () => null,
+      );
+      if (!blob) {
+        setShared({ label: "Share", note: "This browser would not draw that card." });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `sherwood-${run.points}.png`;
+        // In the document and straight back out: an anchor that is actually
+        // in the tree when it is clicked is the form that has always worked
+        // everywhere, and it costs one node for one tick.
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // Long enough for the download to have started, and not a leak for
+        // the rest of the session.
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        /*
+         * The line still has to be handed over somehow, and text on the
+         * clipboard is more widely allowed than an image — a browser that
+         * refuses `write` may still honour `writeText`. Only
+         * when that is refused too is the line printed on the card for the
+         * player to select, which is the one path that makes the card
+         * taller.
+         */
+        try {
+          await navigator.clipboard.writeText(line);
+          setShared({ label: "Saved", note: "In your downloads. The line to paste is copied." });
+        } catch {
+          setShared({ label: "Saved", note: "In your downloads. The line to paste with it:", line });
+        }
+      }
+    } finally {
+      setDrawing(false);
     }
   };
 
@@ -537,9 +655,35 @@ export default function ArcadePage() {
                     </div>
                   )}
 
-                  <button className="btn btn-primary btn-lg" onClick={play}>
-                    {s?.over ? "Again" : "Draw the bow"}
-                  </button>
+                  {/*
+                    Again and Share on one row. The card already stands
+                    taller than the fold at 900×600 and is read by scrolling
+                    there, so the share control goes where it costs no height
+                    at all rather than under the button, where it would cost
+                    another button's height and a gap.
+                  */}
+                  <div className="arc-actions">
+                    <button className="btn btn-primary btn-lg" onClick={play}>
+                      {s?.over ? "Again" : "Draw the bow"}
+                    </button>
+                    {s?.over && (
+                      <button className="btn btn-lg ghost" onClick={() => void share()} disabled={drawing}>
+                        {drawing ? "Drawing…" : (shared?.label ?? "Share")}
+                      </button>
+                    )}
+                  </div>
+                  {/*
+                    Only where there is still something for the player to do:
+                    the clipboard path says "Copied" on the button itself and
+                    adds no line, so the common case leaves the card exactly
+                    the height it was before this control existed.
+                  */}
+                  {shared?.note && (
+                    <p className="arc-share" aria-live="polite">
+                      {shared.note}
+                      {shared.line && <span className="arc-share-line">{shared.line}</span>}
+                    </p>
+                  )}
                   <p className="arc-controls mono">
                     <span className="ctl-mouse">
                       HOLD TO DRAW · RELEASE TO LOOSE · RIGHT-CLICK FOR THE SCOPE · A/D TO SIDESTEP

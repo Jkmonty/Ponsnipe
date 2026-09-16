@@ -42,6 +42,7 @@ import {
   FINAL_STRETCH_MS,
   ENDING_MAX_S,
 } from "../src/app/(site)/range/world";
+import { shareLines, shareText, type Run } from "../src/app/(site)/range/share";
 import { makeNullSurface } from "../src/app/(site)/range/render";
 import { waveAt } from "../src/app/(site)/range/waves";
 import { musicRateForWave } from "../src/app/(site)/range/sfx";
@@ -1439,4 +1440,108 @@ test("ringName: the five archery rings by their traditional names, and a fallbac
   assert.equal(ringName(4), "Black");
   assert.equal(ringName(5), "White");
   assert.equal(ringName(0), "—", "0 means nothing has been struck yet, per bestRing's own doc comment");
+});
+
+/*
+ * ── the share card ───────────────────────────────────────────────────────
+ *
+ * The image itself is verified in the browser, as every drawing function in
+ * this phase is. What is worth pinning here is the text on it: it is the
+ * only copy this project produces that leaves the site, so both what it says
+ * and what it must never say are properties rather than pixels.
+ */
+
+/** One round to vary from, so each test below changes the one field it is
+    about rather than restating six numbers. */
+const aRun = (over: Partial<Run> = {}): Run => ({
+  points: 3420,
+  hits: 12,
+  shots: 20,
+  streak: 5,
+  bestRing: 1,
+  bestSymbol: "NVDA",
+  ...over,
+});
+
+test("shareLines: the card's own three lines, in the card's own order", () => {
+  const lines = shareLines(aRun());
+  assert.equal(lines.length, 3);
+  assert.equal(lines[0], "12 hits from 20 shots · 60% accuracy");
+  assert.equal(lines[1], "Longest streak 5 · best ring Gold");
+  assert.equal(lines[2], "Best ticker NVDA");
+});
+
+/*
+ * The whole reason this task was told to reuse `accuracyPct` rather than
+ * write the division again. A round can end before a single arrow is
+ * loosed — the clock simply runs out — and the card someone posts is the
+ * worst possible place to find "NaN% accuracy".
+ */
+test("shareLines: a round with no shots reads as 0%, never NaN or Infinity", () => {
+  const line = shareLines(aRun({ points: 0, hits: 0, shots: 0, streak: 0, bestRing: 0, bestSymbol: "" }))[0];
+  assert.equal(line, "0 hits from 0 shots · 0% accuracy");
+  assert.ok(!/NaN|Infinity/.test(line), "the posted card must not carry a division by zero");
+});
+
+/*
+ * Same rule the results card follows (see page.tsx): a round that landed no
+ * hits never set a best ticker, so the line is absent rather than empty.
+ * Pinned as a relationship — one fewer line than the same run with a symbol
+ * — rather than as a transcribed count.
+ */
+test("shareLines: no best ticker means no line for one", () => {
+  const withSymbol = shareLines(aRun({ bestSymbol: "NVDA" }));
+  const without = shareLines(aRun({ bestSymbol: "" }));
+  assert.equal(without.length, withSymbol.length - 1);
+  assert.ok(!without.some((l) => l.startsWith("Best ticker")));
+});
+
+/*
+ * `bestRing` 0 is "nothing struck yet", and the card reads it through
+ * `ringName`. The point of the assertion is that the two agree, not that
+ * the em-dash is spelt one particular way.
+ */
+test("shareLines: the ring is named by ringName, including when none was struck", () => {
+  assert.ok(shareLines(aRun({ bestRing: 3 }))[1].endsWith(ringName(3)));
+  assert.ok(shareLines(aRun({ bestRing: 0 }))[1].endsWith(ringName(0)));
+});
+
+test("shareText: the score, the round and where it was played", () => {
+  const text = shareText(aRun());
+  assert.match(text, /3,420/);
+  assert.match(text, /12 hits from 20 shots/);
+  assert.match(text, /60% accuracy/);
+  assert.match(text, /ponsnipe\.com/);
+});
+
+test("shareText: zero shots is 0% here too, on the copy that travels furthest", () => {
+  const text = shareText(aRun({ points: 0, hits: 0, shots: 0 }));
+  assert.match(text, /0% accuracy/);
+  assert.ok(!/NaN|Infinity/.test(text));
+});
+
+/*
+ * docs/POSTS.md's second rule — never imply a return — applied to the one
+ * piece of copy a player can paste anywhere. The site charges a trading fee
+ * and the board pays a prize, so a line that reads as a promise of winnings
+ * is a liability rather than a matter of tone. This is a guard against the
+ * copy being "improved" later, so it is written against the vocabulary of a
+ * promise rather than against today's exact sentence.
+ */
+test("shareText: says nothing about money, winning or a prize", () => {
+  for (const run of [aRun(), aRun({ points: 0, hits: 0, shots: 0, bestSymbol: "" })]) {
+    const text = shareText(run).toLowerCase();
+    for (const word of ["profit", "return", "earn", "win", "won", "prize", "payout", "$", "money", "rich"]) {
+      assert.ok(!text.includes(word), `share text must not say "${word}": ${text}`);
+    }
+  }
+});
+
+/*
+ * The ticker is on the image but deliberately not in this text. The image
+ * frames it — a painted archery range with a score on it — and the text can
+ * be pasted on its own, where a ticker beside a large number reads as a tip.
+ */
+test("shareText: names no ticker, however the round went", () => {
+  assert.ok(!shareText(aRun({ bestSymbol: "NVDA" })).includes("NVDA"));
 });

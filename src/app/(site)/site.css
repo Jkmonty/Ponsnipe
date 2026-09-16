@@ -420,6 +420,34 @@
 .site .arc-card-title { margin: 0; font-size: clamp(24px, 3.4vw, 32px); }
 .site .arc-card-rules { margin: 0; color: var(--moss); font-size: 14px; line-height: 1.5; max-width: 42ch; }
 
+/* The results card's two actions, side by side.
+   A row rather than a second button below: the card already stands taller
+   than the fold at 900×600 and is read by scrolling there, so a share
+   control that added another button's height and a gap would have made a
+   known problem worse. One button or two, this row is the same height. */
+.site .arc-actions { display: flex; gap: var(--sp-3); width: 100%; }
+.site .arc-actions .btn-lg { flex: 1; min-width: 0; }
+
+/* What became of the image, on the paths where the button's own label is not
+   the whole story. The clipboard path sets no note at all, so the card is
+   exactly as tall as it was before this control existed.
+   `.arc-share-line` is the text to paste, printed only where the clipboard
+   would take neither the image nor the text, and so has to be selected. */
+.site .arc-share { margin: 0; color: var(--moss); font-size: 12.5px; line-height: 1.5; max-width: 42ch; }
+.site .arc-share-line {
+  display: block;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-ctl);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--hair-w);
+  font-family: var(--mono-site);
+  font-size: 11.5px;
+  color: var(--moon);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 /* Today's targets, as chips: a ticker and its day move, the same green/red
    rule the hero's pins use. */
 .site .arc-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
