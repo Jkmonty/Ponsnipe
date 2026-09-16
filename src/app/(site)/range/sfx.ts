@@ -34,6 +34,53 @@ const KIT: Record<string, number> = {
   miss: 2,
 };
 
+/**
+ * Wind, and the music loop under a round: the two ambient layers, both
+ * synthesised and both quiet by design — they are the floor the effects
+ * above stand on, never competitors for attention with the marker or the
+ * horn. Both start when a round starts (`resume()`, called from Start and
+ * Again alike) and fade out when it ends (`horn()`, the game's one call site
+ * for "the round is over"). Neither has a file behind it: a CC0/CC-BY search
+ * turned up nothing that fit a floor-noise role without either a licence
+ * that ruled it out or an audible loop point, and both are easier to build
+ * exactly, and to prove seamless, than to source blind.
+ */
+
+/** How often a fresh creak grain may fire. A held draw calls `creak()` once
+ * per rendered frame, far more often than this, so grains overlap into one
+ * continuous scrape rather than a stutter — this only bounds the node count
+ * on a high-refresh display. */
+const CREAK_INTERVAL = 0.035;
+
+/** The wind's steady-state level, and how long it takes to reach or leave it.
+ * Deliberately under every effect's quietest layer (the thunk and miss noise
+ * bursts sit around 0.1) so it can never read as a sound in its own right. */
+const WIND_LEVEL = 0.035;
+const WIND_FADE = 1.4;
+
+/**
+ * The music loop's length, and the chord it renders once and then repeats.
+ *
+ * Every frequency here is an exact multiple of 1/LOOP_SECONDS, so every
+ * partial completes a whole number of cycles across the buffer: the
+ * waveform's value and slope at the last sample equal its value and slope at
+ * the first, by construction, which is what makes the loop click-free. The
+ * detuned pair beats once, slowly, over the full loop rather than never or
+ * audibly — the only motion in an otherwise static drone. No filter touches
+ * this signal: a filter has a startup transient that would not have settled
+ * by the time playback reaches the far side of the loop, which would put a
+ * seam exactly where there must not be one.
+ */
+const LOOP_SECONDS = 8;
+const LOOP_LEVEL = 0.045;
+const LOOP_FADE = 1.6;
+const DRONE_PARTIALS: readonly (readonly [number, number])[] = [
+  [55, 0.5], // root
+  [55.125, 0.5], // root, detuned by exactly 1 / LOOP_SECONDS Hz — one slow beat per loop
+  [82.5, 0.3], // fifth
+  [110, 0.18], // octave
+];
+
 export class Sfx {
   private ctx: AudioContext | null = null;
   /** One bus, so the whole game can be ducked or muted in one place. */
@@ -42,6 +89,18 @@ export class Sfx {
   private kit = new Map<string, AudioBuffer[]>();
   private loading = false;
   muted = false;
+  /** Set for exactly the span of a round, so a promise that resolves after
+   * the round already ended (see `musicStart`) knows not to start anyway. */
+  private roundActive = false;
+  /** The last `creak()` grain's start time, for `CREAK_INTERVAL`. Starts
+   * below any real context time so the very first call is never throttled —
+   * a fresh context's `currentTime` is 0, the same as this field's default
+   * would otherwise be. */
+  private lastCreak = -Infinity;
+  private wind: { src: AudioBufferSourceNode; lfo: OscillatorNode; gain: GainNode } | null = null;
+  private music: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  /** The rendered drone, built once offline and reused by every round. */
+  private loopReady: Promise<AudioBuffer> | null = null;
   /**
    * Which variant of each tunable sound to use.
    *
@@ -62,6 +121,7 @@ export class Sfx {
       }
       if (this.ctx.state === "suspended") void this.ctx.resume();
       this.load();
+      this.roundStart();
     } catch {
       // No audio is survivable; the game is not about the sound.
       this.ctx = null;
@@ -238,6 +298,28 @@ export class Sfx {
     this.playSpec(MARKERS[this.picks.marker].build(kill));
   }
 
+  /**
+   * The draw's rasp, called every frame the string is held (see the `creak`
+   * comment on `World.sfx` in world.ts, and the call in its `step`). A short
+   * burst of filtered noise whose centre frequency and level both climb with
+   * `draw`, the way a stave under load reads as tighter and louder rather
+   * than as a different sound. Synthesised for the same reason the marker
+   * is: it tracks a continuously changing value, which a fixed sample
+   * cannot. Throttled to `CREAK_INTERVAL` so a high-refresh display cannot
+   * flood the graph with grains; a real draw calls this far more often than
+   * that, so the grains overlap into one continuous scrape.
+   */
+  creak(draw: number) {
+    if (!this.ctx || this.muted) return;
+    const t = this.t;
+    if (t - this.lastCreak < CREAK_INTERVAL) return;
+    this.lastCreak = t;
+    const d = Math.max(0, Math.min(1, draw));
+    const centre = 260 + d * 900; // a slack rasp at rest, tightening toward ~1.16kHz at full draw
+    const level = 0.012 + d * 0.045; // quiet throughout — well under any effect, even at full draw
+    this.noise(t, 0.05, level, centre * 0.85, centre * 1.15, "bandpass", 3.5);
+  }
+
   /** A miss: the shaft going past into the trees. */
   miss() {
     if (!this.ctx) return;
@@ -277,6 +359,10 @@ export class Sfx {
    */
   horn() {
     if (!this.ctx) return;
+    // The horn is the game's one call site for "the round just ended" — the
+    // wind and the music loop under it end here too, rather than needing a
+    // second signal wired in from world.ts or the page.
+    this.roundEnd();
     const t = this.t;
     for (const [when, f] of [
       [0, 196],
@@ -293,7 +379,165 @@ export class Sfx {
     }
   }
 
+  /** Start the wind and the music loop. Called from `resume()`, so every
+   * Start or Again press runs this — idempotent, since both halves no-op if
+   * already running, which matters because the tuning bench calls `resume()`
+   * on every button press. */
+  private roundStart() {
+    this.roundActive = true;
+    this.windStart();
+    this.musicStart();
+  }
+
+  /** The other half of `roundStart`, run from `horn()`. */
+  private roundEnd() {
+    this.roundActive = false;
+    this.windEnd();
+    this.musicEnd();
+  }
+
+  /**
+   * A continuous low noise bed, band-passed and slowly wobbling — the floor
+   * the other sounds stand on, not a sound in its own right. Fades in over
+   * `WIND_FADE` rather than starting with a click, and the buffer is a plain
+   * loop of raw noise: noise has no periodicity to protect at the seam the
+   * way a tone does, so a bare loop point is inaudible.
+   */
+  private windStart() {
+    if (!this.ctx || !this.bus || this.muted || this.wind) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+
+    const len = Math.max(16, Math.floor(ctx.sampleRate * 3));
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.Q.value = 0.6;
+    filter.frequency.value = 320;
+
+    // A slow wobble on the centre frequency so the bed breathes rather than
+    // sitting on one dead pitch.
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.07;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 90;
+    lfo.connect(lfoGain).connect(filter.frequency);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(WIND_LEVEL, t + WIND_FADE);
+
+    src.connect(filter).connect(gain).connect(this.bus);
+    src.start(t);
+    lfo.start(t);
+
+    this.wind = { src, lfo, gain };
+  }
+
+  /** Fade the wind out and stop its nodes — explicitly, rather than trusting
+   * that nobody notices a source left running under the between-round menu.
+   * `stop()` is scheduled on the audio clock, not a JS timer, so it lands
+   * even if the tab is throttled in the background. */
+  private windEnd() {
+    const w = this.wind;
+    this.wind = null;
+    if (!this.ctx || !w) return;
+    const t = this.ctx.currentTime;
+    w.gain.gain.cancelScheduledValues(t);
+    w.gain.gain.setValueAtTime(Math.max(0.0001, w.gain.gain.value), t);
+    w.gain.gain.exponentialRampToValueAtTime(0.0001, t + WIND_FADE);
+    const stopAt = t + WIND_FADE + 0.05;
+    w.src.stop(stopAt);
+    w.lfo.stop(stopAt);
+  }
+
+  /**
+   * Render the drone once, offline, and cache it — it never changes, so
+   * synthesising it fresh every round would be wasted work. Kept free of
+   * `this.ctx`/`this.bus`: it only needs a sample rate, which is what lets
+   * it be rendered and inspected (its seam, in particular) without a live
+   * AudioContext at all.
+   */
+  private buildLoop(sampleRate: number): Promise<AudioBuffer> {
+    const octx = new OfflineAudioContext(1, Math.round(LOOP_SECONDS * sampleRate), sampleRate);
+    for (const [freq, gain] of DRONE_PARTIALS) {
+      const o = octx.createOscillator();
+      o.type = "sine";
+      o.frequency.value = freq;
+      const g = octx.createGain();
+      g.gain.value = gain * 0.22; // headroom for the stack; the real level comes from LOOP_LEVEL on playback
+      o.connect(g).connect(octx.destination);
+      o.start(0);
+      o.stop(LOOP_SECONDS);
+    }
+    return octx.startRendering();
+  }
+
+  /** Start the music loop once it has rendered. A no-op if one is already
+   * playing, and abandoned quietly if the round has already ended by the
+   * time the offline render resolves. */
+  private musicStart() {
+    if (!this.ctx || !this.bus || this.muted || this.music) return;
+    const ctx = this.ctx;
+    this.loopReady ??= this.buildLoop(ctx.sampleRate).catch((e) => {
+      this.loopReady = null; // let the next round try again rather than staying broken forever
+      throw e;
+    });
+    void this.loopReady
+      .then((buf) => {
+        if (!this.ctx || !this.bus || !this.roundActive || this.music) return;
+        const src = this.ctx.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        const gain = this.ctx.createGain();
+        const t = this.ctx.currentTime;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(LOOP_LEVEL, t + LOOP_FADE);
+        src.connect(gain).connect(this.bus);
+        src.start(t);
+        this.music = { src, gain };
+      })
+      .catch(() => {
+        // No loop this round is survivable the same way a missing kit take is.
+      });
+  }
+
+  /** The mirror of `windEnd`, for the music loop. */
+  private musicEnd() {
+    const m = this.music;
+    this.music = null;
+    if (!this.ctx || !m) return;
+    const t = this.ctx.currentTime;
+    m.gain.gain.cancelScheduledValues(t);
+    m.gain.gain.setValueAtTime(Math.max(0.0001, m.gain.gain.value), t);
+    m.gain.gain.exponentialRampToValueAtTime(0.0001, t + LOOP_FADE);
+    m.src.stop(t + LOOP_FADE + 0.05);
+  }
+
   close() {
+    // ctx.close() below stops every node on this context regardless, but
+    // stopping the ambient ones by hand costs nothing and says plainly that
+    // they were accounted for rather than left to the context to catch.
+    try {
+      this.wind?.src.stop();
+      this.wind?.lfo.stop();
+    } catch {
+      /* already stopped */
+    }
+    try {
+      this.music?.src.stop();
+    } catch {
+      /* already stopped */
+    }
+    this.wind = null;
+    this.music = null;
+    this.roundActive = false;
     try {
       void this.ctx?.close();
     } catch {

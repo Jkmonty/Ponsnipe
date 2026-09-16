@@ -40,6 +40,25 @@ The arrow landing is synthesised too, and deliberately low and quiet — it
 fires at the same instant as the marker, and three effects stacking on one hit
 is how a confirmation turns into mush.
 
+The draw's creak, the wind bed under a round and the music loop over it are
+synthesised as well, for the same two reasons in different proportions. The
+creak has to track a continuous value (how far the string is pulled), which a
+fixed sample cannot do, so it is built the way the marker is: filtered noise
+whose centre frequency and level both climb with the draw. The wind is a
+band-passed noise loop kept deliberately under every effect's level, so it
+reads as the floor the round stands on rather than as a sound of its own.
+
+The music loop is a plain low drone — root, a copy of the root detuned by
+exactly 1 / 8 Hz so it beats once slowly across the loop, a fifth and an
+octave, all sine, all frequencies chosen as exact multiples of 1/8 Hz so
+every partial completes a whole number of cycles across the buffer. That is
+what makes it loop without a click: the waveform's value and slope at the end
+of the buffer equal its value and slope at the start by construction, not by
+trimming a recording and hoping. A CC0/CC-BY search for a loop that would fit
+a quiet, license-safe floor under the round came up empty, and this was
+easier to build exactly, and to prove seamless by measurement, than to source
+blind and hope nobody minds.
+
 ## Everything else
 
 The range itself — trees, hedges, palisade, the great oaks, the target faces,
