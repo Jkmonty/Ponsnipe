@@ -38,12 +38,18 @@ const KIT: Record<string, number> = {
  * Wind, and the music loop under a round: the two ambient layers, both
  * synthesised and both quiet by design — they are the floor the effects
  * above stand on, never competitors for attention with the marker or the
- * horn. Both start when a round starts (`resume()`, called from Start and
- * Again alike) and fade out when it ends (`horn()`, the game's one call site
- * for "the round is over"). Neither has a file behind it: a CC0/CC-BY search
- * turned up nothing that fit a floor-noise role without either a licence
- * that ruled it out or an audible loop point, and both are easier to build
- * exactly, and to prove seamless, than to source blind.
+ * horn. Both start when a round starts (`roundStart()`, called explicitly
+ * from `page.tsx`'s `play()` on Start and Again alike) and fade out when it
+ * ends (`roundEnd()`, called from page.tsx's `s.over` effect). Not tied to
+ * `resume()` or `horn()`: those two are "unlock the context" and "play the
+ * horn sound" respectively, and bundling the ambience's lifecycle into
+ * either of them was the bug the whole-branch review caught — the tuning
+ * bench calls `resume()` on every button press, which used to start a
+ * permanent wind bed on the bench's very first click. Neither ambient layer
+ * has a file behind it: a CC0/CC-BY search turned up nothing that fit a
+ * floor-noise role without either a licence that ruled it out or an audible
+ * loop point, and both are easier to build exactly, and to prove seamless,
+ * than to source blind.
  */
 
 /** How often a fresh creak grain may fire. A held draw calls `creak()` once

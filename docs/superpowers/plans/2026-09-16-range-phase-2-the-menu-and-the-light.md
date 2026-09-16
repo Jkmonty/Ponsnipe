@@ -245,7 +245,7 @@ git commit -m "Wind under the wood, a loop over it, and the bow finally creaks" 
 - **Full-width 16:9 stage, board below:** Task 3.
 - **Glass card: title, rules, target chips, board top three, Draw the bow, controls line:** Task 3.
 - **The card returns between rounds with the result:** Task 3, deliberately without Phase 3's results card.
-- **Golden hour: sun at 13° (raised from this plan's original 8° — see scene.ts's SUN_ANGLE_DEG, where 8° left the ground too dark to read), 2.4 intensity, orange into blue, fog from 45:** Task 1.
+- **Golden hour: sun at 13° (raised from this plan's original 8° — see scene.ts's SUN_ANGLE_DEG, where 8° left the ground too dark to read), 2.4 intensity, orange into blue, fog from 35 (this plan's original 45 moved closer, per scene.ts's `T.Fog(0xd8a367, 35, 180)`):** Task 1.
 - **Shadow maps at 2048, motes, castle in the fog:** Task 1.
 - **Red butts keep a hard rim:** Task 1, step 4.
 - **Wind, a music loop, the draw creak:** Task 4.
