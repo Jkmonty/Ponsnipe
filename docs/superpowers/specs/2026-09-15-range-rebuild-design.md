@@ -201,7 +201,7 @@ safe shot and a good one is real.
 plus the time the one shot this game looses actually spends in the air
 reaching the far corner of that rank — and differs only in how far past that
 floor it may run: a `peek` not at all, a green butt by up to 0.7 s, a red one
-by up to 1.1 s. That works out at 1.85 s at the near rank and 2.17 s at the
+by up to 1.1 s. That works out at 2.55 s at the near rank and 2.87 s at the
 far.
 
 *This is new. The spec previously gave `peek` a flat 1.8 seconds and said

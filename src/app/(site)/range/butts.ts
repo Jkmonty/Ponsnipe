@@ -95,20 +95,28 @@ export function flightTimeTo(rank: Rank): number {
  * The player has to see it clear the hedge, decide it is worth a shot and
  * put the reticle on it — and if they have just loosed at something else
  * they cannot answer at all until the nock refills, which is `NOCK_TIME`
- * (0.42s) in world.ts. A quarter of a second to notice plus that refill is
- * 0.67; 0.8 is that with a little left to swing the view across a rank
- * sixty units wide.
+ * (0.42s) in world.ts.
+ *
+ * This was 0.8: a quarter of a second to notice, plus that refill, plus a
+ * little. That is the budget for a target you are already looking at, and
+ * it assumed away the part that actually takes the time — up to nine butts
+ * can be up at once across a rank sixty units wide, and finding the one you
+ * want and swinging onto it is most of the work. Measured against a player
+ * who is already busy with another shot, 0.8 left a dead-centre shot
+ * connecting 66% of the time; at 1.5 it is 72%, and the round is still lost
+ * at a median 25.4 seconds by someone who never shoots back. Going further
+ * keeps paying (1.8 gives 75%) but starts leaving the wood standing full.
  *
  * This is the one number in this group that is chosen rather than derived.
  * Everything it is added to is measured: `flightTimeTo` is a different
  * number at each rank, which is the whole reason one shared dwell could
  * never have been right for both of them.
  */
-export const AIM_WINDOW = 0.8;
+export const AIM_WINDOW = 1.5;
 
 /**
- * The floor under every dwell at `rank` — react, then fly. 1.85 seconds at
- * the near rank, 2.17 at the far.
+ * The floor under every dwell at `rank` — react, then fly. 2.55 seconds at
+ * the near rank, 2.87 at the far.
  *
  * A dwell shorter than this cannot be answered at all in the worst case of
  * its own rank's spread, and all three dwells were shorter than this. A
@@ -560,13 +568,33 @@ export function stepButt(b: Butt, dt: number, bounds = 34): void {
  * `stepButt`); this is that expression's own derivative with respect to
  * time, `SWING_AMPLITUDE * SWING_SPEED * cos(b.swingT * SWING_SPEED)`.
  */
-export function lateralVelocity(b: Butt): number {
+export function lateralOffsetAt(b: Butt, t: number, bounds = 34): number {
   switch (b.behaviour) {
-    case "drift":
-      return b.vx;
+    case "drift": {
+      /*
+       * A drift does not travel in a straight line for a whole second: it
+       * paces, reversing at `±bounds`. Extrapolating its velocity sends the
+       * lead straight through the wall it is about to bounce off, so this
+       * folds the raw distance back at the edges instead — the triangle wave
+       * `stepButt`'s own `vx *= -1` traces out.
+       */
+      const span = 2 * bounds;
+      let p = b.x + b.vx * t + bounds;
+      p = ((p % (2 * span)) + 2 * span) % (2 * span);
+      if (p > span) p = 2 * span - p;
+      return p - bounds - b.x;
+    }
     case "swing":
-      return SWING_AMPLITUDE * SWING_SPEED * Math.cos(b.swingT * SWING_SPEED);
+      /*
+       * Exactly where the arc will have carried it, not where its present
+       * speed points. A swing is a sine, so over this game's 0.86-1.37s of
+       * flight it can turn around entirely — and a lead taken from the
+       * tangent then aims at empty air on the far side of the swing. This is
+       * `stepButt`'s own position law read forward by `t`.
+       */
+      return SWING_AMPLITUDE * (Math.sin((b.swingT + t) * SWING_SPEED) - Math.sin(b.swingT * SWING_SPEED));
     default:
+      // `stand` and `peek` hold the x they rose at; there is nothing to lead.
       return 0;
   }
 }

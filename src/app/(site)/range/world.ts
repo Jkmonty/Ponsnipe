@@ -32,7 +32,7 @@ import {
   bestSymbolAfter,
   stepButt,
   pickBehaviour,
-  lateralVelocity,
+  lateralOffsetAt,
   FACE_RADIUS,
   RANKS,
   SHOOTER_Z,
@@ -1996,18 +1996,17 @@ export class World {
       const point = aimed.point.clone();
       const targetButt = this._butts.find((b) => b.face === aimed.object);
       if (targetButt) {
-        const lateral = lateralVelocity(targetButt);
         let flightTime = 0;
         for (let i = 0; i < 2; i++) {
           const led = point.clone();
-          led.x += lateral * flightTime;
+          led.x += lateralOffsetAt(targetButt, flightTime);
           const d0 = led.sub(from);
           const range0 = Math.hypot(d0.x, d0.z);
           if (range0 <= 1e-6) break;
           const elevation0 = ballisticElevation(range0, d0.y, speed);
           flightTime = range0 / (speed * Math.cos(elevation0));
         }
-        point.x += lateral * flightTime;
+        point.x += lateralOffsetAt(targetButt, flightTime);
       }
       const d = point.clone().sub(from);
       const range = Math.hypot(d.x, d.z);
