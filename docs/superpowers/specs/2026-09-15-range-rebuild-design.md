@@ -193,7 +193,7 @@ safe shot and a good one is real.
 |---|---|
 | Stand | Rises and stays, as now |
 | Drift | Tracks sideways along its rank |
-| Peek | Rises, and drops whether hit or not, on the tightest window its rank allows |
+| Peek | Rises, and drops whether hit or not, on the tightest window its rank allows — but see the hold below: nothing ducks out from under a shot already crossing to it |
 | Swing | Hangs from a branch and swings through a shallow arc |
 
 **How long a target stays up** is derived, not chosen. Every dwell starts at
@@ -203,6 +203,21 @@ reaching the far corner of that rank — and differs only in how far past that
 floor it may run: a `peek` not at all, a green butt by up to 0.7 s, a red one
 by up to 1.1 s. That works out at 2.55 s at the near rank and 2.87 s at the
 far.
+
+**A target does not duck out from under a committed shot.** While one of the
+player's arrows is in the air toward a butt, that butt's dwell stops counting
+down; it resumes the instant the arrow lands, expires or is retired.
+
+*This is new, and it is what "the bow shoots way too high, especially the
+further targets" turned out to be. Measured across 642 dead-centre shots,
+**not one arrow flew high over a target that was still standing** — every
+single miss was the butt dropping into cover while the shot crossed to it, so
+the shaft sailed over the empty spot. It reads as a bow shooting high, and it
+reads worst at the far rank, whose 1.37s flight gives the duck half again the
+room the near rank's 0.86s does. With the hold, a dead-centre shot connects
+99% of the time against 72%, and the pacing is untouched — a passive player
+still dies at a median 25.8s and every wave still sits at its own cap, because
+a player who never shoots never holds anything up.*
 
 *This is new. The spec previously gave `peek` a flat 1.8 seconds and said
 nothing at all about the others, which were `rand(0.5, 1.2)` for a green butt

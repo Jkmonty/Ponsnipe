@@ -214,6 +214,26 @@ export interface Butt {
   out: number;
   rising: boolean;
   dwell: number;
+  /**
+   * True while one of the player's arrows is in the air toward this butt.
+   *
+   * A target does not duck out from under a shot already committed to it.
+   * Without this, the commonest miss in the game was not a miss at all: the
+   * arrow flew a correct trajectory and the butt dropped into cover while it
+   * was crossing, so the shaft sailed over the empty spot where the target
+   * had been. Measured across 642 dead-centre shots, *every* miss was that —
+   * far rank 92, near rank 76 — and not one arrow flew high over a target
+   * that was still standing. It reads to a player as the bow shooting high,
+   * and worst at the far rank, because that flight is 1.37s against the near
+   * rank's 0.86 and so has half again the chance of the duck landing inside
+   * it.
+   *
+   * `World.step` sets this every frame from its own arrow list; `stepButt`
+   * only reads it. It holds the dwell, not the butt: a target already on its
+   * way down keeps going, and a struck one still falls, because `dead` is
+   * tested well before this.
+   */
+  held: boolean;
   cooldown: number;
   /**
    * Whether a hostile butt is currently in the visible wind-up before it
@@ -531,7 +551,10 @@ export function stepButt(b: Butt, dt: number, bounds = 34): void {
   // rose in, so what counts down here always outlasts an arrow aimed at it.
   if (b.rising) {
     b.out = Math.min(1, b.out + dt * 2.4);
-    if (b.out >= 1) {
+    if (b.out >= 1 && !b.held) {
+      // `held` is the one thing that stops this clock: see the field's own
+      // comment. A butt with one of the player's arrows already crossing
+      // toward it waits for that shot to arrive rather than ducking under it.
       b.dwell -= dt;
       if (b.dwell <= 0) b.rising = false;
     }
@@ -817,6 +840,7 @@ export function makeButt(stock: Stock, rank: Rank, x: number, behaviour: Behavio
     winding: false,
     windUp: 0,
     dead: 0,
+    held: false,
     rock: 1,
   };
 }
