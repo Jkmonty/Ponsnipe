@@ -22,6 +22,16 @@ export interface Arrow {
    * Absent (or false) for an enemy's own shot, which is never touch-fired.
    */
   touch?: boolean;
+  /**
+   * The butt this shot was solved onto, if the aim ray struck a face.
+   *
+   * Only used to hold that target up until the arrow gets there — see
+   * `Butt.held`. It is deliberately not consulted when the arrow lands:
+   * what a shot hits is still decided by the raycast against whatever is
+   * actually in its way, so an arrow can still be blocked by, or drift
+   * onto, something other than what it was aimed at.
+   */
+  at?: Butt;
 }
 
 /** A shaft lying along the view, tip away from you. */

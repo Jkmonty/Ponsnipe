@@ -2862,3 +2862,97 @@ test("the albedos the share image sampled against are still scene.ts's albedos",
     "the sun's disc is placed by eye for this elevation — move the sun and it needs placing again",
   );
 });
+
+/*
+ * "The bow is shooting way too high, especially the further targets."
+ *
+ * It was not. Measured across 642 dead-centre shots, not one arrow flew high
+ * over a target that was still standing — every single miss was the butt
+ * ducking back into cover while the shot was crossing to it, so the shaft
+ * sailed over the empty spot where it had been. That reads to a player as
+ * the bow shooting high, and it reads worst at the far rank, whose 1.37s
+ * flight gives the duck half again the room the near rank's 0.86s does.
+ *
+ * `Butt.held` is the answer: a target does not duck out from under a shot
+ * already committed to it. This drives the real `World` rather than
+ * `stepButt` alone, because the thing under test is the wiring — `fire`
+ * recording which butt it solved onto, and `step` clearing the flag from the
+ * live arrow list every frame.
+ */
+test("a target does not duck while one of the player's arrows is crossing to it", () => {
+  const dt = 1 / 60;
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  w.start();
+
+  let target: import("../src/app/(site)/range/butts").Butt | undefined;
+  for (let f = 0; f < 3000 && !target; f++) {
+    w.step(dt);
+    target = w.butts.find((b) => b.out > 0.99 && b.dead === 0 && b.rising && !b.hostile);
+  }
+  assert.ok(target, "a butt should have come up to shoot at");
+
+  // Aim dead centre at it and loose, the way the locked/scoped path does.
+  const face = target.face.getWorldPosition(new T.Vector3());
+  const d = face.clone().sub(w.eye);
+  // Turned through `look`, the public path, the same way the lead test above
+  // aims — `yaw`/`pitch` are World's own and a test has no business writing
+  // them.
+  const LOOK_K = 0.0022;
+  const yaw = Math.atan2(-d.x, -d.z);
+  const pitch = Math.asin(d.y / d.length());
+  w.look(-(yaw - w.facing.yaw) / LOOK_K, -(pitch - w.facing.pitch) / LOOK_K);
+  assert.ok(
+    Math.abs(w.facing.yaw - yaw) < 1e-6 && Math.abs(w.facing.pitch - pitch) < 1e-6,
+    "the view has to actually reach the face, or the shot below was never aimed at it",
+  );
+  assert.ok(w.fire(), "the shot should have loosed");
+  const arrow = w.arrows[w.arrows.length - 1];
+  assert.equal(arrow.at, target, "the shot should have recorded the butt it was solved onto");
+
+  // Spend its whole dwell and more while the arrow is still crossing. Without
+  // the hold this is exactly when it would duck: the flight is over a second
+  // and the dwell it had left is not.
+  target.dwell = 0.05;
+  let flying = 0;
+  while (arrow.stuck === 0 && w.arrows.includes(arrow) && flying < 300) {
+    w.step(dt);
+    flying++;
+    assert.ok(
+      target.held || target.dead > 0,
+      "the butt must stay held for as long as that arrow is in the air",
+    );
+    assert.ok(
+      target.out > 0.9 || target.dead > 0,
+      `the butt must not sink while the shot is crossing (out ${target.out.toFixed(2)} after ${flying} frames)`,
+    );
+  }
+  assert.ok(flying > 30, "the flight should have taken real time, or this pinned nothing");
+
+  // And the hold is released the moment the arrow resolves — it holds the
+  // dwell, it does not make the butt immortal.
+  w.step(dt);
+  assert.equal(target.held, false, "the hold must clear as soon as the arrow is no longer in the air");
+});
+
+/*
+ * The other half: a butt nobody has shot at still ducks on its own clock.
+ * Without this the test above passes just as well against a butt that never
+ * retires at all, which would be a different bug and a worse one.
+ */
+test("a target nobody has shot at still ducks on its own clock", () => {
+  const dt = 1 / 60;
+  const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+  w.start();
+
+  let target: import("../src/app/(site)/range/butts").Butt | undefined;
+  for (let f = 0; f < 3000 && !target; f++) {
+    w.step(dt);
+    target = w.butts.find((b) => b.out > 0.99 && b.dead === 0 && b.rising && !b.hostile);
+  }
+  assert.ok(target, "a butt should have come up");
+
+  target.dwell = 0.05;
+  for (let f = 0; f < 120 && target.out > 0.05; f++) w.step(dt);
+  assert.equal(target.held, false, "nothing was shot at it, so nothing should hold it");
+  assert.ok(target.out < 0.9, "it should have gone back into cover on its own");
+});

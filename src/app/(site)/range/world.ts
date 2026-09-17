@@ -1369,6 +1369,16 @@ export class World {
       // already falling this frame cannot also loose a shot on the very
       // frame it dies — the same thing the old inline `continue` did.
       const wasFalling = b.dead > 0;
+      /*
+       * A target does not duck out from under a shot already on its way.
+       *
+       * Set from the live arrow list every frame rather than latched when
+       * the shot leaves, so it clears itself the instant that arrow lands,
+       * expires or is retired by the 24-arrow cap — there is no path that
+       * can strand a butt held up by an arrow that no longer exists. See
+       * `Butt.held`, which has the measurements this exists for.
+       */
+      b.held = this._arrows.some((a) => a.mine && a.stuck === 0 && a.at === b);
       stepButt(b, dtScaled);
       // The recoil from the hit that killed it plays on top of the fall
       // rather than being skipped for it — a destroyed butt still flinches
@@ -1959,6 +1969,9 @@ export class World {
      * away from it, against a cone of 2.6.
      */
     const aimed = this.raycaster.intersectObjects(collectTargets(this.scene).all, false)[0];
+    /* The butt this shot is solved onto, carried on the arrow so that butt
+     * can be held up until it arrives — see `Butt.held`. */
+    let aimedButt: Butt | undefined;
     if (aimed) {
       /*
        * Lead a moving target — the horizontal counterpart of the elevation
@@ -1995,6 +2008,7 @@ export class World {
        */
       const point = aimed.point.clone();
       const targetButt = this._butts.find((b) => b.face === aimed.object);
+      aimedButt = targetButt;
       if (targetButt) {
         let flightTime = 0;
         for (let i = 0; i < 2; i++) {
@@ -2020,7 +2034,7 @@ export class World {
     mesh.position.copy(from);
     mesh.lookAt(from.clone().add(vel));
     this.scene.add(mesh);
-    this._arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5), touch });
+    this._arrows.push({ mesh, vel, life: ARROW_LIFE, mine: true, stuck: 0, spin: rand(2, 5), touch, at: aimedButt });
     // The recoil. `releaseDraw` used to set this, since letting go was the
     // moment a shot became real; the click is that moment now, so it is set
     // here — on every shot, from either input, rather than on one of them.
