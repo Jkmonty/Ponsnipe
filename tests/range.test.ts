@@ -1342,7 +1342,27 @@ test("a peek retires within its own rank's window whether or not it is hit", () 
  * check it against the numbers in the doc comments.
  */
 test("a butt of each rank stays fully up longer than an arrow takes to reach it, in the worst case of its own spread", () => {
-  assert.equal(SHOT_SPEED, drawSpeed(SHOT_DRAW), "the speed a butt's dwell is measured against has to be the speed a shot actually leaves at");
+  /*
+   * The dwell is only worth anything if the speed it was measured against is
+   * the speed a shot really leaves at, so that is asserted against a real
+   * arrow out of the real `World` rather than against another constant.
+   *
+   * It used to read `SHOT_SPEED === drawSpeed(SHOT_DRAW)`, which was a proxy:
+   * true only while the speed happened to be a point on the draw curve, and
+   * it broke the moment the curve stopped setting it — without anything
+   * actually being wrong. The property it was reaching for is this one, and
+   * this one cannot drift, because it asks the bow.
+   */
+  {
+    const w = new World(makeNullSurface(), [{ symbol: "UP", changePct: 1 }], () => {});
+    w.start();
+    assert.ok(w.fire(), "the nock is full at the start of a round, so this has to loose");
+    const launched = w.arrows[w.arrows.length - 1].vel.length();
+    assert.ok(
+      Math.abs(launched - SHOT_SPEED) < 1e-9,
+      `a shot has to leave at SHOT_SPEED (${SHOT_SPEED}), which is what every dwell below is measured against — it left at ${launched}`,
+    );
+  }
 
   for (const rank of ["near", "far"] as const) {
     // The far corner of the rank: the longest shot a butt standing there can
