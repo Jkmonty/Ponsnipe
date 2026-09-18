@@ -199,7 +199,39 @@ export function drawSpeed(draw: number): number {
  * `butts.ts` divides a rank's own longest shot by it to find out how long an
  * arrow spends in the air getting there.
  */
-export const SHOT_SPEED = drawSpeed(SHOT_DRAW);
+/**
+ * How fast every arrow actually leaves the bow.
+ *
+ * This was `drawSpeed(SHOT_DRAW)` — 49.6 m/s, a point on a curve built for a
+ * hold-to-draw mechanic that was removed two changes ago. Once the player
+ * stopped choosing the draw, the speed stopped being a decision and became a
+ * fossil, and nobody checked whether the number it left behind still suited
+ * the game.
+ *
+ * It did not, for a reason that is only visible on screen. `World.fire`
+ * launches at the elevation that lands the arrow on whatever the reticle is
+ * over, and at 49.6 m/s over the ranges these butts really stand at — 42 to
+ * 67 units, not the 40 the spec's geometry assumed — that elevation is 7.5
+ * to 9.3 degrees. On a 708px stage at a 72-degree vertical field of view
+ * that is **74 to 92 pixels above the crosshair**, a tenth of the screen.
+ * The shot lands correctly and looks nothing like it: the arrow leaves
+ * climbing well above the point it was aimed at, and a player who cannot
+ * follow it all the way down reads the whole thing as a bow that shoots
+ * high. Reported three times as exactly that.
+ *
+ * A faster arrow is a flatter arrow, and that is the whole of the fix. At 80
+ * the same shots need 4.3 to 4.5 degrees — 42 to 44 pixels, half as far —
+ * while the flight stays 0.58 to 0.84 seconds, so it is still unmistakably a
+ * projectile that takes time to arrive and has to be led onto a moving
+ * target. The arc is not removed; it is brought back inside what the player
+ * can read as aiming rather than as error.
+ *
+ * `drawSpeed` and its two ends are left alone. They still describe what the
+ * bow could do across a draw, they are still what the hostile-arrow tests
+ * measure a fast shaft against, and none of that is a claim about the one
+ * shot this game looses.
+ */
+export const SHOT_SPEED = 80;
 
 /**
  * How far off a shot may be and still be helped home.

@@ -90,7 +90,20 @@ export interface Snapshot {
 The single biggest change: **your arrow becomes a projectile**. It leaves the
 bow, arcs under gravity, and takes time to arrive.
 
-- Speed from the draw: the curve runs 28 m/s at a slack string to 55 m/s at a
+- **Every shot leaves at 80 m/s.** This is its own number, not a point on the
+  draw curve any more (that was 49.6, and the curve was built for a
+  hold-to-draw the user reversed two changes earlier — once nobody chose the
+  draw, the speed stopped being a decision and nobody checked whether the
+  leftover still suited the game). It did not, for a reason only visible on
+  screen: `fire` launches at the elevation that lands the arrow under the
+  reticle, and at 49.6 over the ranges these butts really stand at that is
+  7.5-9.3°, which on a 708px stage is **74 to 92 pixels above the crosshair**.
+  The shot landed correctly and looked nothing like it, and was reported three
+  times as a bow that shoots high. At 80 the same shots need 4.2-4.3°, about
+  42 pixels, while the flight stays 0.65-0.84s — still unmistakably a
+  projectile that takes time and has to be led. The arc is not removed, it is
+  brought inside what reads as aiming rather than as error.
+- The old curve, for the record: it ran 28 m/s at a slack string to 55 m/s at a
   full pull, and every shot the game actually looses sits at the one fixed
   draw of 0.8, which is 49.6 m/s (the spec previously quoted the two ends as
   the speeds a player would see, which was written while the desktop hold let
