@@ -167,6 +167,26 @@ export const FINAL_STRETCH_MS = 2_000;
  * to cut a long slow-motion tail, and there is no tail to cut.
  */
 export const ENDING_MAX_S = 5;
+
+/**
+ * How long the ending holds when the round was lost to an arrow rather than
+ * to the clock, and there is nothing in the air to follow out.
+ *
+ * Death used to end the round on the frame it happened: no slow motion, no
+ * camera, straight to the card. That was a reading of the spec — its two
+ * entry conditions are both keyed to time running out — and it was recorded
+ * at the time as an interpretive call to raise at the playtest rather than
+ * something the spec had actually decided. The playtest raised it: "not
+ * getting the ending you described". Of course not. Most rounds end by
+ * dying, and dying was the one way out that had no ending at all.
+ *
+ * A beat, not a cinematic. There is nothing to follow — the arrow that
+ * killed you has already landed — so this is the moment itself at quarter
+ * speed, long enough to register the sixth hit as the thing that ended the
+ * round, and then the card. When a shot of your own *is* still crossing,
+ * the ordinary last-arrow ending runs instead and this never applies.
+ */
+export const DEATH_BEAT_S = 1.2;
 /** How fast the view eases toward the last arrow while it is being followed
     out — snappy enough to read as the camera turning to watch it land,
     never an instant snap onto it. */
@@ -215,6 +235,16 @@ export interface EndingState {
    * written without the flag ever being in front of it.
    */
   reducedMotion: boolean;
+  /**
+   * Whether the round has just been lost to the sixth arrow taken.
+   *
+   * The third way out, and the one that had no ending until a playtest
+   * pointed out that it is also the commonest. Required, like
+   * `reducedMotion`, so a caller cannot forget to answer it — the last
+   * field added here as optional is the one that went unanswered for a
+   * whole phase.
+   */
+  dying: boolean;
 }
 
 export interface EndingGates {
@@ -261,6 +291,15 @@ export function endingGate(state: EndingState): EndingGates {
    * ends "the game plays".
    */
   const lastArrow = state.reducedMotion ? 1 : SLOW_MOTION_SCALE;
+  /*
+   * Death first, because it can happen with time still on the clock and
+   * the two branches below both read `msLeft`. It is the last-arrow branch
+   * in every respect that matters: the round is over, no new input is
+   * taken, and what is left is watching it end. If a shot of the player's
+   * own happens to still be crossing it is followed out exactly as it
+   * would be on the timer; if not, `DEATH_BEAT_S` holds the moment instead.
+   */
+  if (state.dying) return { timeScale: lastArrow, timeUp: true };
   if (state.msLeft <= 0) {
     return { timeScale: state.arrowInFlight ? lastArrow : 1, timeUp: true };
   }
@@ -303,8 +342,21 @@ const NOCK_TIME = 0.42;
  * regression test in `tests/range.test.ts` can reason about it directly
  * rather than hard-coding a copy of the number that could silently drift
  * from the real one.
+ *
+ * It was 900ms, and a playtest said the reds were simply too good. The
+ * number was never wrong on its own terms — a dodge clears the hit radius
+ * inside 0.29s and the arrow takes at least a second to arrive, so the
+ * margin was always there on paper. What it left out is that the tell is
+ * something you have to *notice* first, across a range sixty units wide
+ * with up to nine butts up, while lining up a shot of your own. Nine
+ * tenths of a second is enough to react to a threat you are already
+ * watching and not nearly enough to find one you are not.
+ *
+ * A second more does not make the shot survivable that was not before; it
+ * makes the warning findable. The sidestep, the arrow speed and the damage
+ * are all untouched.
  */
-export const TELL_MS = 900;
+export const TELL_MS = 1900;
 
 /**
  * How far off-centre a wind-up's bearing has to be, in radians, before the
@@ -489,6 +541,15 @@ export class World {
    * with the rest of a round's state.
    */
   private endingSeconds = 0;
+  /**
+   * True from the frame the sixth arrow lands until the round is actually
+   * over — the death ending's own entry condition, read by `endingGate`.
+   *
+   * Separate from `over` because the whole point is that they are no longer
+   * the same instant: death used to set `over` on the frame it happened,
+   * and this is the gap that now sits between them.
+   */
+  private dying = false;
   /** Elapsed seconds since `attract()` began, driving the camera's own drift
       — kept apart from anything else so it does not reset on a resize or a
       snapshot, only on a fresh `attract()`. */
@@ -1195,16 +1256,29 @@ export class World {
       this.sfx?.setWave?.(this.wave.wave);
     }
 
-    if (this.lives <= 0) {
-      // Death by hits ends the round outright, same as it always has — the
-      // slow-motion ending is the clock's alone (see the spec's "The
-      // ending" and its two entry conditions, both keyed to time running
-      // out), not this one.
+    if (this.lives <= 0 && !this.dying) {
+      /*
+       * The sixth arrow has landed. This opens the ending rather than
+       * ending the round: `endingGate` reads `dying` at the top of the
+       * next frame and hands back the same quarter speed and `timeUp` the
+       * clock's own last-arrow branch does, and the block that finishes a
+       * round takes it from there — following a shot of the player's own
+       * if one is still crossing, holding `DEATH_BEAT_S` if not.
+       *
+       * It used to set `over` right here, on the reading that the spec's
+       * two entry conditions are both keyed to the clock. That was
+       * recorded as an interpretive call to raise at the playtest, and the
+       * playtest raised it: most rounds end this way, so most rounds had
+       * no ending at all.
+       *
+       * The snapshot still goes out on this frame so the health bar shows
+       * empty while the beat runs, and the early return keeps the rest of
+       * this frame — spawns, hostile fire — out of a round that is over.
+       * From the next frame `dying` is set, this branch is skipped, and
+       * the ending runs through the ordinary path.
+       */
+      this.dying = true;
       this.msLeft = Math.max(0, this.msLeft);
-      this.ending = false;
-      this.over = true;
-      this.renderedFinalFrame = false;
-      this.sfx?.horn();
       this.onChange(this.snapshot());
       return;
     }
@@ -1216,7 +1290,12 @@ export class World {
      * conditions it covers.
      */
     const arrowInFlight = this._arrows.some((a) => a.mine && a.stuck === 0);
-    const endGate = endingGate({ msLeft: this.msLeft, arrowInFlight, reducedMotion: this.reducedMotion });
+    const endGate = endingGate({
+      msLeft: this.msLeft,
+      arrowInFlight,
+      reducedMotion: this.reducedMotion,
+      dying: this.dying,
+    });
     this.ending = endGate.timeUp;
     /*
      * Let go of any direction still held at the buzzer.
@@ -1236,9 +1315,13 @@ export class World {
 
     if (endGate.timeUp) {
       this.msLeft = Math.max(0, this.msLeft);
-      if (!arrowInFlight) {
+      if (!arrowInFlight && !this.dying) {
         // Time is up and there is nothing left to follow out — end now,
         // exactly as a round without a last-arrow cinematic always has.
+        // A death is the exception and falls through instead: it has its
+        // own beat to hold (`DEATH_BEAT_S`) precisely because there is
+        // never anything to follow, the arrow that ended it having
+        // already landed.
         this.ending = false;
         this.over = true;
         this.renderedFinalFrame = false;
@@ -1517,7 +1600,13 @@ export class World {
       // `stepArrows` above, rather than where it was at the top of this
       // frame — "the camera following it in", per the spec.
       const followed = this._arrows.find((a) => a.mine && a.stuck === 0);
-      if (followed && this.endingSeconds < ENDING_MAX_S) {
+      // A death with nothing of the player's in the air: hold the moment
+      // rather than cutting to the card on the frame the arrow landed.
+      // Bounded by `DEATH_BEAT_S`, counted in the same unscaled seconds as
+      // `ENDING_MAX_S` so the beat is a real one and not a quarter of one.
+      if (this.dying && !followed && this.endingSeconds < DEATH_BEAT_S) {
+        // nothing to do but let the world run on at quarter speed
+      } else if (followed && this.endingSeconds < ENDING_MAX_S) {
         // Reduced motion takes the camera out of it, not the wait: the
         // round still runs until this arrow resolves, the view simply
         // stays where the shot was aimed instead of sweeping yaw and pitch
@@ -2228,6 +2317,7 @@ export class World {
     this.over = false;
     this.ending = false;
     this.endingSeconds = 0;
+    this.dying = false;
     this.hurt = 0;
     this.mark = 0;
     this.markKill = false;

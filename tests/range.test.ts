@@ -56,6 +56,7 @@ import {
   SLOW_MOTION_SCALE,
   FINAL_STRETCH_MS,
   ENDING_MAX_S,
+  DEATH_BEAT_S,
   ROUND_MS,
   type Snapshot,
 } from "../src/app/(site)/range/world";
@@ -986,10 +987,31 @@ test("a click and a tap loose the same arrows, as many and as fast, over the sam
     click.length,
     "a tap and a click must get the same number of arrows out of the same span of clock",
   );
-  assert.deepEqual(tap, click, "and each of those arrows must leave at the same speed on both platforms");
+  /*
+   * The same speed, not the same bits.
+   *
+   * This was `deepEqual` on the two arrays, which held while the shot speed
+   * happened to be a float both paths reproduced exactly, and started
+   * failing on 79.99999999999999 against 80 when it changed — one unit in
+   * the last place, out of an elevation solved through `atan2`, `sqrt`,
+   * `cos` and `sin` before the velocity is scaled. Bitwise equality was
+   * never the property; "a thumb and a mouse loose the same arrow" is, and
+   * a tolerance this tight still catches any real divergence while
+   * surviving arithmetic that is allowed to round differently.
+   */
+  for (let i = 0; i < click.length; i++) {
+    assert.ok(
+      Math.abs(tap[i] - click[i]) < 1e-9,
+      `arrow ${i + 1} must leave at the same speed on both platforms — tap ${tap[i]}, click ${click[i]}`,
+    );
+  }
+  // Same tolerance, same reason as the comparison just above: the elevation
+  // is solved through atan2/sqrt/cos/sin before the velocity is scaled, so
+  // two shots at different ranges can land a unit in the last place apart
+  // while being the same speed in every sense the game has.
   assert.ok(
-    click.every((v) => v === click[0]),
-    "no shot may leave faster or slower than another: there is one draw now, and the player does not set it",
+    click.every((v) => Math.abs(v - click[0]) < 1e-9),
+    `no shot may leave faster or slower than another: there is one draw now, and the player does not set it — saw ${[...new Set(click)].join(", ")}`,
   );
 });
 
@@ -2075,17 +2097,17 @@ test("attract mode fills the range on an all-red day, and nothing it raises can 
  * below), so it has to come from here, not be re-derived at the call site.
  */
 test("endingGate: normal speed with real time left and something in the air", () => {
-  const g = endingGate({ msLeft: FINAL_STRETCH_MS + 1, arrowInFlight: true, reducedMotion: false });
+  const g = endingGate({ msLeft: FINAL_STRETCH_MS + 1, arrowInFlight: true, reducedMotion: false , dying: false });
   assert.equal(g.timeScale, 1);
   assert.equal(g.timeUp, false);
 });
 
 test("endingGate: the last two seconds slow down, but only with nothing in the air", () => {
-  const nothingFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: false, reducedMotion: false });
+  const nothingFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: false, reducedMotion: false , dying: false });
   assert.equal(nothingFlying.timeScale, SLOW_MOTION_SCALE, "the tail should run at the spec's own 0.25x");
   assert.equal(nothingFlying.timeUp, false, "the clock has not actually run out yet");
 
-  const stillFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: true, reducedMotion: false });
+  const stillFlying = endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: true, reducedMotion: false , dying: false });
   assert.equal(
     stillFlying.timeScale,
     1,
@@ -2094,16 +2116,16 @@ test("endingGate: the last two seconds slow down, but only with nothing in the a
 });
 
 test("endingGate: time run out with the last arrow still up waits at quarter speed rather than ending", () => {
-  const g = endingGate({ msLeft: 0, arrowInFlight: true, reducedMotion: false });
+  const g = endingGate({ msLeft: 0, arrowInFlight: true, reducedMotion: false , dying: false });
   assert.equal(g.timeScale, SLOW_MOTION_SCALE);
   assert.equal(g.timeUp, true);
 
-  const negative = endingGate({ msLeft: -40, arrowInFlight: true, reducedMotion: false });
+  const negative = endingGate({ msLeft: -40, arrowInFlight: true, reducedMotion: false , dying: false });
   assert.equal(negative.timeUp, true, "a clock already past zero must still count as time being up");
 });
 
 test("endingGate: time run out with nothing in the air is simply over, at normal speed", () => {
-  const g = endingGate({ msLeft: 0, arrowInFlight: false, reducedMotion: false });
+  const g = endingGate({ msLeft: 0, arrowInFlight: false, reducedMotion: false , dying: false });
   assert.equal(g.timeScale, 1, "nothing is being followed out, so there is nothing left to slow down for");
   assert.equal(g.timeUp, true);
 });
@@ -2127,8 +2149,8 @@ test("endingGate: reduced motion takes the last arrow's slow motion out, and onl
     { msLeft: 0, arrowInFlight: false },
   ];
   for (const state of states) {
-    const normal = endingGate({ ...state, reducedMotion: false });
-    const reduced = endingGate({ ...state, reducedMotion: true });
+    const normal = endingGate({ ...state, reducedMotion: false, dying: false });
+    const reduced = endingGate({ ...state, reducedMotion: true, dying: false });
     assert.equal(
       reduced.timeUp,
       normal.timeUp,
@@ -2137,12 +2159,12 @@ test("endingGate: reduced motion takes the last arrow's slow motion out, and onl
   }
 
   assert.equal(
-    endingGate({ msLeft: 0, arrowInFlight: true, reducedMotion: true }).timeScale,
+    endingGate({ msLeft: 0, arrowInFlight: true, reducedMotion: true , dying: false }).timeScale,
     1,
     "the last arrow should be followed out at full speed, with no camera sweeping after it",
   );
   assert.equal(
-    endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: false, reducedMotion: true }).timeScale,
+    endingGate({ msLeft: FINAL_STRETCH_MS, arrowInFlight: false, reducedMotion: true , dying: false }).timeScale,
     SLOW_MOTION_SCALE,
     "the last two seconds must stay at quarter speed with the setting on — it is time the player is still shooting in",
   );
@@ -2946,7 +2968,21 @@ test("a target does not duck while one of the player's arrows is crossing to it"
       `the butt must not sink while the shot is crossing (out ${target.out.toFixed(2)} after ${flying} frames)`,
     );
   }
-  assert.ok(flying > 30, "the flight should have taken real time, or this pinned nothing");
+  /*
+   * The loop above has to have covered a real flight, or it pinned nothing.
+   *
+   * Derived from `flightTimeTo` rather than a frame count: this said
+   * `flying > 30` until the shot speed went from 49.6 to 80 m/s and the
+   * shortest flight on the range dropped to about 33 frames, which put a
+   * magic number one bad spawn away from failing for no reason. Half the
+   * rank's own worst-case flight is well under any real shot and well over
+   * zero, and it moves with the speed instead of being re-guessed after it.
+   */
+  const leastFrames = (flightTimeTo(target.rank) * 0.5) / dt;
+  assert.ok(
+    flying > leastFrames,
+    `the flight should have taken real time (${flying} frames, needed more than ${leastFrames.toFixed(0)}), or this pinned nothing`,
+  );
 
   // And the hold is released the moment the arrow resolves — it holds the
   // dwell, it does not make the butt immortal.
@@ -2975,4 +3011,77 @@ test("a target nobody has shot at still ducks on its own clock", () => {
   for (let f = 0; f < 120 && target.out > 0.05; f++) w.step(dt);
   assert.equal(target.held, false, "nothing was shot at it, so nothing should hold it");
   assert.ok(target.out < 0.9, "it should have gone back into cover on its own");
+});
+
+/*
+ * "Not getting the ending you described."
+ *
+ * Because the ending was the clock's alone, and almost no round ends on the
+ * clock. Driven passively, 30 rounds out of 30 ended with the sixth arrow
+ * taken and none of them ran the timer out — so the slow-motion ending was
+ * not rare, it was very nearly unreachable, and the one way out that every
+ * player actually meets cut straight to the card on the frame they died.
+ *
+ * `dying` is the third entry to the ending. This drives the real `World`
+ * rather than `endingGate` alone, because what was missing was never the
+ * pure function — it was that nothing ever passed it this case.
+ */
+test("the sixth arrow opens the ending rather than ending the round on the spot", () => {
+  const dt = 1 / 60;
+  const w = new World(makeNullSurface(), [{ symbol: "DOWN", changePct: -1 }], () => {});
+  w.start();
+  w.health = 1; // one hit from the end, so the next hostile arrow finishes it
+
+  let framesToDeath = 0;
+  while (w.health > 0 && framesToDeath < 4000) {
+    w.step(dt);
+    framesToDeath++;
+  }
+  assert.ok(w.health <= 0, "a hostile arrow should have finished the round");
+  assert.equal(w.over, false, "the round must NOT be over on the frame the last arrow lands — that is the whole bug");
+
+  // The beat runs, and it is a real one: bounded, and long enough to see.
+  let beat = 0;
+  while (!w.over && beat < 600) {
+    w.step(dt);
+    beat++;
+  }
+  const seconds = beat * dt;
+  assert.ok(w.over, "the beat has to end in the results card, not hang");
+  assert.ok(
+    Math.abs(seconds - DEATH_BEAT_S) < 0.1,
+    `the beat should be about DEATH_BEAT_S (${DEATH_BEAT_S}s) of real time — it ran ${seconds.toFixed(2)}s`,
+  );
+  assert.equal(w.msLeft >= 0, true, "the clock never goes negative on the way out");
+});
+
+/*
+ * And the beat is the world at quarter speed, not a frozen frame with a
+ * wait on it — the same slow motion the clock's own ending uses, and taken
+ * out by the same accessibility flag.
+ *
+ * Asserted on the gate rather than by stepping a `World`: the first attempt
+ * at this drove a real round and set `health = 0`, which does not set
+ * `lives` — only `onArrowHit` does — so `dying` never became true and the
+ * test measured a perfectly ordinary frame while claiming to measure a
+ * beat. It passed for the wrong reason until the numbers were printed. The
+ * end-to-end wiring is what the test above pins; this pins the decision.
+ */
+test("endingGate: a death runs at the ending's own slow motion, and reduced motion takes it out", () => {
+  // Time still on the clock, nothing in the air: without `dying` this is an
+  // ordinary mid-round frame, which is exactly what makes it the right
+  // control for what `dying` alone changes.
+  const midRound = { msLeft: ROUND_MS / 2, arrowInFlight: false };
+
+  const alive = endingGate({ ...midRound, reducedMotion: false, dying: false });
+  assert.equal(alive.timeScale, 1, "the control has to be an ordinary frame, or this compares nothing");
+  assert.equal(alive.timeUp, false);
+
+  const dying = endingGate({ ...midRound, reducedMotion: false, dying: true });
+  assert.equal(dying.timeScale, SLOW_MOTION_SCALE, "a death runs at the ending's own slow motion");
+  assert.equal(dying.timeUp, true, "and the round refuses new input from that frame on");
+
+  const reduced = endingGate({ ...midRound, reducedMotion: true, dying: true });
+  assert.equal(reduced.timeScale, 1, "reduced motion takes the slow motion out of a death, as it does the last arrow");
+  assert.equal(reduced.timeUp, true, "but the round still ends — off means off, not broken");
 });
