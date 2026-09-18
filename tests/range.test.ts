@@ -986,10 +986,31 @@ test("a click and a tap loose the same arrows, as many and as fast, over the sam
     click.length,
     "a tap and a click must get the same number of arrows out of the same span of clock",
   );
-  assert.deepEqual(tap, click, "and each of those arrows must leave at the same speed on both platforms");
+  /*
+   * The same speed, not the same bits.
+   *
+   * This was `deepEqual` on the two arrays, which held while the shot speed
+   * happened to be a float both paths reproduced exactly, and started
+   * failing on 79.99999999999999 against 80 when it changed — one unit in
+   * the last place, out of an elevation solved through `atan2`, `sqrt`,
+   * `cos` and `sin` before the velocity is scaled. Bitwise equality was
+   * never the property; "a thumb and a mouse loose the same arrow" is, and
+   * a tolerance this tight still catches any real divergence while
+   * surviving arithmetic that is allowed to round differently.
+   */
+  for (let i = 0; i < click.length; i++) {
+    assert.ok(
+      Math.abs(tap[i] - click[i]) < 1e-9,
+      `arrow ${i + 1} must leave at the same speed on both platforms — tap ${tap[i]}, click ${click[i]}`,
+    );
+  }
+  // Same tolerance, same reason as the comparison just above: the elevation
+  // is solved through atan2/sqrt/cos/sin before the velocity is scaled, so
+  // two shots at different ranges can land a unit in the last place apart
+  // while being the same speed in every sense the game has.
   assert.ok(
-    click.every((v) => v === click[0]),
-    "no shot may leave faster or slower than another: there is one draw now, and the player does not set it",
+    click.every((v) => Math.abs(v - click[0]) < 1e-9),
+    `no shot may leave faster or slower than another: there is one draw now, and the player does not set it — saw ${[...new Set(click)].join(", ")}`,
   );
 });
 
@@ -2946,7 +2967,21 @@ test("a target does not duck while one of the player's arrows is crossing to it"
       `the butt must not sink while the shot is crossing (out ${target.out.toFixed(2)} after ${flying} frames)`,
     );
   }
-  assert.ok(flying > 30, "the flight should have taken real time, or this pinned nothing");
+  /*
+   * The loop above has to have covered a real flight, or it pinned nothing.
+   *
+   * Derived from `flightTimeTo` rather than a frame count: this said
+   * `flying > 30` until the shot speed went from 49.6 to 80 m/s and the
+   * shortest flight on the range dropped to about 33 frames, which put a
+   * magic number one bad spawn away from failing for no reason. Half the
+   * rank's own worst-case flight is well under any real shot and well over
+   * zero, and it moves with the speed instead of being re-guessed after it.
+   */
+  const leastFrames = (flightTimeTo(target.rank) * 0.5) / dt;
+  assert.ok(
+    flying > leastFrames,
+    `the flight should have taken real time (${flying} frames, needed more than ${leastFrames.toFixed(0)}), or this pinned nothing`,
+  );
 
   // And the hold is released the moment the arrow resolves — it holds the
   // dwell, it does not make the butt immortal.

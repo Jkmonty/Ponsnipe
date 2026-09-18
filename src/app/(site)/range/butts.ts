@@ -71,7 +71,7 @@ export function longestShotTo(rank: Rank): number {
 
 /**
  * How long the one shot this game looses spends in the air reaching the far
- * corner of `rank` — 1.05 seconds at the near rank, 1.37 at the far.
+ * corner of `rank` — 0.65 seconds at the near rank, 0.84 at the far.
  *
  * The worst case of the spread and not its average, because a dwell derived
  * from the average leaves every butt past the middle of its rank unhittable,
@@ -79,7 +79,7 @@ export function longestShotTo(rank: Rank): number {
  *
  * `ballisticElevation` is the solver `World.fire` actually launches at, so
  * the horizontal component here is the one the arrow really flies at: the
- * shot leaves 8.0 degrees above the flat at the near rank and 9.3 at the
+ * shot leaves 4.3 degrees above the flat at the near rank and 4.5 at the
  * far, and dividing by the cosine of that is the whole difference between
  * this and range over speed.
  */
@@ -115,13 +115,14 @@ export function flightTimeTo(rank: Rank): number {
 export const AIM_WINDOW = 1.5;
 
 /**
- * The floor under every dwell at `rank` — react, then fly. 2.55 seconds at
- * the near rank, 2.87 at the far.
+ * The floor under every dwell at `rank` — react, then fly. 2.15 seconds at
+ * the near rank, 2.34 at the far.
  *
  * A dwell shorter than this cannot be answered at all in the worst case of
  * its own rank's spread, and all three dwells were shorter than this. A
- * green butt was given 0.5 to 1.2 seconds against the far rank's 1.37s
- * flight, so a far green was never hittable at any x and a near one was a
+ * green butt was given 0.5 to 1.2 seconds against a far-rank flight that
+ * was then 1.37s (the arrow left at 49.6 m/s until it was raised to 80), so
+ * a far green was never hittable at any x and a near one was a
  * coin toss. Those numbers were set when a click was an instant raycast and
  * a target only had to be up at the moment you clicked; nothing revisited
  * them when arrows were given travel time.
@@ -139,8 +140,8 @@ export function minimumDwell(rank: Rank): number {
  *
  * It was a flat 1.8 seconds for both ranks — within a twentieth of a second
  * of what the near rank needs, and a third of a second short of the far
- * rank, where it left about four tenths of a second to see the target,
- * decide and click. The behaviour's identity is unchanged ("rises, and drops
+ * rank as the arrow then flew, where it left about four tenths of a second
+ * to see the target, decide and click. The behaviour's identity is unchanged ("rises, and drops
  * whether hit or not"); what changes is that the window is measured against
  * the flight to the rank it rose in.
  */
@@ -272,6 +273,16 @@ export const LANES = [-12, -25, -38];
  * exported rather than left as a literal buried in the geometry below.
  */
 export const FACE_RADIUS = 3.4;
+
+/**
+ * How far in front of its post a butt's face and rim are mounted.
+ *
+ * Enough to clear the post's own radius (0.24 at the foot, 0.18 at the
+ * head) with room to spare. See `makeButt`, where the reason is written out:
+ * without it the stake runs up through the lower half of the disc and
+ * strikes out the ticker on every target in the game.
+ */
+export const FACE_STANDOFF = 0.45;
 
 /** The rim/ring colour for a stock's own direction — shared by the face
     texture and anything else (a popup, say) that wants to match it. */
@@ -769,6 +780,26 @@ export function makeButt(stock: Stock, rank: Rank, x: number, behaviour: Behavio
    * when it is up — not crop it forever.
    */
   face.position.y = FACE_HEIGHT;
+  /*
+   * In front of the post, not through it.
+   *
+   * The post is a cylinder from y 0 to 5.4 standing at this same local z,
+   * and the face is a flat disc centred at y 5.2 with a radius of 3.4 — so
+   * the post ran straight up through the lower half of every face, out at
+   * the shooter's side of the disc. The ticker is painted in a band at 0.76
+   * to 0.92 of the texture, which is world y 2.34 to 3.43, centred on x 0:
+   * exactly the stretch of post that shows. Every target in the game had
+   * its name struck through by its own stake, which is how a playtest
+   * described it — "blocked by something on everyone".
+   *
+   * `FACE_STANDOFF` is comfortably past the post's widest radius (0.24 at
+   * the foot, 0.18 at the head) so the disc is mounted on the front of the
+   * stake the way a real butt is, rather than bisected by it. It moves the
+   * face a third of a unit closer out of forty to sixty-seven, which the
+   * elevation solver absorbs without noticing — it solves to the point the
+   * ray actually struck, not to a rank's nominal depth.
+   */
+  face.position.z = FACE_STANDOFF;
   group.add(face);
 
   const rim = new T.Mesh(
@@ -789,6 +820,9 @@ export function makeButt(stock: Stock, rank: Rank, x: number, behaviour: Behavio
     }),
   );
   rim.position.y = FACE_HEIGHT;
+  // With the face, so the ring stays in the disc's own plane rather than
+  // sinking behind it — see `FACE_STANDOFF`.
+  rim.position.z = FACE_STANDOFF;
   group.add(rim);
 
   const post = new T.Mesh(

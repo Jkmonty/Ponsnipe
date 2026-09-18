@@ -303,8 +303,21 @@ const NOCK_TIME = 0.42;
  * regression test in `tests/range.test.ts` can reason about it directly
  * rather than hard-coding a copy of the number that could silently drift
  * from the real one.
+ *
+ * It was 900ms, and a playtest said the reds were simply too good. The
+ * number was never wrong on its own terms — a dodge clears the hit radius
+ * inside 0.29s and the arrow takes at least a second to arrive, so the
+ * margin was always there on paper. What it left out is that the tell is
+ * something you have to *notice* first, across a range sixty units wide
+ * with up to nine butts up, while lining up a shot of your own. Nine
+ * tenths of a second is enough to react to a threat you are already
+ * watching and not nearly enough to find one you are not.
+ *
+ * A second more does not make the shot survivable that was not before; it
+ * makes the warning findable. The sidestep, the arrow speed and the damage
+ * are all untouched.
  */
-export const TELL_MS = 900;
+export const TELL_MS = 1900;
 
 /**
  * How far off-centre a wind-up's bearing has to be, in radians, before the
